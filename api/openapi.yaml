@@ -1,0 +1,595 @@
+# Copyright (c) 2022-2026 Super Durable, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+
+openapi: 3.0.3
+info:
+  title: Superagent API
+  version: 0.1.0
+  description: >-
+    Phase 1 command and live-event contract for the durable AI Agent. Durable
+    reads intentionally remain unavailable until the released Dex Snapshot API
+    is adopted in Phase 2.
+servers:
+  - url: /
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Report process liveness
+      responses:
+        "200":
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Report dependency readiness
+      responses:
+        "200":
+          description: Required dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/portal:
+    get:
+      operationId: getPortal
+      summary: Return provider and tool choices for the launch portal
+      responses:
+        "200":
+          description: Launch configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Portal"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/start:
+    post:
+      operationId: startAgent
+      summary: Start one durable Agent Flow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartAgentRequest"
+      responses:
+        "201":
+          description: The Agent Flow was started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartAgentResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/messages:
+    post:
+      operationId: sendMessage
+      summary: Queue a user message or answer pending user input
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "202":
+          description: The command was durably accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/plans/execute:
+    post:
+      operationId: executePlan
+      summary: Execute one exact durable plan revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutePlanRequest"
+      responses:
+        "202":
+          description: The plan execution was durably accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/tool-approvals:
+    post:
+      operationId: approveTool
+      summary: Resolve one exact pending tool approval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolApprovalRequest"
+      responses:
+        "202":
+          description: The approval decision was durably accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/events:
+    get:
+      operationId: readEvent
+      summary: Long-poll one best-effort Agent Stream
+      description: >-
+        Waits for one event for up to the server's bounded long-poll timeout.
+        A 504 response means no event arrived and is safe to retry with the
+        same resume token. Streams are live hints, never a durable state source.
+      parameters:
+        - name: flowId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FlowId"
+        - name: stream
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/EventStream"
+        - name: resumeToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ResumeToken"
+      responses:
+        "200":
+          description: One live event.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamEvent"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "410":
+          $ref: "#/components/responses/Problem"
+        "504":
+          description: No event arrived before the bounded long-poll timeout.
+        "503":
+          $ref: "#/components/responses/Problem"
+components:
+  responses:
+    Problem:
+      description: The request could not be completed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    FlowId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      x-ogen-name: FlowID
+    CallId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      x-ogen-name: CallID
+    ResumeToken:
+      type: string
+      maxLength: 4096
+    ToolName:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: "^[A-Za-z0-9_]+$"
+    Provider:
+      type: string
+      enum:
+        - mock
+        - openai
+        - anthropic
+        - gemini
+        - groq
+    EventStream:
+      type: string
+      enum:
+        - reasoning
+        - assistant
+        - activity
+    EventKind:
+      type: string
+      enum:
+        - plan_started
+        - plan_updated
+        - steering_applied
+        - compaction_failed
+        - compacted
+        - model_started
+        - model_failed
+        - model_completed
+        - model_tool_call
+        - user_input_requested
+        - tool_progress
+        - tool_failed
+        - tool_completed
+    HealthStatus:
+      type: string
+      enum:
+        - ok
+    Health:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          $ref: "#/components/schemas/HealthStatus"
+    Portal:
+      type: object
+      additionalProperties: false
+      required:
+        - providers
+        - mcpServers
+        - tools
+        - builtInTools
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortalProvider"
+        mcpServers:
+          type: array
+          items:
+            type: string
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortalTool"
+        builtInTools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolName"
+    PortalProvider:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - label
+        - modelPrefix
+        - defaultModel
+        - credentialEnvironmentVariable
+        - configured
+      properties:
+        id:
+          $ref: "#/components/schemas/Provider"
+        label:
+          type: string
+          minLength: 1
+        modelPrefix:
+          type: string
+        defaultModel:
+          type: string
+          minLength: 1
+        credentialEnvironmentVariable:
+          type: string
+          nullable: true
+        configured:
+          type: boolean
+    PortalTool:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - description
+        - requiresApproval
+        - server
+      properties:
+        name:
+          $ref: "#/components/schemas/ToolName"
+        description:
+          type: string
+        requiresApproval:
+          type: boolean
+        server:
+          type: string
+          minLength: 1
+          nullable: true
+    StartAgentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+        - provider
+        - model
+        - systemPrompt
+        - maxContextTokens
+        - messageRetentionLimit
+        - mcpEnabled
+        - enabledMcpServers
+        - enabledTools
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+        provider:
+          $ref: "#/components/schemas/Provider"
+        model:
+          type: string
+          minLength: 1
+          maxLength: 255
+        systemPrompt:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        compactionModel:
+          type: string
+          minLength: 1
+          maxLength: 255
+          nullable: true
+        maxContextTokens:
+          type: integer
+          minimum: 1
+          maximum: 2000000
+        compactionTriggerFraction:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          exclusiveMinimum: true
+          exclusiveMaximum: true
+          default: 0.85
+        compactionKeepFraction:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          exclusiveMinimum: true
+          exclusiveMaximum: true
+          default: 0.1
+        messageRetentionLimit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        mcpEnabled:
+          type: boolean
+        enabledMcpServers:
+          type: array
+          uniqueItems: true
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+        enabledTools:
+          type: array
+          uniqueItems: true
+          maxItems: 10000
+          items:
+            $ref: "#/components/schemas/ToolName"
+    StartAgentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+    SendMessageRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+        - content
+        - planMode
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000000
+        planMode:
+          type: boolean
+    ExecutePlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+        - revision
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+    ToolApprovalRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+        - callId
+        - approved
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+        callId:
+          $ref: "#/components/schemas/CallId"
+        approved:
+          type: boolean
+    Accepted:
+      type: object
+      additionalProperties: false
+      required:
+        - accepted
+      properties:
+        accepted:
+          type: boolean
+          enum:
+            - true
+    StreamEvent:
+      oneOf:
+        - $ref: "#/components/schemas/ReasoningStreamEvent"
+        - $ref: "#/components/schemas/AssistantStreamEvent"
+        - $ref: "#/components/schemas/ActivityStreamEvent"
+      discriminator:
+        propertyName: kind
+        mapping:
+          reasoning_summary: "#/components/schemas/ReasoningStreamEvent"
+          assistant_text: "#/components/schemas/AssistantStreamEvent"
+          activity: "#/components/schemas/ActivityStreamEvent"
+    ReasoningStreamEvent:
+      allOf:
+        - $ref: "#/components/schemas/TextStreamEvent"
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+          properties:
+            kind:
+              type: string
+              enum:
+                - reasoning_summary
+    AssistantStreamEvent:
+      allOf:
+        - $ref: "#/components/schemas/TextStreamEvent"
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+          properties:
+            kind:
+              type: string
+              enum:
+                - assistant_text
+    TextStreamEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+        - resumeToken
+        - createdAt
+        - source
+      properties:
+        value:
+          type: string
+        resumeToken:
+          $ref: "#/components/schemas/ResumeToken"
+        createdAt:
+          type: string
+          format: date-time
+        source:
+          type: string
+          minLength: 1
+    ActivityStreamEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - value
+        - resumeToken
+        - createdAt
+        - source
+      properties:
+        kind:
+          type: string
+          enum:
+            - activity
+        value:
+          $ref: "#/components/schemas/AgentEvent"
+        resumeToken:
+          $ref: "#/components/schemas/ResumeToken"
+        createdAt:
+          type: string
+          format: date-time
+        source:
+          type: string
+          minLength: 1
+    AgentEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - message
+        - callId
+        - toolName
+      properties:
+        kind:
+          $ref: "#/components/schemas/EventKind"
+        message:
+          type: string
+        callId:
+          allOf:
+            - $ref: "#/components/schemas/CallId"
+          nullable: true
+        toolName:
+          allOf:
+            - $ref: "#/components/schemas/ToolName"
+          nullable: true
+    Problem:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - title
+        - status
+        - detail
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference

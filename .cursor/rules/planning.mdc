@@ -1,0 +1,10 @@
+---
+description: Required implementation-plan sections
+alwaysApply: true
+---
+
+# Plan requirements
+
+Every implementation plan includes concrete Tests, Documentation, and UI/UX
+sections. Use `N/A` only with a specific reason. Plans that touch Dex must name
+the required skill references and visualization evidence.

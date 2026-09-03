@@ -1,0 +1,21 @@
+---
+description: Dex application modeling and Snapshot phase constraints
+globs: "{internal,cmd}/**/*.go"
+alwaysApply: false
+---
+
+# Dex application rules
+
+Read `skills/dex-developer/SKILL.md` and every routed reference in each turn
+that touches Dex concepts.
+
+- Use only the installed released SDK and version-matched runnable examples.
+- Keep the static Flow graph and resource use visible to `dexcli visualize`.
+- Put durable conditions in `WaitFor` and external effects in `Execute`.
+- Treat each WaitFor, Execute, and RPC as an independent atomic boundary.
+- Use typed Attributes for state, Channels for delivery, and buffered Streams
+  for best-effort deltas.
+- Do not expose resource getter wrappers.
+- Phase 1 contains no history, queue-read, describe, status, or Snapshot HTTP
+  endpoint and no guessed Snapshot RPC.
+- Application history is `AgentMessages`, never Dex execution history.

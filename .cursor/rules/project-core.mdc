@@ -1,0 +1,23 @@
+---
+description: Core Superagent architecture and code-quality constraints
+alwaysApply: true
+---
+
+# Superagent project rules
+
+`AGENTS.md` is the canonical complete rule set and must be read before changing
+this repository. Keep `AGENTS.md`, `CLAUDE.md`, and these Cursor rules
+semantically synchronized.
+
+- Superagent is a production application on the released Dex Go SDK, not an SDK
+  example. Do not depend on Dex internals or unreleased APIs.
+- Do not add compatibility shims before launch.
+- Use constructor injection, typed domain values, explicit boundary mappers,
+  owned goroutines, and handled errors.
+- Keep documentation direct. Put one idea in each sentence. Split behavior,
+  constraints, and rationale into separate sentences.
+- Domain packages prohibit `any`, dynamic maps, and raw string states.
+- Never export Dex resource getters solely to expose descriptors.
+- Keep provider, MCP, Dex, application, transport, and UI boundaries separate.
+- Never commit or log `.env` or credentials.
+- Every changing turn ends with a meaningful commit and clean worktree.

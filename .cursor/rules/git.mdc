@@ -1,0 +1,13 @@
+---
+description: Branch, commit, and attribution rules
+alwaysApply: true
+---
+
+# Git rules
+
+- Fetch and branch from the current `origin/main`; the recorded migration
+  baseline is the sole exception.
+- End every changing turn with a meaningful commit and clean worktree.
+- Never create empty commits or bypass hooks.
+- Never attribute Cursor or an agent as author, committer, or co-author.
+- Inspect `git log -1 --format='%an %ae%n%B'` after every commit.
