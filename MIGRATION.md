@@ -106,7 +106,7 @@ The Phase 2 entry gates were reviewed against Dex commit `2f961961` on
 - Reading pending messages does not consume them.
 - Loading state, transactional execution, and Attribute locking are independent
   controls.
-- `StateNotLoadedError` reports access to state omitted from the invocation
+- `StateNotLoadedError` initially reported state omitted from the invocation
   projection.
 - Dex PR 445 rejects `/` in AttributeMap and ChannelMap instance keys.
 
@@ -114,7 +114,19 @@ Superagent uses decimal sequence values as `AgentMessages` instance keys. The
 slash restriction does not require a data migration.
 
 The vendored `dex-developer` skill is byte-identical at `13db6da5` and
-`2f961961`. Its provenance record now identifies the reviewed Phase 2 commit.
+`ce1d734e`. Its provenance record now identifies the reviewed Phase 2 commit.
+
+### Dex Go SDK v0.2.12
+
+Superagent subsequently upgraded to Dex Go SDK `v0.2.12` at commit `ce1d734e`.
+The release preserves the selective RPC projection contract. It replaces the
+general `StateNotLoadedError` with two precise errors:
+
+- `AttributeMapNotLoadedError` for an omitted AttributeMap projection;
+- `ChannelMessagesNotLoadedError` for omitted pending Channel messages.
+
+Superagent does not branch on these errors. Snapshot selects both resource
+kinds explicitly. No application code migration was required.
 
 ## Phase 2 Snapshot contract
 
@@ -141,7 +153,7 @@ re-snapshots after disconnects or sequence gaps.
 
 ## Phase 2 implementation
 
-Phase 2 targets the released Dex Go SDK `v0.2.11` without a module replacement.
+Phase 2 targets the released Dex Go SDK `v0.2.12` without a module replacement.
 The SDK upgrade was isolated from application changes and the complete Phase 1
 suite passed before Snapshot implementation began.
 
@@ -234,6 +246,7 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 1 gates | Governance, generation drift, formatting, binary build, vet, static analysis, unit/race tests, strict TypeScript, ESLint, Vitest, production Webpack, and Playwright passed |
 | 2026-09-03 | Deployment boundary | Pure API binary, standalone `web/dist`, runtime origin validation, exact CORS policy, cross-origin E2E, and full repository gates passed |
 | 2026-09-03 | Phase 2 SDK gate | Dex `2f961961`, Go SDK `v0.2.11`, CLI `v0.1.21`, selective-state real-server compile contract, typed errors, and slash-key change reviewed; Phase 1 integration passed before application changes |
+| 2026-09-03 | SDK `v0.2.12` | Dex `ce1d734e`; reviewed the split unloaded-state errors, confirmed unchanged Snapshot selectors, refreshed skill provenance, and passed the full repository, real Dex integration, and visualization gates |
 | 2026-09-03 | Phase 2 Snapshot | One RPC returned Run ID, paged `AgentMessages` history, description, FIFO queued and steered messages; repeated reads preserved IDs and did not consume Channels; delete/steer stale IDs returned typed failures; cold Worker replacement passed |
 | 2026-09-03 | Phase 2 UI | Strict TypeScript, type-aware ESLint, 16 Vitest checks, production Webpack, and cross-origin Playwright passed; browser initialization made one Snapshot request and zero legacy reads |
 | 2026-09-03 | Phase 2 graph | `dexcli visualize` with CLI `v0.1.21`: valid graph, five RPCs including Snapshot, and zero blocking diagnostics |

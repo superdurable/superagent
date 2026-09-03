@@ -9,7 +9,7 @@ Timer, retry, or recovery code, read `skills/dex-developer/SKILL.md` and all
 references it routes for that task. Confirm APIs against the installed released
 SDK and a version-matched runnable example or real-server compile-contract test.
 
-Snapshot code targets Dex Go SDK `v0.2.11` and the version-matched selective
+Snapshot code targets Dex Go SDK `v0.2.12` and the version-matched selective
 state contract recorded in `MIGRATION.md`. Recheck the installed SDK source and
 refresh the vendored skill before changing its resource projection or errors.
 Never infer an API from a design screenshot or unreleased branch.

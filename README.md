@@ -2,7 +2,7 @@
 
 Superagent is a standalone, production-oriented AI agent built on Dex durable
 execution. The Phase 2 implementation ports the Python agent core to Go on the
-released Dex Go SDK `v0.2.11`, retains the React application, and uses
+released Dex Go SDK `v0.2.12`, retains the React application, and uses
 OpenAPI-generated server and browser contracts.
 
 The immutable upstream Python baseline is under `reference/python/`. Migration

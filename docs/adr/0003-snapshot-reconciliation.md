@@ -11,9 +11,9 @@ RPC invocation. Reading them through separate browser requests can expose state
 from different commit boundaries. Streams reduce latency but are disposable and
 cannot restore state after refresh or a resume-token gap.
 
-Dex Go SDK `v0.2.11` supports explicit RPC projections for an AttributeMap and
+Dex Go SDK `v0.2.12` supports explicit RPC projections for an AttributeMap and
 pending Channel values. The version-matched real-server contract is
-`sdk-go/integ/rpc_selective_state_test.go` at Dex commit `2f961961`.
+`sdk-go/integ/rpc_selective_state_test.go` at Dex commit `ce1d734e`.
 
 ## Decision
 
