@@ -135,6 +135,13 @@ paths:
       responses:
         "200":
           description: One atomic durable application Snapshot.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - no-store
           content:
             application/json:
               schema:
@@ -286,6 +293,10 @@ paths:
           $ref: "#/components/responses/Problem"
         "504":
           description: No event arrived before the bounded long-poll timeout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PollTimeout"
         "503":
           $ref: "#/components/responses/Problem"
 components:
@@ -321,6 +332,7 @@ components:
       type: integer
       format: int64
       minimum: 1
+      maximum: 9007199254740991
     ResumeToken:
       type: string
       maxLength: 4096
@@ -395,6 +407,10 @@ components:
       enum:
         - deleted
         - steered
+    PollTimeoutReason:
+      type: string
+      enum:
+        - timeout
     HealthStatus:
       type: string
       enum:
@@ -584,6 +600,7 @@ components:
           type: integer
           format: int64
           minimum: 1
+          maximum: 9007199254740991
     ToolApprovalRequest:
       type: object
       additionalProperties: false
@@ -770,14 +787,17 @@ components:
           type: integer
           format: int64
           minimum: 0
+          maximum: 9007199254740991
         lastSequence:
           type: integer
           format: int64
           minimum: 0
+          maximum: 9007199254740991
         summarizedThroughSequence:
           type: integer
           format: int64
           minimum: 0
+          maximum: 9007199254740991
         pendingApproval:
           allOf:
             - $ref: "#/components/schemas/PendingApproval"
@@ -872,6 +892,7 @@ components:
           type: integer
           format: int64
           minimum: 1
+          maximum: 9007199254740991
         status:
           $ref: "#/components/schemas/PlanStatus"
         tasks:
@@ -900,6 +921,14 @@ components:
           type: boolean
           enum:
             - true
+    PollTimeout:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          $ref: "#/components/schemas/PollTimeoutReason"
     StreamEvent:
       oneOf:
         - $ref: "#/components/schemas/ReasoningStreamEvent"

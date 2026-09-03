@@ -97,6 +97,43 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
           json: { flowId: "browser-flow" },
         });
         return;
+      case "/products/ai-agent/snapshot":
+        await route.fulfill({
+          headers,
+          contentType: "application/json",
+          json: {
+            runId: "browser-run",
+            history: { messages: [], nextBeforeSequence: null },
+            description: {
+              status: "waiting_for_message",
+              model: "mock/reliable",
+              systemPrompt: "Be helpful.",
+              firstRetainedSequence: 1,
+              lastSequence: 0,
+              summarizedThroughSequence: 0,
+              pendingApproval: null,
+              pendingTimer: null,
+              pendingUserInput: null,
+              plan: null,
+              isPlanExecutionRequested: false,
+              pendingQueuedMessageCount: 0,
+              pendingSteeredMessageCount: 0,
+              availableMcpServers: [],
+              availableTools: [],
+            },
+            queued: [],
+            steered: [],
+          },
+        });
+        return;
+      case "/products/ai-agent/events":
+        await route.fulfill({
+          status: 504,
+          headers,
+          contentType: "application/json",
+          json: { reason: "timeout" },
+        });
+        return;
       default:
         await route.fulfill({ status: 404, headers });
     }
@@ -107,10 +144,9 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
     page.getByRole("heading", { name: "Start a Superagent" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Start agent" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Waiting for Dex Snapshot API" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Superagent" })).toBeVisible();
   await expect(page.getByText("browser-flow")).toBeVisible();
+  await expect(page.getByText("browser-run")).toBeVisible();
 
   expect(startBody).toMatchObject({
     provider: "mock",
@@ -120,13 +156,15 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
   expect(apiRequests).toContain("/products/ai-agent/portal");
   expect(apiRequests).toContain("/products/ai-agent/start");
   expect(
+    apiRequests.filter((path) => path === "/products/ai-agent/snapshot"),
+  ).toHaveLength(1);
+  expect(
     apiRequests.filter((path) =>
       [
         "/products/ai-agent/history",
         "/products/ai-agent/message-queue",
         "/products/ai-agent/describe",
         "/products/ai-agent/status",
-        "/products/ai-agent/snapshot",
       ].includes(path),
     ),
   ).toEqual([]);

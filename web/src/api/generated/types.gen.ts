@@ -97,6 +97,10 @@ export const QueueAction = { DELETED: 'deleted', STEERED: 'steered' } as const;
 
 export type QueueAction = typeof QueueAction[keyof typeof QueueAction];
 
+export const PollTimeoutReason = { TIMEOUT: 'timeout' } as const;
+
+export type PollTimeoutReason = typeof PollTimeoutReason[keyof typeof PollTimeoutReason];
+
 export const HealthStatus = { OK: 'ok' } as const;
 
 export type HealthStatus = typeof HealthStatus[keyof typeof HealthStatus];
@@ -266,6 +270,10 @@ export type PlanTask = {
 
 export type Accepted = {
     accepted: true;
+};
+
+export type PollTimeout = {
+    reason: PollTimeoutReason;
 };
 
 export type StreamEvent = ({
@@ -670,7 +678,7 @@ export type ReadEventErrors = {
     /**
      * No event arrived before the bounded long-poll timeout.
      */
-    504: unknown;
+    504: PollTimeout;
 };
 
 export type ReadEventError = ReadEventErrors[keyof ReadEventErrors];

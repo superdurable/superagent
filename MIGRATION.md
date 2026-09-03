@@ -118,8 +118,8 @@ The vendored `dex-developer` skill is byte-identical at `13db6da5` and
 
 ## Phase 2 Snapshot contract
 
-The published Dex runnable example and installed SDK are the only signature
-sources. The typed application response conceptually contains a run ID,
+The installed SDK and version-matched real-server compile contract are the only
+signature sources. The typed application response contains a run ID,
 application history, Agent description, queued user messages, and steered user
 messages.
 
@@ -138,6 +138,37 @@ mutation routes. The four legacy reads are never introduced.
 The browser loads or recovers with one Snapshot, atomically replaces its durable
 view through one reducer action, applies events for low-latency deltas, and
 re-snapshots after disconnects or sequence gaps.
+
+## Phase 2 implementation
+
+Phase 2 targets the released Dex Go SDK `v0.2.11` without a module replacement.
+The SDK upgrade was isolated from application changes and the complete Phase 1
+suite passed before Snapshot implementation began.
+
+The implemented Dex client invocation explicitly loads:
+
+- every retained `AgentMessages` AttributeMap entry;
+- pending `QueuedUserMessages` Channel messages;
+- pending `SteeredUserMessages` Channel messages.
+
+Normal Attributes used to construct `AgentDescription` follow the published RPC
+context contract. Snapshot loading is independent from locking and transactions:
+the RPC is read-only and neither consumes nor mutates a Channel. It returns the
+Dex invocation Run ID. Missing and inactive Flows retain the SDK's typed error
+behavior.
+
+OpenAPI `0.2.0` adds Snapshot plus queue delete and steer. ogen and Hey API
+generate both transport surfaces. Steer accepts only a stable queued message ID;
+the RPC resolves its original value from the explicitly loaded queue before one
+transactional delete-and-publish operation.
+
+The React application now provides the retained conversation experience:
+history paging, live assistant and reasoning-summary text, structured activity,
+plans, approvals, durable timers, input choices, queued and steered messages,
+plan mode, keyboard submission, and a fixed responsive composer. Snapshot
+atomically replaces the durable reducer view. Every Snapshot, event poll, and
+command owns cancellation and stale-response protection. Normal long-poll
+expiry uses a generated typed response rather than transport-error heuristics.
 
 ## Tests
 
@@ -168,9 +199,11 @@ skips or weakened assertions.
 - `docs/flow-model.md` distinguishes application history from execution history.
 - `docs/adr/0001-wait-for-dex-snapshot.md` records the decision to wait.
 - `docs/adr/0002-separate-frontend-deployment.md` records the deployment boundary.
+- `docs/adr/0003-snapshot-reconciliation.md` records the adopted atomic read and
+  durable/live reconciliation semantics.
 - `CONTRIBUTING.md` documents skill loading, generation, and verification.
 - Phase 2's completion report records the Dex server commit, SDK version,
-  runnable example source, and test evidence.
+  compile-contract source, and test evidence.
 
 ## UI/UX
 
@@ -200,3 +233,7 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 1 fuzz | Domain JSON, enum, and built-in tool decoders completed 1.8M+ executions without a failure |
 | 2026-09-03 | Phase 1 gates | Governance, generation drift, formatting, binary build, vet, static analysis, unit/race tests, strict TypeScript, ESLint, Vitest, production Webpack, and Playwright passed |
 | 2026-09-03 | Deployment boundary | Pure API binary, standalone `web/dist`, runtime origin validation, exact CORS policy, cross-origin E2E, and full repository gates passed |
+| 2026-09-03 | Phase 2 SDK gate | Dex `2f961961`, Go SDK `v0.2.11`, CLI `v0.1.21`, selective-state real-server compile contract, typed errors, and slash-key change reviewed; Phase 1 integration passed before application changes |
+| 2026-09-03 | Phase 2 Snapshot | One RPC returned Run ID, paged `AgentMessages` history, description, FIFO queued and steered messages; repeated reads preserved IDs and did not consume Channels; delete/steer stale IDs returned typed failures; cold Worker replacement passed |
+| 2026-09-03 | Phase 2 UI | Strict TypeScript, type-aware ESLint, 16 Vitest checks, production Webpack, and cross-origin Playwright passed; browser initialization made one Snapshot request and zero legacy reads |
+| 2026-09-03 | Phase 2 graph | `dexcli visualize` with CLI `v0.1.21`: valid graph, five RPCs including Snapshot, and zero blocking diagnostics |

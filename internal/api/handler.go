@@ -207,7 +207,10 @@ func (handler *Handler) GetAgentSnapshot(
 		problem := newProblem(503, "Service Unavailable", "the Agent Snapshot could not be encoded")
 		return (*transportapi.GetAgentSnapshotServiceUnavailable)(&problem), nil
 	}
-	return &result, nil
+	return &transportapi.AgentSnapshotHeaders{
+		CacheControl: transportapi.GetAgentSnapshotOKCacheControlNoStore,
+		Response:     result,
+	}, nil
 }
 
 // DeleteQueuedMessage removes one exact pending queued user message.
@@ -486,6 +489,8 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 	for index, name := range description.AvailableTools {
 		availableTools[index] = transportapi.ToolName(name)
 	}
+	availableMCPServers := make([]string, len(description.AvailableMCPServers))
+	copy(availableMCPServers, description.AvailableMCPServers)
 	return transportapi.AgentDescription{
 		Status:                     status,
 		Model:                      string(description.Model),
@@ -500,7 +505,7 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 		IsPlanExecutionRequested:   description.IsPlanExecutionRequested,
 		PendingQueuedMessageCount:  description.PendingQueuedMessageCount,
 		PendingSteeredMessageCount: description.PendingSteeredMessageCount,
-		AvailableMcpServers:        append([]string(nil), description.AvailableMCPServers...),
+		AvailableMcpServers:        availableMCPServers,
 		AvailableTools:             availableTools,
 	}, nil
 }
@@ -914,7 +919,7 @@ func (handler *Handler) readEventError(ctx context.Context, flowID agent.FlowID,
 	}
 	var pollTimeout *dex.LongPollTimeoutError
 	if errors.As(err, &pollTimeout) || errors.Is(err, context.DeadlineExceeded) {
-		return &transportapi.ReadEventGatewayTimeout{}, nil
+		return &transportapi.PollTimeout{Reason: transportapi.PollTimeoutReasonTimeout}, nil
 	}
 	handler.logFailure(ctx, flowID, err)
 	switch classifyFailure(err) {

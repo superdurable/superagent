@@ -1,24 +1,25 @@
 # Superagent
 
 Superagent is a standalone, production-oriented AI agent built on Dex durable
-execution. The current Phase 1 implementation ports the Python agent core to Go
-on the released Dex Go SDK `v0.2.9`, retains the React application, and uses
+execution. The Phase 2 implementation ports the Python agent core to Go on the
+released Dex Go SDK `v0.2.11`, retains the React application, and uses
 OpenAPI-generated server and browser contracts.
 
 The immutable upstream Python baseline is under `reference/python/`. Migration
 scope, external gates, and evidence are tracked in `MIGRATION.md`; package and
 durability boundaries are described in `ARCHITECTURE.md`.
 
-## Phase 1 scope
+## Phase 2 scope
 
-Phase 1 includes typed Agent state and commands, plans, approvals, user input,
+The application includes typed Agent state and commands, plans, approvals, user input,
 durable timers, steering, compaction, buffered streams, provider adapters, MCP
-stdio and Streamable HTTP transports, a separately deployable launch portal,
-and graceful process shutdown.
+stdio and Streamable HTTP transports, a separately deployable React application,
+and graceful process shutdown. One atomic Snapshot read restores application
+history, Agent description, and queued and steered messages. Generated event
+polling supplies low-latency deltas between durable reconciliations.
 
-The conversation read surface deliberately waits for the released Dex Snapshot
-API. There are no temporary history, queue-read, describe, status, Snapshot, or
-queue-mutation HTTP routes. The launch portal makes that boundary explicit.
+The legacy history, queue-read, describe, and status routes do not exist. Queue
+delete and steer accept only stable message IDs returned by Snapshot.
 
 ## Prerequisites
 

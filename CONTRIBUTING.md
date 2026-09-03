@@ -7,10 +7,12 @@ Read `AGENTS.md` before changing the repository.
 For every turn that modifies or reviews Dex Flow, Step, RPC, resource, Stream,
 Timer, retry, or recovery code, read `skills/dex-developer/SKILL.md` and all
 references it routes for that task. Confirm APIs against the installed released
-SDK and a version-matched runnable Dex example.
+SDK and a version-matched runnable example or real-server compile-contract test.
 
-Do not implement Snapshot behavior until every Phase 2 gate in `MIGRATION.md`
-is satisfied. Never infer an API from the design screenshot.
+Snapshot code targets Dex Go SDK `v0.2.11` and the version-matched selective
+state contract recorded in `MIGRATION.md`. Recheck the installed SDK source and
+refresh the vendored skill before changing its resource projection or errors.
+Never infer an API from a design screenshot or unreleased branch.
 
 ## Deployment boundary
 

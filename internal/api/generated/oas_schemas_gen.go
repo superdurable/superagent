@@ -517,7 +517,33 @@ func (s *AgentSnapshot) SetSteered(val []PendingUserMessage) {
 	s.Steered = val
 }
 
-func (*AgentSnapshot) getAgentSnapshotRes() {}
+// AgentSnapshotHeaders wraps AgentSnapshot with response headers.
+type AgentSnapshotHeaders struct {
+	CacheControl GetAgentSnapshotOKCacheControl
+	Response     AgentSnapshot
+}
+
+// GetCacheControl returns the value of CacheControl.
+func (s *AgentSnapshotHeaders) GetCacheControl() GetAgentSnapshotOKCacheControl {
+	return s.CacheControl
+}
+
+// GetResponse returns the value of Response.
+func (s *AgentSnapshotHeaders) GetResponse() AgentSnapshot {
+	return s.Response
+}
+
+// SetCacheControl sets the value of CacheControl.
+func (s *AgentSnapshotHeaders) SetCacheControl(val GetAgentSnapshotOKCacheControl) {
+	s.CacheControl = val
+}
+
+// SetResponse sets the value of Response.
+func (s *AgentSnapshotHeaders) SetResponse(val AgentSnapshot) {
+	s.Response = val
+}
+
+func (*AgentSnapshotHeaders) getAgentSnapshotRes() {}
 
 // Ref: #/components/schemas/AgentStatus
 type AgentStatus string
@@ -961,6 +987,40 @@ func (*GetAgentSnapshotConflict) getAgentSnapshotRes() {}
 type GetAgentSnapshotNotFound Problem
 
 func (*GetAgentSnapshotNotFound) getAgentSnapshotRes() {}
+
+type GetAgentSnapshotOKCacheControl string
+
+const (
+	GetAgentSnapshotOKCacheControlNoStore GetAgentSnapshotOKCacheControl = "no-store"
+)
+
+// AllValues returns all GetAgentSnapshotOKCacheControl values.
+func (GetAgentSnapshotOKCacheControl) AllValues() []GetAgentSnapshotOKCacheControl {
+	return []GetAgentSnapshotOKCacheControl{
+		GetAgentSnapshotOKCacheControlNoStore,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s GetAgentSnapshotOKCacheControl) MarshalText() ([]byte, error) {
+	switch s {
+	case GetAgentSnapshotOKCacheControlNoStore:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *GetAgentSnapshotOKCacheControl) UnmarshalText(data []byte) error {
+	switch GetAgentSnapshotOKCacheControl(data) {
+	case GetAgentSnapshotOKCacheControlNoStore:
+		*s = GetAgentSnapshotOKCacheControlNoStore
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
 
 type GetAgentSnapshotServiceUnavailable Problem
 
@@ -1972,6 +2032,58 @@ func (s *PlanTask) SetStatus(val TaskStatus) {
 	s.Status = val
 }
 
+// Ref: #/components/schemas/PollTimeout
+type PollTimeout struct {
+	Reason PollTimeoutReason `json:"reason"`
+}
+
+// GetReason returns the value of Reason.
+func (s *PollTimeout) GetReason() PollTimeoutReason {
+	return s.Reason
+}
+
+// SetReason sets the value of Reason.
+func (s *PollTimeout) SetReason(val PollTimeoutReason) {
+	s.Reason = val
+}
+
+func (*PollTimeout) readEventRes() {}
+
+// Ref: #/components/schemas/PollTimeoutReason
+type PollTimeoutReason string
+
+const (
+	PollTimeoutReasonTimeout PollTimeoutReason = "timeout"
+)
+
+// AllValues returns all PollTimeoutReason values.
+func (PollTimeoutReason) AllValues() []PollTimeoutReason {
+	return []PollTimeoutReason{
+		PollTimeoutReasonTimeout,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PollTimeoutReason) MarshalText() ([]byte, error) {
+	switch s {
+	case PollTimeoutReasonTimeout:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PollTimeoutReason) UnmarshalText(data []byte) error {
+	switch PollTimeoutReason(data) {
+	case PollTimeoutReasonTimeout:
+		*s = PollTimeoutReasonTimeout
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/Portal
 type Portal struct {
 	Providers    []PortalProvider `json:"providers"`
@@ -2365,11 +2477,6 @@ func (*QueueMutationResponse) steerQueuedMessageRes()  {}
 type ReadEventBadRequest Problem
 
 func (*ReadEventBadRequest) readEventRes() {}
-
-// ReadEventGatewayTimeout is response for ReadEvent operation.
-type ReadEventGatewayTimeout struct{}
-
-func (*ReadEventGatewayTimeout) readEventRes() {}
 
 type ReadEventGone Problem
 

@@ -23,6 +23,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/superdurable/superagent/internal/agent"
+	transportapi "github.com/superdurable/superagent/internal/api/generated"
 	"github.com/superdurable/superagent/internal/config"
 )
 
@@ -43,5 +45,62 @@ func TestHTTPHandlerDoesNotServeFrontendRoutes(t *testing.T) {
 		if response.Code != http.StatusNotFound {
 			t.Errorf("GET %s status = %d, want %d", path, response.Code, http.StatusNotFound)
 		}
+	}
+}
+
+func TestSnapshotResponseCannotBeCached(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{snapshot: agent.AgentSnapshot{
+		RunID: "run-1",
+		History: agent.HistoryPage{
+			Messages: []agent.SequencedMessage{},
+		},
+		Description: agent.AgentDescription{
+			Status:              agent.AgentStatusInitializing,
+			Model:               "mock/reliable",
+			AvailableMCPServers: []string{},
+			AvailableTools:      []agent.ToolName{},
+		},
+		Queued:  []agent.PendingUserMessage{},
+		Steered: []agent.PendingUserMessage{},
+	}}
+	apiHandler := newTestHandler(service, fakeCredentials{})
+	directResponse, err := apiHandler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
+		FlowId: "flow-1",
+		Limit:  transportapi.NewOptInt(50),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotResponse, ok := directResponse.(*transportapi.AgentSnapshotHeaders)
+	if !ok {
+		t.Fatalf("direct response type = %T", directResponse)
+	}
+	if validationErr := snapshotResponse.Validate(); validationErr != nil {
+		t.Fatalf("validate direct response: %v", validationErr)
+	}
+	handler, err := NewHTTPHandler(
+		apiHandler,
+		&config.HTTP{},
+		slog.New(slog.DiscardHandler),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/products/ai-agent/snapshot?flowId=flow-1",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("Cache-Control = %q", cacheControl)
 	}
 }

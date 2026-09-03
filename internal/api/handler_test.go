@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/internal/agent"
 	transportapi "github.com/superdurable/superagent/internal/api/generated"
 )
@@ -104,6 +105,22 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	}
 }
 
+func TestReadEventMapsPollTimeoutToTypedResponse(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{eventErr: context.DeadlineExceeded}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.ReadEvent(context.Background(), transportapi.ReadEventParams{
+		FlowId: "flow-1", Stream: transportapi.EventStreamAssistant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeout, ok := response.(*transportapi.PollTimeout)
+	if !ok || timeout.Reason != transportapi.PollTimeoutReasonTimeout {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
 func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	t.Parallel()
 	createdAt := time.Unix(1, 0).UTC()
@@ -146,10 +163,17 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, ok := response.(*transportapi.AgentSnapshot)
+	result, ok := response.(*transportapi.AgentSnapshotHeaders)
 	if !ok {
 		t.Fatalf("response type = %T", response)
 	}
+	if result.CacheControl != transportapi.GetAgentSnapshotOKCacheControlNoStore {
+		t.Fatalf("Cache-Control = %q", result.CacheControl)
+	}
+	if validationErr := result.Validate(); validationErr != nil {
+		t.Fatalf("validate response: %v", validationErr)
+	}
+	snapshot := &result.Response
 	if snapshot.RunId != "run-1" || len(snapshot.History.Messages) != 1 || len(snapshot.Queued) != 1 {
 		t.Fatalf("Snapshot = %#v", snapshot)
 	}
@@ -161,6 +185,48 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	}
 	if snapshot.Description.PendingApproval.IsNull() || snapshot.Description.Plan.IsNull() {
 		t.Fatalf("Snapshot description = %#v", snapshot.Description)
+	}
+}
+
+func TestGetAgentSnapshotPreservesDexFlowLifecycleErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want func(transportapi.GetAgentSnapshotRes) bool
+	}{
+		{
+			name: "missing",
+			err:  &dex.FlowNotFoundError{ServiceError: &dex.ServiceError{}},
+			want: func(response transportapi.GetAgentSnapshotRes) bool {
+				_, ok := response.(*transportapi.GetAgentSnapshotNotFound)
+				return ok
+			},
+		},
+		{
+			name: "inactive",
+			err:  &dex.FlowNotActiveError{ServiceError: &dex.ServiceError{}},
+			want: func(response transportapi.GetAgentSnapshotRes) bool {
+				_, ok := response.(*transportapi.GetAgentSnapshotConflict)
+				return ok
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			handler := newTestHandler(&fakeAgentService{snapshotErr: test.err}, fakeCredentials{})
+			response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
+				FlowId: "flow-1",
+				Limit:  transportapi.NewOptInt(50),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !test.want(response) {
+				t.Fatalf("response type = %T", response)
+			}
+		})
 	}
 }
 

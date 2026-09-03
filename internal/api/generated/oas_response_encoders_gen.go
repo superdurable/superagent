@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/go-faster/jx"
+	"github.com/ogen-go/ogen/conv"
+	"github.com/ogen-go/ogen/uri"
 )
 
 func encodeApproveToolResponse(response ApproveToolRes, w http.ResponseWriter) error {
@@ -332,7 +334,7 @@ func encodeExecutePlanResponse(response ExecutePlanRes, w http.ResponseWriter) e
 
 func encodeGetAgentSnapshotResponse(response GetAgentSnapshotRes, w http.ResponseWriter) error {
 	switch response := response.(type) {
-	case *AgentSnapshot:
+	case *AgentSnapshotHeaders:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err
@@ -342,10 +344,26 @@ func encodeGetAgentSnapshotResponse(response GetAgentSnapshotRes, w http.Respons
 			return errors.Wrap(err, "validate")
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		// Encoding response headers.
+		{
+			h := uri.NewHeaderEncoder(w.Header())
+			// Encode "Cache-Control" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "Cache-Control",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.CacheControl)))
+				}); err != nil {
+					return errors.Wrap(err, "encode Cache-Control header")
+				}
+			}
+		}
 		w.WriteHeader(200)
 
 		e := new(jx.Encoder)
-		response.Encode(e)
+		response.Response.Encode(e)
 		if _, err := e.WriteTo(w); err != nil {
 			return errors.Wrap(err, "write")
 		}
@@ -654,8 +672,23 @@ func encodeReadEventResponse(response ReadEventRes, w http.ResponseWriter) error
 
 		return nil
 
-	case *ReadEventGatewayTimeout:
+	case *PollTimeout:
+		if err := func() error {
+			if err := response.Validate(); err != nil {
+				return err
+			}
+			return nil
+		}(); err != nil {
+			return errors.Wrap(err, "validate")
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(504)
+
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
 
 		return nil
 

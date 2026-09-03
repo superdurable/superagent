@@ -139,8 +139,8 @@ func (s *AgentDescription) Validate() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           0,
-			MaxSet:        false,
-			Max:           0,
+			MaxSet:        true,
+			Max:           9007199254740991,
 			MinExclusive:  false,
 			MaxExclusive:  false,
 			MultipleOfSet: false,
@@ -160,8 +160,8 @@ func (s *AgentDescription) Validate() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           0,
-			MaxSet:        false,
-			Max:           0,
+			MaxSet:        true,
+			Max:           9007199254740991,
 			MinExclusive:  false,
 			MaxExclusive:  false,
 			MultipleOfSet: false,
@@ -181,8 +181,8 @@ func (s *AgentDescription) Validate() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           0,
-			MaxSet:        false,
-			Max:           0,
+			MaxSet:        true,
+			Max:           9007199254740991,
 			MinExclusive:  false,
 			MaxExclusive:  false,
 			MultipleOfSet: false,
@@ -542,8 +542,8 @@ func (s *AgentPlan) Validate() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           1,
-			MaxSet:        false,
-			Max:           0,
+			MaxSet:        true,
+			Max:           9007199254740991,
 			MinExclusive:  false,
 			MaxExclusive:  false,
 			MultipleOfSet: false,
@@ -696,6 +696,40 @@ func (s *AgentSnapshot) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "steered",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *AgentSnapshotHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.CacheControl.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "CacheControl",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Response.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "Response",
 			Error: err,
 		})
 	}
@@ -971,8 +1005,8 @@ func (s *ExecutePlanRequest) Validate() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           1,
-			MaxSet:        false,
-			Max:           0,
+			MaxSet:        true,
+			Max:           9007199254740991,
 			MinExclusive:  false,
 			MaxExclusive:  false,
 			MultipleOfSet: false,
@@ -1044,6 +1078,15 @@ func (s *GetAgentSnapshotNotFound) Validate() error {
 		return err
 	}
 	return nil
+}
+
+func (s GetAgentSnapshotOKCacheControl) Validate() error {
+	switch s {
+	case "no-store":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *GetAgentSnapshotServiceUnavailable) Validate() error {
@@ -1465,6 +1508,38 @@ func (s *PlanTask) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s *PollTimeout) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Reason.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "reason",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s PollTimeoutReason) Validate() error {
+	switch s {
+	case "timeout":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *Portal) Validate() error {
@@ -2069,8 +2144,8 @@ func (s Sequence) Validate() error {
 	if err := (validate.Int{
 		MinSet:        true,
 		Min:           1,
-		MaxSet:        false,
-		Max:           0,
+		MaxSet:        true,
+		Max:           9007199254740991,
 		MinExclusive:  false,
 		MaxExclusive:  false,
 		MultipleOfSet: false,
