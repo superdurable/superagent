@@ -34,7 +34,6 @@ import (
 	"github.com/superdurable/superagent/internal/config"
 	mcpregistry "github.com/superdurable/superagent/internal/mcp"
 	"github.com/superdurable/superagent/internal/model"
-	"github.com/superdurable/superagent/internal/webui"
 )
 
 const (
@@ -137,13 +136,13 @@ func build(ctx context.Context, applicationConfig *config.Config, logger *slog.L
 	owned.dexClient = dexClient
 	agentClient := agent.NewClient(dexClient, flow)
 	apiHandler := httpapi.NewHandler(agentClient, toolRegistry, credentials, owned.ready.Load, logger)
-	generatedHandler, err := httpapi.NewHTTPHandler(apiHandler, logger)
+	generatedHandler, err := httpapi.NewHTTPHandler(apiHandler, applicationConfig.HTTP, logger)
 	if err != nil {
 		return nil, fmt.Errorf("construct OpenAPI server: %w", err)
 	}
 	owned.httpServer = &http.Server{
 		Addr:              applicationConfig.HTTP.Address,
-		Handler:           webui.NewHandler(generatedHandler),
+		Handler:           generatedHandler,
 		ReadHeaderTimeout: applicationConfig.HTTP.ReadHeaderTimeout,
 		IdleTimeout:       applicationConfig.HTTP.IdleTimeout,
 		MaxHeaderBytes:    maximumHeaderBytes,

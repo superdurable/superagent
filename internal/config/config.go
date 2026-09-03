@@ -33,6 +33,7 @@ type EnvironmentVariable string
 
 const (
 	EnvHTTPAddress           EnvironmentVariable = "SUPERAGENT_HTTP_ADDRESS"
+	EnvHTTPAllowedOrigins    EnvironmentVariable = "SUPERAGENT_HTTP_ALLOWED_ORIGINS"
 	EnvDexFlowServiceAddress EnvironmentVariable = "DEX_FLOW_SERVICE_ADDRESS"
 	EnvDexWorkerBindAddress  EnvironmentVariable = "DEX_WORKER_BIND_ADDRESS"
 	EnvDexWorkerTarget       EnvironmentVariable = "DEX_WORKER_TARGET"
@@ -51,6 +52,7 @@ const (
 
 const (
 	defaultHTTPAddress            = "127.0.0.1:8080"
+	defaultHTTPAllowedOrigins     = ""
 	defaultFlowServiceAddress     = "127.0.0.1:8801"
 	defaultWorkerBindAddress      = "127.0.0.1:8803"
 	defaultBlobCacheDirectory     = "/tmp/superagent-blob-cache"
@@ -73,10 +75,14 @@ type Config struct {
 // HTTP configures the public OpenAPI server.
 type HTTP struct {
 	Address           string
+	AllowedOrigins    []Origin
 	ReadHeaderTimeout time.Duration
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
 }
+
+// Origin is one canonical browser origin allowed to call the API.
+type Origin string
 
 // Dex configures the FlowService and application Worker.
 type Dex struct {
@@ -127,11 +133,16 @@ func load(lookup Lookup) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	allowedOrigins, err := optionalOrigins(lookup, EnvHTTPAllowedOrigins, defaultHTTPAllowedOrigins)
+	if err != nil {
+		return nil, err
+	}
 	workerBind := optional(lookup, EnvDexWorkerBindAddress, defaultWorkerBindAddress)
 	workerTarget := optional(lookup, EnvDexWorkerTarget, workerBind)
 	config := &Config{
 		HTTP: &HTTP{
 			Address:           optional(lookup, EnvHTTPAddress, defaultHTTPAddress),
+			AllowedOrigins:    allowedOrigins,
 			ReadHeaderTimeout: defaultHTTPReadHeaderTimeout,
 			IdleTimeout:       defaultHTTPIdleTimeout,
 			ShutdownTimeout:   defaultHTTPShutdownTimeout,
@@ -199,6 +210,15 @@ func (config *Config) Validate() error {
 		config.HTTP.ShutdownTimeout <= 0 || config.Providers.RequestTimeout <= 0 {
 		return errors.New("HTTP and provider timeouts must be positive")
 	}
+	for _, origin := range config.HTTP.AllowedOrigins {
+		normalized, err := normalizeOrigin(string(origin))
+		if err != nil {
+			return fmt.Errorf("HTTP allowed origin %q: %w", origin, err)
+		}
+		if normalized != origin {
+			return fmt.Errorf("HTTP allowed origin %q must be canonical", origin)
+		}
+	}
 	for _, provider := range []struct {
 		name   string
 		config *Provider
@@ -247,6 +267,67 @@ func validateProvider(name string, provider *Provider) error {
 		return fmt.Errorf("%s base URL must be an absolute HTTPS URL without credentials, query, or fragment", name)
 	}
 	return nil
+}
+
+func optionalOrigins(lookup Lookup, name EnvironmentVariable, fallback string) ([]Origin, error) {
+	raw := optional(lookup, name, fallback)
+	if raw == "" {
+		return nil, nil
+	}
+	origins := make([]Origin, 0, strings.Count(raw, ",")+1)
+	seen := make(map[Origin]struct{}, cap(origins))
+	for _, part := range strings.Split(raw, ",") {
+		origin, err := normalizeOrigin(strings.TrimSpace(part))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if _, found := seen[origin]; found {
+			return nil, fmt.Errorf("%s contains duplicate origin %q", name, origin)
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	return origins, nil
+}
+
+func normalizeOrigin(value string) (Origin, error) {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	hostname := strings.ToLower(parsed.Hostname())
+	if (scheme != "https" && scheme != "http") || hostname == "" || parsed.User != nil ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("must be an HTTP or HTTPS origin without credentials, path, query, or fragment")
+	}
+	for _, character := range hostname {
+		if character > 0x7f {
+			return "", errors.New("host must use its ASCII DNS representation")
+		}
+	}
+	if scheme == "http" && !isLoopbackHost(hostname) {
+		return "", errors.New("must use HTTPS unless the host is loopback")
+	}
+	port := parsed.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	host := hostname
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	} else if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+	return Origin(scheme + "://" + host), nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func optional(lookup Lookup, name EnvironmentVariable, fallback string) string {

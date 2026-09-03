@@ -8,7 +8,7 @@ set -eu
 git ls-files --cached --others --exclude-standard | while IFS= read -r path; do
   test -f "$path" || continue
   case "$path" in
-    reference/python/*|skills/dex-developer/*|internal/webui/assets/*|*/gen/*|*/generated/*|*.gen.*|*.generated.*)
+    reference/python/*|skills/dex-developer/*|*/gen/*|*/generated/*|*.gen.*|*.generated.*)
       continue
       ;;
     *.go|*.ts|*.tsx|*.js|*.jsx|*.css|*.html|*.sh|*.py|api/*.yaml)

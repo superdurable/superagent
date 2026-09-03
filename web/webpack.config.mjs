@@ -6,6 +6,7 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import CopyPlugin from "copy-webpack-plugin";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,8 +14,8 @@ export default {
   entry: "./src/index.tsx",
   output: {
     filename: "bundle.js",
-    path: path.resolve(directory, "../internal/webui/assets"),
-    clean: { keep: /index\.html$/ },
+    path: path.resolve(directory, "dist"),
+    clean: true,
   },
   module: {
     rules: [
@@ -26,5 +27,17 @@ export default {
       },
     ],
   },
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { from: path.resolve(directory, "public"), to: "." },
+        {
+          from: path.resolve(directory, "../LICENSE"),
+          to: "LICENSE",
+          toType: "file",
+        },
+      ],
+    }),
+  ],
   resolve: { extensions: [".tsx", ".ts", ".js"] },
 };

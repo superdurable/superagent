@@ -8,17 +8,18 @@ import { readFile } from "node:fs/promises";
 
 import { expect, test } from "@playwright/test";
 
-const applicationOrigin = "http://localhost";
-const assetDirectory = new URL("../../internal/webui/assets/", import.meta.url);
+const applicationOrigin = "https://app.example.test";
+const apiOrigin = "https://api.example.test";
+const assetDirectory = new URL("../dist/", import.meta.url);
 
-test("starts a Flow without calling a deferred read API", async ({ page }) => {
-  const requests: string[] = [];
+test("starts a Flow against a separately deployed API", async ({ page }) => {
+  const applicationRequests: string[] = [];
+  const apiRequests: string[] = [];
   let startBody: unknown;
-  await page.route(`${applicationOrigin}/**`, async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    requests.push(path);
 
+  await page.route(`${applicationOrigin}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    applicationRequests.push(path);
     switch (path) {
       case "/":
         await route.fulfill({
@@ -26,20 +27,49 @@ test("starts a Flow without calling a deferred read API", async ({ page }) => {
           body: await readFile(new URL("index.html", assetDirectory)),
         });
         return;
-      case "/products/ai-agent/assets/bundle.js":
+      case "/bundle.js":
         await route.fulfill({
           contentType: "text/javascript; charset=utf-8",
           body: await readFile(new URL("bundle.js", assetDirectory)),
         });
         return;
-      case "/products/ai-agent/assets/styles.css":
+      case "/styles.css":
         await route.fulfill({
           contentType: "text/css; charset=utf-8",
           body: await readFile(new URL("styles.css", assetDirectory)),
         });
         return;
+      case "/config.json":
+        await route.fulfill({
+          contentType: "application/json",
+          json: { apiOrigin },
+        });
+        return;
+      default:
+        await route.fulfill({ status: 404 });
+    }
+  });
+
+  await page.route(`${apiOrigin}/**`, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": applicationOrigin,
+          "Access-Control-Allow-Methods": "GET, POST",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      });
+      return;
+    }
+    apiRequests.push(path);
+    const headers = { "Access-Control-Allow-Origin": applicationOrigin };
+    switch (path) {
       case "/products/ai-agent/portal":
         await route.fulfill({
+          headers,
           contentType: "application/json",
           json: {
             providers: [
@@ -58,17 +88,17 @@ test("starts a Flow without calling a deferred read API", async ({ page }) => {
           },
         });
         return;
-      case "/products/ai-agent/start": {
+      case "/products/ai-agent/start":
         startBody = request.postDataJSON();
         await route.fulfill({
           status: 201,
+          headers,
           contentType: "application/json",
           json: { flowId: "browser-flow" },
         });
         return;
-      }
       default:
-        await route.fulfill({ status: 404 });
+        await route.fulfill({ status: 404, headers });
     }
   });
 
@@ -86,10 +116,11 @@ test("starts a Flow without calling a deferred read API", async ({ page }) => {
     provider: "mock",
     model: "mock/reliable",
   });
-  expect(requests).toContain("/products/ai-agent/portal");
-  expect(requests).toContain("/products/ai-agent/start");
+  expect(applicationRequests).toContain("/config.json");
+  expect(apiRequests).toContain("/products/ai-agent/portal");
+  expect(apiRequests).toContain("/products/ai-agent/start");
   expect(
-    requests.filter((path) =>
+    apiRequests.filter((path) =>
       [
         "/products/ai-agent/history",
         "/products/ai-agent/message-queue",

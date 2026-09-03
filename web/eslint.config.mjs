@@ -24,7 +24,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["src/api/generated/**", "static/**"] },
+  { ignores: ["dist/**", "src/api/generated/**", "static/**"] },
   { settings: { react: { version: "detect" } } },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,

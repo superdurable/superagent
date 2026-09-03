@@ -45,8 +45,8 @@ reviewable released-version upgrade is approved. It delivers:
 - Command RPCs for message send, steering, tool approval, and plan execution.
 - OpenAPI endpoints for portal, start, messages, plan execution, approvals,
   events, health, and readiness.
-- Retained React source and styles with generated clients only for the stable
-  Phase 1 surface.
+- A separately deployable React artifact with runtime API-origin configuration
+  and generated clients only for the stable Phase 1 surface.
 
 Queue mutation domain behavior may be completed and integration-tested, but its
 HTTP endpoints wait for Phase 2 because Snapshot will be the browser's formal
@@ -119,7 +119,8 @@ re-snapshots after disconnects or sequence gaps.
 Phase 1 evidence must cover Agent start, messages, plan, approval, user input,
 Timer, steering, compaction, Worker replacement, buffered Streams, Stream loss,
 MCP transports and cleanup, provider fixtures, stable OpenAPI routes, absence of
-deferred routes, UI production build, static assets, and portal smoke.
+deferred routes, the independent UI production artifact, runtime API
+configuration, CORS policy, and portal smoke.
 
 The live OpenAI Responses API test loads `OPENAI_API_KEY` from the ignored root
 `.env` only through its explicit Make target. It is serial, bounded, and never
@@ -141,6 +142,7 @@ skips or weakened assertions.
 - `ARCHITECTURE.md` describes package ownership and durable/live reconciliation.
 - `docs/flow-model.md` distinguishes application history from execution history.
 - `docs/adr/0001-wait-for-dex-snapshot.md` records the decision to wait.
+- `docs/adr/0002-separate-frontend-deployment.md` records the deployment boundary.
 - `CONTRIBUTING.md` documents skill loading, generation, and verification.
 - Phase 2's completion report records the Dex server commit, SDK version,
   runnable example source, and test evidence.
@@ -150,6 +152,10 @@ skips or weakened assertions.
 Phase 1 preserves the full React source and styling without connecting the main
 conversation page to an incomplete read surface. It retains plans, approvals,
 choices, fixed composer, keyboard behavior, and responsive layout.
+
+The frontend and backend are separate deployment units. Frontend configuration
+selects the API origin at page load. Frontend releases and rollbacks do not
+replace or restart the Go API and Worker process.
 
 Phase 2 uses a single Snapshot reducer action and explicit loading,
 reconnecting, stale, terminal, and failure states. Queue mutation uses typed
@@ -168,3 +174,4 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 1 safety | Go `1.26.6`, gRPC `v1.82.1`, `govulncheck v1.7.0`, and npm audit report zero known reachable vulnerabilities |
 | 2026-09-03 | Phase 1 fuzz | Domain JSON, enum, and built-in tool decoders completed 1.8M+ executions without a failure |
 | 2026-09-03 | Phase 1 gates | Governance, generation drift, formatting, binary build, vet, static analysis, unit/race tests, strict TypeScript, ESLint, Vitest, production Webpack, and Playwright passed |
+| 2026-09-03 | Deployment boundary | Pure API binary, standalone `web/dist`, runtime origin validation, exact CORS policy, cross-origin E2E, and full repository gates passed |

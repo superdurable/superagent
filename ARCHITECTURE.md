@@ -3,10 +3,10 @@
 ## System boundary
 
 ```text
-React portal
-    │ generated Fetch client
+React portal deployment
+    │ runtime-configured generated Fetch client
     ▼
-ogen HTTP server ─────── best-effort events
+Go API deployment ────── best-effort events
     │ typed command mapping
     ▼
 Dex Client ── FlowService ── Dex Worker
@@ -29,7 +29,6 @@ Agent state. Streams reduce latency but never become recovery state.
 | `internal/config` | Environment parsing and validated immutable sections | Runtime singletons or secret logging |
 | `internal/model` | Provider routing, protocol adapters, in-memory credential lookup | Dex resources or HTTP API responses |
 | `internal/mcp` | Trusted server config, discovery, policy, sessions, retries, brokers | Agent state transitions or exported Dex resource access |
-| `internal/webui` | Immutable embedded assets and security headers | API fallback logic or server-side UI state |
 | `web` | React portal and generated Fetch client | Handwritten API response types or durable-state reconstruction |
 
 Interfaces live at their consuming boundary. Concrete single-use components do
@@ -81,9 +80,18 @@ models, and enums. Explicit mappers keep generated transport types out of the
 domain package.
 
 Phase 1 serves only portal metadata, Flow start, message commands, plan
-execution, tool approval, events, health, and readiness. The embedded React
-files are served at fixed paths with a restrictive Content Security Policy,
-ETags, method checks, and no dynamic file-system lookup.
+execution, tool approval, events, health, and readiness. The API process does
+not serve React files.
+
+The frontend build produces an independent `web/dist` artifact. It reads a
+strict `config.json` at page load. The file configures the generated Fetch
+client with one API origin. Changing that file does not rebuild the bundle. The
+static host owns browser caching and Content Security Policy headers.
+
+Cross-origin API access uses a backend allowlist of exact frontend origins.
+Wildcards and credentialed browser requests are unsupported. Plain HTTP is
+accepted only for loopback development origins. A same-origin edge proxy can
+route both deployments without enabling CORS.
 
 ## Providers and credentials
 
@@ -117,7 +125,7 @@ registry owner.
 
 `internal/app` owns every long-lived resource. Startup validates configuration,
 discovers MCP, constructs providers, opens BlobCache, starts the Worker, waits
-for its listener, marks readiness, and then serves HTTP. Any startup failure
+for its listener, marks readiness, and then serves the API. Any startup failure
 closes everything already constructed.
 
 On cancellation or an unexpected Worker/HTTP exit, readiness is cleared. The
