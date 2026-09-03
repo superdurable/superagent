@@ -12,6 +12,13 @@ SDK and a version-matched runnable Dex example.
 Do not implement Snapshot behavior until every Phase 2 gate in `MIGRATION.md`
 is satisfied. Never infer an API from the design screenshot.
 
+## Deployment boundary
+
+The Go backend and `web/dist` frontend are separate artifacts. Do not add static
+assets, filesystem serving, or frontend fallback routes to the backend. Browser
+API origins come from `web/public/config.json` at runtime. Cross-origin access
+must use the backend's exact origin allowlist.
+
 ## Generated contracts
 
 OpenAPI is the HTTP contract source. Change `api/openapi.yaml`, regenerate both

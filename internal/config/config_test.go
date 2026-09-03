@@ -25,9 +25,58 @@ func TestLoadUsesValidatedDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.HTTP.Address != defaultHTTPAddress ||
+		len(config.HTTP.AllowedOrigins) != 0 ||
 		config.Dex.WorkerTarget != defaultWorkerBindAddress ||
 		config.BlobCache.MaxBytes != defaultBlobCacheMaxBytes {
 		t.Fatalf("unexpected defaults: %#v", config)
+	}
+}
+
+func TestLoadNormalizesAllowedOrigins(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{
+		string(EnvHTTPAllowedOrigins): "https://APP.Example.com:443/, http://localhost:3000",
+	}
+	config, err := load(func(name string) (string, bool) {
+		value, found := values[name]
+		return value, found
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Origin{"https://app.example.com", "http://localhost:3000"}
+	if len(config.HTTP.AllowedOrigins) != len(want) {
+		t.Fatalf("allowed origins = %q, want %q", config.HTTP.AllowedOrigins, want)
+	}
+	for index := range want {
+		if config.HTTP.AllowedOrigins[index] != want[index] {
+			t.Fatalf("allowed origin %d = %q, want %q", index, config.HTTP.AllowedOrigins[index], want[index])
+		}
+	}
+}
+
+func TestLoadRejectsUnsafeAllowedOrigins(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		"*",
+		"http://app.example.com",
+		"https://app.example.com/path",
+		"https://user:secret@app.example.com",
+		"https://app.example.com,https://app.example.com/",
+	} {
+		value := value
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			_, err := load(func(name string) (string, bool) {
+				if name == string(EnvHTTPAllowedOrigins) {
+					return value, true
+				}
+				return "", false
+			})
+			if err == nil {
+				t.Fatal("load error = nil")
+			}
+		})
 	}
 }
 

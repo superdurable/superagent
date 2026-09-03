@@ -18,11 +18,26 @@ npm run lint
 npm run build
 ```
 
-The production build is written to `internal/webui/assets/` and embedded in the
-Go binary. Generated files are committed; `make check-generated` verifies that
-both the ogen server and Hey API client have zero drift.
+The production build is written to the ignored `web/dist/` directory. It is a
+standalone deployment artifact. The Go binary contains no frontend files.
+Generated API files are committed. `make check-generated` verifies that both
+the ogen server and Hey API client have zero drift.
 
-Open `http://127.0.0.1:8080/products/ai-agent/` after Dex and Superagent start.
+The build copies `public/config.json` into the artifact. The browser loads it
+before rendering. The file configures the generated Fetch client from
+`apiOrigin`. Deployments can replace that JSON file without rebuilding the
+bundle.
+
+For local development, start Superagent with the frontend origin allowlisted:
+
+```bash
+SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent
+python3 -m http.server 3000 --directory web/dist
+```
+
+Open `http://127.0.0.1:3000/`. Production `apiOrigin` values must use HTTPS.
+Serve `config.json` with `Cache-Control: no-store`. Configure the static host's
+Content Security Policy to allow connections only to the selected API origin.
 
 ## Phase 2
 

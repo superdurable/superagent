@@ -1,4 +1,4 @@
 src/api/generated/
-../internal/webui/assets/
+dist/
 playwright-report/
 test-results/

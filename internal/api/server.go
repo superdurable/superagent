@@ -24,13 +24,14 @@ import (
 	"net/http"
 
 	transportapi "github.com/superdurable/superagent/internal/api/generated"
+	"github.com/superdurable/superagent/internal/config"
 )
 
 const maximumRequestBodyBytes = 2 << 20
 
 // NewHTTPHandler constructs a generated-contract server with bounded bodies and JSON errors.
-func NewHTTPHandler(handler *Handler, logger *slog.Logger) (http.Handler, error) {
-	if handler == nil || logger == nil {
+func NewHTTPHandler(handler *Handler, httpConfig *config.HTTP, logger *slog.Logger) (http.Handler, error) {
+	if handler == nil || httpConfig == nil || logger == nil {
 		panic("API server dependencies are required")
 	}
 	errorHandler := func(ctx context.Context, writer http.ResponseWriter, _ *http.Request, err error) {
@@ -59,12 +60,13 @@ func NewHTTPHandler(handler *Handler, logger *slog.Logger) (http.Handler, error)
 	if err != nil {
 		return nil, err
 	}
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	bounded := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Body != nil {
 			request.Body = http.MaxBytesReader(writer, request.Body, maximumRequestBodyBytes)
 		}
 		server.ServeHTTP(writer, request)
-	}), nil
+	})
+	return newCORSHandler(bounded, httpConfig, logger), nil
 }
 
 func writeProblem(writer http.ResponseWriter, status int, title string, detail string) error {

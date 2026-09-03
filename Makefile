@@ -1,7 +1,7 @@
-.PHONY: audit-web build check check-agent-rules check-generated copyright-check flow-visualize \
+.PHONY: audit-web build-api build-web check check-agent-rules check-generated copyright-check flow-visualize \
 	format-check fuzz generate generate-go generate-web governance-check lint lint-go lint-web \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
-	test-race test-web test-webui vet vulnerability-check
+	test-race test-web vet vulnerability-check
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./cmd/... ./internal/...
@@ -11,8 +11,11 @@ GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.7.0
 FUZZ_TIME ?= 10s
 
-build:
+build-api:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go build -o bin/superagent ./cmd/superagent
+
+build-web:
+	@npm --prefix web run build
 
 generate: generate-go generate-web
 
@@ -81,10 +84,7 @@ test-model:
 test-mcp:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/mcp
 
-test-webui:
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/webui
-
-test: test-agent test-api test-app test-config test-mcp test-model test-webui
+test: test-agent test-api test-app test-config test-mcp test-model
 
 test-race:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -race $(GO_PACKAGES)
@@ -100,4 +100,4 @@ test-web:
 test-openai-live:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=live -count=1 -run '^TestLiveOpenAIResponses$$' ./internal/model
 
-check: governance-check check-generated format-check build vet lint test test-race test-web vulnerability-check audit-web
+check: governance-check check-generated format-check build-api build-web vet lint test test-race test-web vulnerability-check audit-web
