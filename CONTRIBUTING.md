@@ -43,6 +43,7 @@ Install locked browser dependencies once with `npm --prefix web ci`, then run:
 
 ```bash
 make governance-check
+make check-cutover
 make format-check
 make vet
 make lint
@@ -64,9 +65,9 @@ static graph separately:
 
 ```bash
 DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
-DEX_REPO=/absolute/path/to/dex make flow-visualize
-DEX_REPO=/absolute/path/to/dex make generate-flow-definition
-DEX_REPO=/absolute/path/to/dex make check-flow-definition
+make flow-visualize
+make generate-flow-definition
+make check-flow-definition
 ```
 
 The integration suite reads private resources through the Dex Client only. It
@@ -78,7 +79,7 @@ The checked-in `flow-definitions/ai-agent.json` is generated from
 Flow graph. To load that JSON in Dex Web, run:
 
 ```bash
-DEX_REPO=/absolute/path/to/dex make flow-render
+make flow-render
 ```
 
 The explicit live provider test is serial and bounded:
@@ -89,6 +90,17 @@ make test-openai-live
 
 It is the only test permitted to read `OPENAI_API_KEY` from the ignored root
 `.env`. Never print, stage, or copy that file.
+
+## Cutover provenance
+
+The vendored Python oracle was removed after the Phase 3 parity review. Do not
+restore copied upstream examples. Compare future behavior against the immutable
+Dex commit and blob list in `docs/python-go-parity.md`. `make check-cutover`
+enforces that boundary.
+
+The CI workflow runs deterministic checks, fuzzing, Flow Definition drift, and
+real Dex integration. It uploads the Go backend and static frontend as separate
+artifacts so either deployment can be released independently.
 
 Before committing, run the full applicable gates and `git diff --check`. Do not
 bypass hooks. Inspect the staged diff, commit with a meaningful message, verify

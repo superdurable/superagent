@@ -1,0 +1,115 @@
+name: Quality gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Static, unit, browser, and release artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out Superagent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm --prefix web ci
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Run deterministic quality gates
+        run: make check
+      - name: Run decoder fuzzing cadence
+        run: make fuzz FUZZ_TIME=30s
+      - name: Verify the Go Flow Definition
+        run: make check-flow-definition
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: superagent-backend-linux-amd64
+          path: bin/superagent
+          if-no-files-found: error
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: superagent-frontend
+          path: web/dist
+          if-no-files-found: error
+
+  dex-integration:
+    name: Released Dex integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out Superagent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Temporal CLI
+        uses: temporalio/setup-temporal@1059a504f87e7fa2f385e3fa40d1aa7e62f1c6ca # v0
+        with:
+          version: 1.8.2
+      - name: Install released dexcli
+        run: make install-dexcli
+      - name: Start Dex and run integration parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          dex_log="$RUNNER_TEMP/dexcli.log"
+          .cache/dexcli-v0.1.21 dev \
+            -open=false \
+            -blob-store-dir "$RUNNER_TEMP/dex-blobs" \
+            -sqlite-db-filename "$RUNNER_TEMP/dex.sqlite.db" \
+            >"$dex_log" 2>&1 &
+          dex_pid=$!
+          cleanup() {
+            kill "$dex_pid" 2>/dev/null || true
+            wait "$dex_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          is_ready=false
+          for _ in {1..120}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8802/ >/dev/null; then
+              is_ready=true
+              break
+            fi
+            if ! kill -0 "$dex_pid" 2>/dev/null; then
+              cat "$dex_log"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$is_ready" != true ]; then
+            cat "$dex_log"
+            exit 1
+          fi
+          DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
+      - name: Upload Dex logs after failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dex-integration-log
+          path: ${{ runner.temp }}/dexcli.log
+          if-no-files-found: ignore

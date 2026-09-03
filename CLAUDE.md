@@ -13,10 +13,9 @@ not a Dex SDK example and must not depend on Dex internals.
 - Do not add a `go.mod` `replace` directive for Dex.
 - Before launch, remove dead APIs and fields. Do not add compatibility shims,
   deprecated aliases, dual paths, or comments describing discarded behavior.
-- Keep the imported Python application under `reference/python/` as a parity
-  oracle. Do not modify it except to refresh a recorded upstream snapshot.
-- Remove the Python oracle only after the Go implementation passes the complete
-  cutover gates documented in `MIGRATION.md`.
+- The Python parity oracle was removed after the Phase 3 cutover. Do not restore
+  copied upstream examples; use the immutable Dex commit recorded in
+  `docs/python-go-parity.md` for future comparison.
 
 ## Dex skill is mandatory
 
@@ -33,22 +32,18 @@ previous turn's memory.
 
 ## Snapshot boundary
 
-Phase 1 must not expose or implement these read endpoints:
+Do not expose or implement these legacy read endpoints:
 
 - `GET /products/ai-agent/history`
 - `GET /products/ai-agent/message-queue`
 - `GET /products/ai-agent/describe`
 - `GET /products/ai-agent/status`
-- `GET /products/ai-agent/snapshot`
 
-Do not add placeholders, local aggregation services, temporary wrappers, or
-guessed Snapshot signatures. Queue deletion and queue steering HTTP endpoints
-also wait for Phase 2 because their browser-visible message IDs come from the
-Snapshot contract.
-
-Start Phase 2 only after all gates in `MIGRATION.md` are met. The released
-Snapshot API must be derived from version-matched Dex source. Application
-history means the `AgentMessages` AttributeMap, never Dex execution history.
+`GET /products/ai-agent/snapshot` is the only durable browser read model. Do not
+add placeholders, local aggregation services, temporary wrappers, or parallel
+compatibility reads. Queue deletion and steering accept only message IDs from a
+Snapshot. Application history means the `AgentMessages` AttributeMap, never Dex
+execution history.
 
 ## Dex application modeling
 
@@ -213,6 +208,8 @@ Keep these documents current with the code:
 - `MIGRATION.md` for phase scope, parity, external gates, and test evidence.
 - `ARCHITECTURE.md` for package boundaries and durable/live reconciliation.
 - `docs/flow-model.md` for Flow resources and application-history semantics.
+- `docs/python-go-parity.md` for the immutable upstream baseline and cutover
+  evidence.
 - `docs/adr/` for consequential architecture decisions.
 - `CONTRIBUTING.md` for local setup, generation, verification, and skill use.
 
@@ -227,5 +224,5 @@ Keep these documents current with the code:
 - After each commit, inspect `git log -1 --format='%an %ae%n%B'`.
 - New or edited handwritten Go, TypeScript, JavaScript, CSS, HTML, shell, Python,
   and OpenAPI files use the repository Apache-2.0 header.
-- Generated files and the immutable upstream oracle follow their own recorded
-  license and are excluded from header rewriting.
+- Generated files and the vendored Dex skill follow their own recorded license
+  and are excluded from header rewriting.

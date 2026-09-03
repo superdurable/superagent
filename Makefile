@@ -1,19 +1,22 @@
-.PHONY: audit-web build-api build-dexcli build-web check check-agent-rules check-flow-definition \
+.PHONY: audit-web build-api build-web check check-agent-rules check-cutover check-flow-definition \
 	check-generated copyright-check flow-render flow-visualize format-check fuzz generate \
-	generate-flow-definition generate-go generate-web governance-check lint lint-go lint-web \
+	generate-flow-definition generate-go generate-web governance-check install-dexcli lint lint-go lint-web lint-workflows \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
 	test-race test-web vet vulnerability-check
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./cmd/... ./internal/...
-DEXCLI_BINARY := $(CURDIR)/.cache/dexcli
+DEXCLI_VERSION := v0.1.21
+DEXCLI_BINARY := $(CURDIR)/.cache/dexcli-$(DEXCLI_VERSION)
 FLOW_DEFINITION := $(CURDIR)/flow-definitions/ai-agent.json
 FLOW_DEFINITION_PREFIX := $(CURDIR)/flow-definitions/ai-agent
-DEX_REPO ?=
 STATICCHECK_VERSION := v0.7.0
 GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.7.0
+ACTIONLINT_VERSION := v1.7.12
 FUZZ_TIME ?= 10s
+INTEGRATION_TEST_RUN ?= ^TestAgent.*Integration$$
+INTEGRATION_TEST_TIMEOUT ?= 2m
 
 build-api:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go build -o bin/superagent ./cmd/superagent
@@ -41,30 +44,32 @@ check-agent-rules:
 copyright-check:
 	@sh script/check-license-headers.sh
 
-governance-check: check-agent-rules copyright-check
+check-cutover:
+	@sh script/check-cutover.sh
 
-build-dexcli:
-	@test -n "$(DEX_REPO)" || (echo "DEX_REPO must point to a Dex OSS checkout" >&2; exit 2)
-	@mkdir -p "$(CURDIR)/.cache"
-	@cd "$(DEX_REPO)/cli" && GOCACHE="$(GO_BUILD_CACHE)" GOWORK=off go build -trimpath \
-		-o "$(DEXCLI_BINARY)" ./cmd/dexcli
+governance-check: check-agent-rules check-cutover copyright-check
 
-generate-flow-definition: build-dexcli
+install-dexcli: $(DEXCLI_BINARY)
+
+$(DEXCLI_BINARY): script/install-dexcli.sh
+	@sh script/install-dexcli.sh "$(DEXCLI_BINARY)" "$(DEXCLI_VERSION)"
+
+generate-flow-definition: install-dexcli
 	@mkdir -p "$(CURDIR)/flow-definitions"
-	@cd "$(CURDIR)" && "$(DEXCLI_BINARY)" visualize internal/agent/flow.go \
+	@cd "$(CURDIR)" && GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go \
 		--language go --json --out "$(FLOW_DEFINITION_PREFIX)"
 
-check-flow-definition: build-dexcli
+check-flow-definition: install-dexcli
 	@set -eu; \
 		flow_definition_tmp="$$(mktemp -d)"; \
 		trap 'rm -rf "$${flow_definition_tmp}"' EXIT; \
 		cd "$(CURDIR)"; \
-		"$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
+		GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
 			--out "$${flow_definition_tmp}/ai-agent"; \
 		diff -u "$(FLOW_DEFINITION)" "$${flow_definition_tmp}/ai-agent.json"
 
-flow-visualize: build-dexcli
-	@cd "$(CURDIR)" && "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go
+flow-visualize: install-dexcli
+	@cd "$(CURDIR)" && GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go
 
 flow-render: generate-flow-definition
 	@"$(DEXCLI_BINARY)" dev --flow-rendering-dir "$(CURDIR)/flow-definitions"
@@ -80,19 +85,23 @@ lint-web:
 	@npm --prefix web run typecheck
 	@npm --prefix web run lint
 
-lint: lint-go lint-web
+lint-workflows:
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+
+lint: lint-go lint-web lint-workflows
 
 vulnerability-check:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
 
 audit-web:
-	@npm --prefix web audit --audit-level=moderate
+	@sh script/audit-web.sh
 
 test-agent:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/agent
 
 test-dex-integration:
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 -run '^TestAgent.*Integration$$' ./internal/agent
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 \
+		-run '$(INTEGRATION_TEST_RUN)' -timeout '$(INTEGRATION_TEST_TIMEOUT)' ./internal/agent
 
 test-api:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/api
