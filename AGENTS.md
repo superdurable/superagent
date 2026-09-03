@@ -179,6 +179,11 @@ history means the `AgentMessages` AttributeMap, never Dex execution history.
   prose. Configuration and return-value documentation are exempt.
 - Keep documentation direct. Put one idea in each sentence. Split behavior,
   constraints, and rationale into separate sentences.
+- Do not introduce `NormalizeXyz` identifiers. Name the concrete operation,
+  such as `ValidateAndSortSelections`, `TrimWhitespace`, or `CanonicalizeURL`.
+- Reuse an existing repository or public API term exactly. Do not invent a
+  synonym for an established term such as instance, name, message, or
+  definition.
 - Preserve existing comments verbatim during refactors. Update only stale facts
   while retaining their meaning.
 - Before creating a binary, add its exact path to `.gitignore` and

@@ -16,6 +16,8 @@ semantically synchronized.
   owned goroutines, and handled errors.
 - Keep documentation direct. Put one idea in each sentence. Split behavior,
   constraints, and rationale into separate sentences.
+- Do not introduce `NormalizeXyz` identifiers. Name the concrete operation.
+- Reuse existing repository and public API terms exactly in identifiers.
 - Domain packages prohibit `any`, dynamic maps, and raw string states.
 - Never export Dex resource getters solely to expose descriptors.
 - Keep provider, MCP, Dex, application, transport, and UI boundaries separate.
