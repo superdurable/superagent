@@ -1,0 +1,45 @@
+{
+  "name": "@superdurable/superagent-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Superagent browser application",
+  "scripts": {
+    "start": "webpack --config webpack.config.mjs --mode development --watch",
+    "build": "webpack --config webpack.config.mjs --mode production",
+    "format:check": "prettier --check --ignore-path .prettierignore .",
+    "generate:api": "openapi-ts",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
+    "@playwright/test": "1.62.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "eslint": "9.39.4",
+    "eslint-plugin-jsx-a11y": "6.10.2",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "jsdom": "26.1.0",
+    "prettier": "3.9.6",
+    "ts-loader": "^9.4.3",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.69.0",
+    "vitest": "4.1.11",
+    "webpack": "^5.84.1",
+    "webpack-cli": "^5.1.1"
+  },
+  "overrides": {
+    "js-yaml": "4.3.1"
+  }
+}

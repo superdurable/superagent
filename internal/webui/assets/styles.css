@@ -1,0 +1,262 @@
+/*
+ * Copyright (c) 2022-2026 Super Durable, Inc.
+ * Licensed under the Apache License, Version 2.0.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+:root {
+  color: #1d2530;
+  background: #f3f5f8;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button,
+input,
+textarea,
+fieldset {
+  border-radius: 10px;
+}
+
+.shell {
+  width: min(840px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 56px 0 80px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.brand h1,
+.brand p {
+  margin: 0;
+}
+.brand p {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 15px;
+  color: white;
+  background: #4757d6;
+  font-size: 24px;
+  font-weight: 800;
+}
+.phase-pill {
+  margin-left: auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #4353c7;
+  background: #eef0ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.launch-card,
+.status-card {
+  padding: 28px;
+  border: 1px solid #e2e6ec;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 16px 50px rgb(34 45 66 / 8%);
+}
+.launch-card h2 {
+  margin: 28px 0 12px;
+  font-size: 17px;
+}
+.launch-card h2:first-child {
+  margin-top: 0;
+}
+.launch-card > label,
+.field-row > label {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 700;
+}
+input:not([type="checkbox"]):not([type="radio"]),
+textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #ccd2dc;
+  color: #1d2530;
+  background: white;
+}
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 3px solid rgb(71 87 214 / 24%);
+  outline-offset: 2px;
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.provider-grid label {
+  display: flex;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #dfe3e9;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.provider-grid label.selected {
+  border-color: #6672df;
+  background: #f7f7ff;
+}
+.provider-grid label:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.provider-grid span {
+  display: grid;
+  gap: 4px;
+}
+.provider-grid small {
+  color: #667085;
+  overflow-wrap: anywhere;
+}
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid #e1e5eb;
+}
+legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.check-option {
+  display: block;
+  padding: 5px 0;
+  overflow-wrap: anywhere;
+}
+.switch {
+  display: flex !important;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+.notice,
+.error {
+  padding: 11px 13px;
+  border-radius: 10px;
+}
+.notice {
+  color: #7a4d00;
+  background: #fff7df;
+}
+.error {
+  color: #8a1f17;
+  background: #fff0ee;
+}
+.muted {
+  color: #667085;
+  font-size: 13px;
+}
+
+button {
+  padding: 11px 16px;
+  border: 0;
+  color: white;
+  background: #4757d6;
+  font-weight: 800;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+button.secondary {
+  color: #3541a9;
+  background: #eef0ff;
+}
+.status-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+.status-card {
+  width: min(640px, 100%);
+  text-align: center;
+}
+.status-card .phase-pill {
+  display: inline-block;
+  margin: 12px 0 0;
+}
+.status-card code {
+  overflow-wrap: anywhere;
+}
+.status-card.danger {
+  border-color: #f0c2be;
+}
+.status-icon {
+  display: inline-grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #2f9e68;
+  font-size: 24px;
+}
+
+@media (max-width: 620px) {
+  .shell {
+    width: min(100% - 20px, 840px);
+    padding-top: 24px;
+  }
+  .brand {
+    align-items: flex-start;
+  }
+  .brand h1 {
+    font-size: 25px;
+  }
+  .launch-card {
+    padding: 20px;
+  }
+  .field-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

@@ -1,6 +1,6 @@
 ---
 description: OpenAPI-first frontend and backend contract
-globs: "{api,internal/httpapi,web/src/api}/**/*"
+globs: "{api,internal/api,web/src/api}/**/*"
 alwaysApply: false
 ---
 

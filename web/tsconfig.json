@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "outDir": "./static/js/",
+    "sourceMap": false,
+    "strict": true,
+    "module": "ESNext",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "useUnknownInCatchVariables": true
+  },
+  "include": [
+    "./openapi-ts.config.ts",
+    "./playwright.config.ts",
+    "./vitest.config.ts",
+    "./src/**/*",
+    "./tests/**/*"
+  ]
+}

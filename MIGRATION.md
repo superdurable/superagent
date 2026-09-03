@@ -161,3 +161,10 @@ zero legacy read requests and exactly one initial Snapshot request.
 | Date | Phase | Evidence |
 |---|---|---|
 | 2026-09-02 | Baseline | Dex `examples/python` copied from `13db6da5`; 251 tracked files verified byte-for-byte; focused source tests: 16 passed |
+| 2026-09-03 | Phase 1 graph | `dexcli visualize` against Dex `13db6da5`: valid graph, 62 nodes, 27 edges, zero diagnostics |
+| 2026-09-03 | Phase 1 Dex integration | Real Dex server and Go SDK `v0.2.9`: messages/history provenance, buffered streams, approval/input/timer waits, plan execution, queue/steer semantics, compaction, and Worker replacement passed |
+| 2026-09-03 | Phase 1 MCP | Real SDK Streamable HTTP and stdio tests: paginated discovery, headers, execution, bounded read retry/timeout, and subprocess cleanup passed |
+| 2026-09-03 | Phase 1 provider | Explicit `.env`-backed OpenAI Responses streaming test passed without exposing credentials |
+| 2026-09-03 | Phase 1 safety | Go `1.26.6`, gRPC `v1.82.1`, `govulncheck v1.7.0`, and npm audit report zero known reachable vulnerabilities |
+| 2026-09-03 | Phase 1 fuzz | Domain JSON, enum, and built-in tool decoders completed 1.8M+ executions without a failure |
+| 2026-09-03 | Phase 1 gates | Governance, generation drift, formatting, binary build, vet, static analysis, unit/race tests, strict TypeScript, ESLint, Vitest, production Webpack, and Playwright passed |
