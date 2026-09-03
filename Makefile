@@ -94,7 +94,7 @@ vulnerability-check:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
 
 audit-web:
-	@npm --prefix web audit --audit-level=moderate
+	@sh script/audit-web.sh
 
 test-agent:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/agent
