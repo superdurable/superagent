@@ -4,6 +4,7 @@
 /.cache/
 /.cache/dexcli
 /.cache/dexcli-v0.1.21
+/.cache/osv-scanner-v2.5.1
 /bin/superagent
 /coverage/
 /web/coverage/

@@ -1,6 +1,6 @@
 .PHONY: audit-web build-api build-web check check-agent-rules check-cutover check-flow-definition \
 	check-generated copyright-check flow-render flow-visualize format-check fuzz generate \
-	generate-flow-definition generate-go generate-web governance-check install-dexcli lint lint-go lint-web lint-workflows \
+	generate-flow-definition generate-go generate-web governance-check install-dexcli install-osv-scanner lint lint-go lint-web lint-workflows \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
 	test-race test-web vet vulnerability-check
 
@@ -8,6 +8,8 @@ GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./cmd/... ./internal/...
 DEXCLI_VERSION := v0.1.21
 DEXCLI_BINARY := $(CURDIR)/.cache/dexcli-$(DEXCLI_VERSION)
+OSV_SCANNER_VERSION := v2.5.1
+OSV_SCANNER_BINARY := $(CURDIR)/.cache/osv-scanner-$(OSV_SCANNER_VERSION)
 FLOW_DEFINITION := $(CURDIR)/flow-definitions/ai-agent.json
 FLOW_DEFINITION_PREFIX := $(CURDIR)/flow-definitions/ai-agent
 STATICCHECK_VERSION := v0.7.0
@@ -54,6 +56,11 @@ install-dexcli: $(DEXCLI_BINARY)
 $(DEXCLI_BINARY): script/install-dexcli.sh
 	@sh script/install-dexcli.sh "$(DEXCLI_BINARY)" "$(DEXCLI_VERSION)"
 
+install-osv-scanner: $(OSV_SCANNER_BINARY)
+
+$(OSV_SCANNER_BINARY): script/install-osv-scanner.sh
+	@sh script/install-osv-scanner.sh "$(OSV_SCANNER_BINARY)" "$(OSV_SCANNER_VERSION)"
+
 generate-flow-definition: install-dexcli
 	@mkdir -p "$(CURDIR)/flow-definitions"
 	@cd "$(CURDIR)" && GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go \
@@ -93,8 +100,8 @@ lint: lint-go lint-web lint-workflows
 vulnerability-check:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
 
-audit-web:
-	@sh script/audit-web.sh
+audit-web: install-osv-scanner
+	@"$(OSV_SCANNER_BINARY)" scan source --lockfile=web/package-lock.json
 
 test-agent:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/agent
