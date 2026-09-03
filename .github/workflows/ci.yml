@@ -67,6 +67,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Set up Temporal CLI
+        uses: temporalio/setup-temporal@1059a504f87e7fa2f385e3fa40d1aa7e62f1c6ca # v0
+        with:
+          version: 1.8.2
       - name: Install released dexcli
         run: make install-dexcli
       - name: Start Dex and run integration parity
