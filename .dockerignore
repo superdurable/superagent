@@ -1,11 +1,11 @@
 .git
 .cache
 .cache/dexcli
+.cache/dexcli-v0.1.21
 .env
 .env.*
 bin/superagent
 coverage
-reference/python
 web/coverage
 web/dist
 web/node_modules

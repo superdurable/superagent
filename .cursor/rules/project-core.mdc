@@ -11,6 +11,8 @@ semantically synchronized.
 
 - Superagent is a production application on the released Dex Go SDK, not an SDK
   example. Do not depend on Dex internals or unreleased APIs.
+- Do not restore copied Python examples. Compare against the immutable Dex
+  commit recorded in `docs/python-go-parity.md`.
 - Do not add compatibility shims before launch.
 - Use constructor injection, typed domain values, explicit boundary mappers,
   owned goroutines, and handled errors.

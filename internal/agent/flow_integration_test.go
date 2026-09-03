@@ -39,6 +39,8 @@ import (
 
 const integrationToolName ToolName = "integration_tool"
 
+const integrationWaitTimeout = 30 * time.Second
+
 func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	modelClient := integrationModel{}
 	toolRegistry := newIntegrationToolRegistry()
@@ -131,10 +133,20 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
+	stalePlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision + 1})
+	var stalePlan *CommandRejectedError
+	if !errors.As(stalePlanErr, &stalePlan) || stalePlan.Command != CommandExecutePlan {
+		t.Fatalf("stale plan execution error = %T %v", stalePlanErr, stalePlanErr)
+	}
 	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
+	completedPlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision})
+	var completedPlan *CommandRejectedError
+	if !errors.As(completedPlanErr, &completedPlan) || completedPlan.Command != CommandExecutePlan {
+		t.Fatalf("completed plan execution error = %T %v", completedPlanErr, completedPlanErr)
+	}
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/ask deployment region"}); err != nil {
 		t.Fatal(err)
@@ -206,6 +218,183 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	})
 }
 
+func TestAgentUserInputParityIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-input-parity-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/ask-many What date should I use?"}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil
+	})
+	if snapshot.Description.PendingUserInput.Prompt != "What date should I use?" {
+		t.Fatalf("pending prompt = %q", snapshot.Description.PendingUserInput.Prompt)
+	}
+	requestIndex := -1
+	for index := len(snapshot.History.Messages) - 1; index >= 0; index-- {
+		if len(snapshot.History.Messages[index].Message.ToolCalls) == 2 {
+			requestIndex = index
+			break
+		}
+	}
+	if requestIndex < 0 || requestIndex+2 >= len(snapshot.History.Messages) {
+		t.Fatalf("multi-call history = %#v", snapshot.History.Messages)
+	}
+	request := snapshot.History.Messages[requestIndex]
+	firstResult := snapshot.History.Messages[requestIndex+1]
+	secondResult := snapshot.History.Messages[requestIndex+2]
+	if firstResult.Message.ToolCallID == nil || secondResult.Message.ToolCallID == nil ||
+		*firstResult.Message.ToolCallID != request.Message.ToolCalls[0].ID ||
+		*secondResult.Message.ToolCallID != request.Message.ToolCalls[1].ID ||
+		!strings.Contains(secondResult.Message.Content, string(toolErrorSupersededByUserInput)) {
+		t.Fatalf("multi-call results = %#v / %#v", firstResult, secondResult)
+	}
+	environment.replaceWorker(t)
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "September 12"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: September 12")
+	})
+
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/choose Where should I deploy? | Staging | Production",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot = waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil &&
+			len(snapshot.Description.PendingUserInput.Choices) == 2
+	})
+	input := snapshot.Description.PendingUserInput
+	if input.Prompt != "Where should I deploy?" || input.Choices[0] != "Staging" || input.Choices[1] != "Production" {
+		t.Fatalf("pending input = %#v", input)
+	}
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "Production"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: Production")
+	})
+}
+
+func TestAgentPlanGuardrailsIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-plan-guardrails-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "Plan the first objective", PlanMode: true}); err != nil {
+		t.Fatal(err)
+	}
+	first := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "Plan the revised objective", PlanMode: true}); err != nil {
+		t.Fatal(err)
+	}
+	revised := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Plan != nil &&
+			snapshot.Description.Plan.Revision > first.Revision
+	})
+	if revised.Description.Plan.Tasks[0].Content != "Plan the revised objective" {
+		t.Fatalf("revised plan = %#v", revised.Description.Plan)
+	}
+	oldRevisionErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: first.Revision})
+	var rejected *CommandRejectedError
+	if !errors.As(oldRevisionErr, &rejected) {
+		t.Fatalf("old revision error = %T %v", oldRevisionErr, oldRevisionErr)
+	}
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/plan-clear", PlanMode: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan == nil
+	})
+
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/plan-stop demonstrate advisory completion", PlanMode: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
+	})
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: draftSnapshot.Description.Plan.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	active := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool integration_tool {}"}); err != nil {
+		t.Fatal(err)
+	}
+	afterBlockedTool := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			historyContainsText(snapshot.History.Messages, string(toolErrorUnknownOrDisabled))
+	})
+	if afterBlockedTool.Description.Plan == nil || afterBlockedTool.Description.Plan.Status != PlanStatusActive ||
+		afterBlockedTool.Description.Plan.Revision != active.Description.Plan.Revision {
+		t.Fatalf("blocked tool changed active plan: %#v", afterBlockedTool.Description.Plan)
+	}
+}
+
+func TestAgentBatchSteeringIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-steer-batch-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForPendingTimer(t, environment, flowID)
+	for _, content := range []string{"first replacement objective", "final replacement objective"} {
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued := waitForQueuedMessages(t, environment, flowID, 2)
+	for _, message := range queued {
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: MessageID(message.MessageID)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			len(snapshot.Queued) == 0 && len(snapshot.Steered) == 0 &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: final replacement objective")
+	})
+	users := make([]string, 0, 2)
+	for _, item := range snapshot.History.Messages {
+		if item.Message.Role == MessageRoleUser && strings.Contains(item.Message.Content, "replacement objective") {
+			users = append(users, item.Message.Content)
+		}
+	}
+	if len(users) != 2 || users[0] != "first replacement objective" || users[1] != "final replacement objective" {
+		t.Fatalf("steered user messages = %q", users)
+	}
+}
+
 func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-terminal-" + randomLocalID(t))
@@ -252,6 +441,40 @@ func readSnapshot(
 		t.Fatal(err)
 	}
 	return snapshot
+}
+
+func waitForSnapshot(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	accept func(AgentSnapshot) bool,
+) AgentSnapshot {
+	t.Helper()
+	var snapshot AgentSnapshot
+	waitUntil(t, environment, "Agent Snapshot", func() (bool, error) {
+		var err error
+		snapshot, err = environment.agent.Snapshot(t.Context(), flowID, SnapshotRequest{Limit: 200})
+		return err == nil && accept(snapshot), err
+	})
+	return snapshot
+}
+
+func historyHasMessage(messages []SequencedMessage, role MessageRole, content string) bool {
+	for _, message := range messages {
+		if message.Message.Role == role && message.Message.Content == content {
+			return true
+		}
+	}
+	return false
+}
+
+func historyContainsText(messages []SequencedMessage, text string) bool {
+	for _, message := range messages {
+		if strings.Contains(message.Message.Content, text) {
+			return true
+		}
+	}
+	return false
 }
 
 type agentIntegrationEnvironment struct {
@@ -519,6 +742,8 @@ func waitUntil(
 	t.Helper()
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
+	deadline := time.NewTimer(integrationWaitTimeout)
+	defer deadline.Stop()
 	for {
 		matched, err := condition()
 		if err != nil {
@@ -529,6 +754,8 @@ func waitUntil(
 		}
 		select {
 		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("wait for %s exceeded %s", description, integrationWaitTimeout)
 		case <-t.Context().Done():
 			t.Fatalf("wait for %s: %v", description, t.Context().Err())
 		}
@@ -613,6 +840,13 @@ func (integrationModel) Complete(ctx context.Context, request ModelRequest) (Mod
 		return integrationToolReply(request, ToolNameWriteTodos, arguments, "drafted plan")
 	}
 	if hasActiveIntegrationPlan(request.Messages) {
+		if strings.HasPrefix(integrationLastUserContent(request.Messages), "/plan-stop ") {
+			content := "integration stopped before completing the active plan"
+			if err := request.WriteAssistant(content); err != nil {
+				return ModelReply{}, err
+			}
+			return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
+		}
 		arguments := integrationPlanArguments(request.Messages, TaskStatusCompleted)
 		return integrationToolReply(request, ToolNameWriteTodos, arguments, "completed plan")
 	}
@@ -631,6 +865,56 @@ func (integrationModel) Complete(ctx context.Context, request ModelRequest) (Mod
 		return ModelReply{}, errors.New("integration /ask prompt is missing")
 	case "/wait":
 		return integrationToolReply(request, ToolNameDurableWait, MustJSONObject(`{"duration_seconds":30,"reason":"integration wait"}`), "waiting durably")
+	}
+	if strings.HasPrefix(userContent, "/ask-many ") {
+		prompt := strings.TrimSpace(strings.TrimPrefix(userContent, "/ask-many "))
+		inputJSON, err := json.Marshal(struct {
+			Prompt string `json:"prompt"`
+		}{Prompt: prompt})
+		if err != nil {
+			return ModelReply{}, err
+		}
+		inputArguments, err := ParseJSONObject(string(inputJSON))
+		if err != nil {
+			return ModelReply{}, err
+		}
+		calls := []ToolCall{
+			integrationToolCall(request, ToolNameRequestUserInput, inputArguments),
+			integrationToolCall(request, ToolNameDurableWait, MustJSONObject(`{"duration_seconds":60,"reason":"superseded test"}`)),
+		}
+		return ModelReply{Content: "requesting input", ToolCalls: calls}, nil
+	}
+	if strings.HasPrefix(userContent, "/choose ") {
+		parts := strings.Split(strings.TrimPrefix(userContent, "/choose "), "|")
+		if len(parts) < 3 {
+			return ModelReply{}, errors.New("integration /choose requires a prompt and two choices")
+		}
+		for index := range parts {
+			parts[index] = strings.TrimSpace(parts[index])
+		}
+		encoded, err := json.Marshal(struct {
+			Prompt  string   `json:"prompt"`
+			Choices []string `json:"choices"`
+		}{Prompt: parts[0], Choices: parts[1:]})
+		if err != nil {
+			return ModelReply{}, err
+		}
+		arguments, err := ParseJSONObject(string(encoded))
+		if err != nil {
+			return ModelReply{}, err
+		}
+		return integrationToolReply(request, ToolNameRequestUserInput, arguments, "requesting a choice")
+	}
+	if strings.HasPrefix(userContent, "/tool ") {
+		parts := strings.SplitN(userContent, " ", 3)
+		if len(parts) != 3 {
+			return ModelReply{}, errors.New("integration /tool requires a name and arguments")
+		}
+		arguments, err := ParseJSONObject(parts[2])
+		if err != nil {
+			return ModelReply{}, err
+		}
+		return integrationToolReply(request, ToolName(parts[1]), arguments, "calling integration tool")
 	}
 	if strings.HasPrefix(userContent, "/ask ") {
 		prompt, err := json.Marshal(struct {
@@ -675,15 +959,18 @@ func integrationToolReply(request ModelRequest, name ToolName, arguments JSONObj
 	if err := request.WriteAssistant(content); err != nil {
 		return ModelReply{}, err
 	}
-	digest := sha256.Sum256([]byte(string(request.FlowID) + "\x00" + string(name) + "\x00" + integrationLastUserContent(request.Messages)))
 	return ModelReply{
-		Content: content,
-		ToolCalls: []ToolCall{{
-			ID:        CallID("call-" + hex.EncodeToString(digest[:16])),
-			Name:      name,
-			Arguments: arguments,
-		}},
+		Content:   content,
+		ToolCalls: []ToolCall{integrationToolCall(request, name, arguments)},
 	}, nil
+}
+
+func integrationToolCall(request ModelRequest, name ToolName, arguments JSONObject) ToolCall {
+	digest := sha256.Sum256([]byte(
+		string(request.FlowID) + "\x00" + string(name) + "\x00" + arguments.String() + "\x00" +
+			integrationLastUserContent(request.Messages),
+	))
+	return ToolCall{ID: CallID("call-" + hex.EncodeToString(digest[:16])), Name: name, Arguments: arguments}
 }
 
 func integrationPlanArguments(messages []AgentMessage, status TaskStatus) JSONObject {
@@ -691,7 +978,11 @@ func integrationPlanArguments(messages []AgentMessage, status TaskStatus) JSONOb
 	if content == "" {
 		content = "integration objective"
 	}
-	encoded, err := json.Marshal(writeTodosArguments{Todos: []PlanTask{{Content: content, Status: status}}})
+	tasks := []PlanTask{{Content: content, Status: status}}
+	if strings.EqualFold(content, "/plan-clear") {
+		tasks = []PlanTask{}
+	}
+	encoded, err := json.Marshal(writeTodosArguments{Todos: tasks})
 	if err != nil {
 		panic(err)
 	}
@@ -717,6 +1008,10 @@ func integrationLastConversationMessage(messages []AgentMessage) *AgentMessage {
 }
 
 func hasActiveIntegrationPlan(messages []AgentMessage) bool {
+	if len(messages) == 0 || messages[len(messages)-1].Role != MessageRoleSystem ||
+		!strings.Contains(messages[len(messages)-1].Content, "The user approved this plan. Execute it") {
+		return false
+	}
 	for index := len(messages) - 1; index >= 0; index-- {
 		message := messages[index]
 		if message.Role == MessageRoleSystem && strings.Contains(message.Content, "Current durable plan:") {

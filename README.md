@@ -1,15 +1,15 @@
 # Superagent
 
 Superagent is a standalone, production-oriented AI agent built on Dex durable
-execution. The Phase 2 implementation ports the Python agent core to Go on the
-released Dex Go SDK `v0.2.12`, retains the React application, and uses
-OpenAPI-generated server and browser contracts.
+execution. It runs on the released Dex Go SDK `v0.2.12`, retains the complete
+React application, and uses OpenAPI-generated server and browser contracts.
 
-The immutable upstream Python baseline is under `reference/python/`. Migration
-scope, external gates, and evidence are tracked in `MIGRATION.md`; package and
-durability boundaries are described in `ARCHITECTURE.md`.
+The Python-to-Go cutover is complete. The immutable upstream comparison and
+test mapping are recorded in `docs/python-go-parity.md`; migration evidence is
+tracked in `MIGRATION.md`, and package boundaries are described in
+`ARCHITECTURE.md`.
 
-## Phase 2 scope
+## Product scope
 
 The application includes typed Agent state and commands, plans, approvals, user input,
 durable timers, steering, compaction, buffered streams, provider adapters, MCP
@@ -111,36 +111,40 @@ runtime file. The static host also owns the frontend Content Security Policy.
 
 ```bash
 make check
+make check-cutover
 DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
 make test-openai-live
-DEX_REPO=/absolute/path/to/dex make flow-visualize
+make flow-visualize
 ```
 
 `make check` is deterministic and credential-free. The Dex integration target
 requires a running server. The explicit live target is the only test that reads
 `OPENAI_API_KEY` from the ignored root `.env`.
 
+GitHub Actions publishes the backend binary and static frontend as separate
+workflow artifacts. Neither artifact contains the retired Python oracle.
+
 ## Flow rendering
 
-Generate the checked-in Go `AIAgentFlow` definition with a version-matched Dex
-checkout:
+Generate the checked-in Go `AIAgentFlow` definition with the checksum-verified
+released Dex CLI:
 
 ```bash
-DEX_REPO=/absolute/path/to/dex make generate-flow-definition
-DEX_REPO=/absolute/path/to/dex make check-flow-definition
+make generate-flow-definition
+make check-flow-definition
 ```
 
 Render the Go source directly in a temporary Flow Rendering page:
 
 ```bash
-DEX_REPO=/absolute/path/to/dex make flow-visualize
+make flow-visualize
 ```
 
 Render the generated JSON together with any future definitions in
 `flow-definitions/`:
 
 ```bash
-DEX_REPO=/absolute/path/to/dex make flow-render
+make flow-render
 ```
 
 `flow-render` starts a local Dex development environment. Open the printed Dex

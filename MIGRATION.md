@@ -6,12 +6,10 @@ Port the Dex Python AI agent into a standalone, production-grade Go application
 without losing behavior, durability, observability, or frontend capability.
 The released Dex Go SDK is the only runtime dependency boundary.
 
-The Python source under `reference/python/` is an immutable parity oracle copied
-from Dex OSS commit `13db6da5`.
-
-Dex PR 448 remains an open comparison target as of 2026-09-03. Its AI Agent
-changes were reviewed, but they are not copied into the immutable oracle or the
-vendored skill until they merge to Dex `main`.
+The initial Python parity oracle was copied from Dex OSS commit `13db6da5`.
+Phase 3 compared the completed Go application directly with Dex PR 448 merge
+commit `d09a5d7b75754d7b8df00bc06df5902507fc5425`, recorded immutable blob IDs,
+and removed the vendored Python tree.
 
 ## Delivery phases
 
@@ -117,8 +115,8 @@ The Phase 2 entry gates were reviewed against Dex commit `2f961961` on
 Superagent uses decimal sequence values as `AgentMessages` instance keys. The
 slash restriction does not require a data migration.
 
-The vendored `dex-developer` skill is byte-identical at `13db6da5` and
-`ce1d734e`. Its provenance record now identifies the reviewed Phase 2 commit.
+The initial vendored `dex-developer` skill was byte-identical at `13db6da5` and
+`ce1d734e`. Phase 3 refreshed it from Dex PR 448 merge commit `d09a5d7b`.
 
 ### Dex Go SDK v0.2.12
 
@@ -195,6 +193,28 @@ state. A later Snapshot replaces it with the durable message ID. The browser
 also reconciles every eight seconds while visible and on focus, online, and
 visible transitions.
 
+## Phase 3 cutover
+
+Phase 3 closes the migration without changing the stable Flow contract.
+
+- `docs/python-go-parity.md` fixes the final upstream source at Dex PR 448's
+  merge commit and maps every application capability to Go implementation and
+  verification evidence.
+- Real Dex integration adds explicit stale plan revision, completed plan,
+  multi-call input cancellation, durable choices, plan revision and clearing,
+  incomplete active plan, disabled tool, and ordered batch steering coverage.
+- The vendored `dex-developer` skill includes the merged Snapshot and ID-only
+  steering guidance.
+- `make check-cutover` prevents restoration of the Python oracle or operational
+  references to its former path.
+- GitHub Actions runs deterministic quality, fuzz, Flow Definition, and released
+  Dex integration gates. It uploads separate backend and frontend artifacts.
+- The 251-file Python oracle is deleted. Future parity reviews use the immutable
+  Dex commit instead of a copied source tree.
+
+The backend remains compatible with open Phase 2 Agent Flows because Phase 3
+does not rename Steps, RPCs, Attributes, Channels, Streams, or Flow types.
+
 ## Tests
 
 Phase 1 evidence must cover Agent start, messages, plan, approval, user input,
@@ -226,6 +246,8 @@ skips or weakened assertions.
 - `docs/adr/0002-separate-frontend-deployment.md` records the deployment boundary.
 - `docs/adr/0003-snapshot-reconciliation.md` records the adopted atomic read and
   durable/live reconciliation semantics.
+- `docs/python-go-parity.md` records the final immutable upstream blobs and
+  cutover comparison.
 - `CONTRIBUTING.md` documents skill loading, generation, and verification.
 - Phase 2's completion report records the Dex server commit, SDK version,
   compile-contract source, and test evidence.
@@ -265,3 +287,10 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 2 graph | `dexcli visualize` with CLI `v0.1.21`: valid graph, five RPCs including Snapshot, and zero blocking diagnostics |
 | 2026-09-03 | Phase 2 parity hardening | Dex server `eba9d9a5` with Go SDK `v0.2.12`: active durability and terminal Snapshot integrations passed; 23 Vitest checks cover terminal state, source-separated reasoning, optimistic send recovery, and focus reconciliation |
 | 2026-09-03 | Go Flow Definition | Generated `flow-definitions/ai-agent.json` from `internal/agent/flow.go`; drift check passed and Dex Web loaded `AIAgentFlow` as valid with zero diagnostics |
+| 2026-09-03 | Phase 3 upstream parity | Compared Dex PR 448 merge `d09a5d7b` file-by-file; recorded eight immutable source and test blobs; mapped every supported Python workflow to equal or stronger Go coverage |
+| 2026-09-03 | Phase 3 Dex integration | Released CLI `v0.1.21` and Go SDK `v0.2.12`: durability plus stale/completed plan rejection, multi-call input cancellation, choices across Worker replacement, plan clearing, disabled tools, and FIFO batch steering passed in 22.666s |
+| 2026-09-03 | Phase 3 Flow Definition | Checksum-verified CLI `v0.1.21` reproduced `flow-definitions/ai-agent.json` directly from `internal/agent/flow.go` with a valid graph and zero diagnostics |
+| 2026-09-03 | Phase 3 quality | Full `make check` passed generation drift, format, builds, vet, staticcheck, golangci-lint, actionlint, unit/race, 23 Vitest checks, Playwright, govulncheck, and npm audit |
+| 2026-09-03 | Phase 3 fuzz | Domain decoders completed 4,418,813 executions in 30 seconds without failure |
+| 2026-09-03 | Phase 3 live provider | Root `.env`-backed OpenAI Responses API test passed without logging or staging credentials |
+| 2026-09-03 | Phase 3 cutover | Deleted all 251 Python-oracle files; governance forbids restoration; backend and frontend build as independent release artifacts |

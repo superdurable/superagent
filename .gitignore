@@ -3,6 +3,7 @@
 !/.env.example
 /.cache/
 /.cache/dexcli
+/.cache/dexcli-v0.1.21
 /bin/superagent
 /coverage/
 /web/coverage/

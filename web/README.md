@@ -5,9 +5,8 @@ This React application consumes only the TypeScript client generated from
 
 The application restores a Flow with one generated Snapshot request and applies
 generated event polls for live updates. It does not call the legacy history,
-describe, status, or message-queue read endpoints. The complete original
-frontend remains unchanged under `reference/python/ai-agent/` as the parity
-oracle.
+describe, status, or message-queue read endpoints. Final parity with the
+upstream frontend is recorded in `../docs/python-go-parity.md`.
 
 ## Commands
 

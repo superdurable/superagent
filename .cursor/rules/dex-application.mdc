@@ -17,6 +17,7 @@ that touches Dex concepts.
 - Use typed Attributes for state, Channels for delivery, and buffered Streams
   for best-effort deltas.
 - Do not expose resource getter wrappers.
-- Phase 1 contains no history, queue-read, describe, status, or Snapshot HTTP
-  endpoint and no guessed Snapshot RPC.
+- Snapshot is the only durable browser read model. Do not add the legacy
+  history, queue-read, describe, or status HTTP endpoints.
+- Queue mutation accepts only message IDs loaded through Snapshot.
 - Application history is `AgentMessages`, never Dex execution history.

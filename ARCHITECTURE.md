@@ -103,6 +103,10 @@ strict `config.json` at page load. The file configures the generated Fetch
 client with one API origin. Changing that file does not rebuild the bundle. The
 static host owns browser caching and Content Security Policy headers.
 
+Continuous integration uploads the Go binary and `web/dist` as separate release
+artifacts. Backend rollout never replaces frontend files, and frontend rollout
+never restarts the Worker.
+
 Cross-origin API access uses a backend allowlist of exact frontend origins.
 Wildcards and credentialed browser requests are unsupported. Plain HTTP is
 accepted only for loopback development origins. A same-origin edge proxy can
