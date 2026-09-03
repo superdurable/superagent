@@ -30,8 +30,8 @@ from Dex OSS commit `13db6da5`.
 
 ## Phase 1
 
-Phase 1 remains on `github.com/superdurable/dex/sdk-go v0.2.9` unless a separate,
-reviewable released-version upgrade is approved. It delivers:
+Phase 1 was completed on `github.com/superdurable/dex/sdk-go v0.2.9`. It
+delivers:
 
 - Typed configuration and domain packages.
 - Dex Client, Worker, BlobCache, MCP registry, HTTP server, and graceful
@@ -90,6 +90,31 @@ All conditions must be true:
 The SDK upgrade is its own commit. It updates `go.mod` and `go.sum`, contains no
 local `replace`, compiles all Phase 1 code, runs the complete Dex integration
 suite, and records breaking changes before application code changes.
+
+## Phase 2 SDK baseline
+
+The Phase 2 entry gates were reviewed against Dex commit `2f961961` on
+2026-09-03. That commit is tagged `sdk-go/v0.2.11` and `cli-v0.1.21`.
+
+- Dex PRs 442 through 444 provide server and client selective RPC state
+  loading.
+- `sdk-go/integ/rpc_selective_state_test.go` is the version-matched real-server
+  compile contract.
+- AttributeMap entries and pending Channel messages require explicit RPC load
+  selections.
+- Pending Channel snapshots preserve FIFO order, message IDs, and values.
+- Reading pending messages does not consume them.
+- Loading state, transactional execution, and Attribute locking are independent
+  controls.
+- `StateNotLoadedError` reports access to state omitted from the invocation
+  projection.
+- Dex PR 445 rejects `/` in AttributeMap and ChannelMap instance keys.
+
+Superagent uses decimal sequence values as `AgentMessages` instance keys. The
+slash restriction does not require a data migration.
+
+The vendored `dex-developer` skill is byte-identical at `13db6da5` and
+`2f961961`. Its provenance record now identifies the reviewed Phase 2 commit.
 
 ## Phase 2 Snapshot contract
 
