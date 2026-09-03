@@ -60,6 +60,17 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
+	initialSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	if initialSnapshot.RunID != runID {
+		t.Fatalf("Snapshot run ID = %q, want %q", initialSnapshot.RunID, runID)
+	}
+	if initialSnapshot.Description == nil ||
+		initialSnapshot.Description.Status != AgentStatusWaitingForMessage ||
+		len(initialSnapshot.History.Messages) != 0 ||
+		len(initialSnapshot.Queued) != 0 ||
+		len(initialSnapshot.Steered) != 0 {
+		t.Fatalf("initial Snapshot = %#v", initialSnapshot)
+	}
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "hello"}); err != nil {
 		t.Fatal(err)
@@ -69,6 +80,22 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	})
 	assertApplicationMessage(t, environment, flowID, state.LastSequence-1, MessageRoleUser, "hello")
 	assertApplicationMessage(t, environment, flowID, state.LastSequence, MessageRoleAssistant, "integration response: hello")
+	latestSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 1})
+	if len(latestSnapshot.History.Messages) != 1 ||
+		latestSnapshot.History.Messages[0].Sequence != state.LastSequence ||
+		latestSnapshot.History.Messages[0].Message.Role != MessageRoleAssistant ||
+		latestSnapshot.History.NextBeforeSequence == nil {
+		t.Fatalf("latest Snapshot history = %#v", latestSnapshot.History)
+	}
+	previousSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{
+		BeforeSequence: latestSnapshot.History.NextBeforeSequence,
+		Limit:          1,
+	})
+	if len(previousSnapshot.History.Messages) != 1 ||
+		previousSnapshot.History.Messages[0].Sequence != state.LastSequence-1 ||
+		previousSnapshot.History.Messages[0].Message.Role != MessageRoleUser {
+		t.Fatalf("previous Snapshot history = %#v", previousSnapshot.History)
+	}
 	assertTextStream(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 
@@ -128,13 +155,34 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "queued message"}); err != nil {
 		t.Fatal(err)
 	}
-	queued := waitForQueuedMessages(t, environment, flowID, 1)
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "delete me"}); err != nil {
+		t.Fatal(err)
+	}
+	queued := waitForQueuedMessages(t, environment, flowID, 2)
 	if stateAfterQueue := readAgentState(t, environment, flowID); stateAfterQueue.LastSequence != stateBeforeQueue.LastSequence {
 		t.Fatalf("queued message entered history: sequence advanced from %d to %d", stateBeforeQueue.LastSequence, stateAfterQueue.LastSequence)
 	}
+	firstQueueSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	secondQueueSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	if len(firstQueueSnapshot.Queued) != 2 || len(secondQueueSnapshot.Queued) != 2 {
+		t.Fatalf("Snapshot queue lengths = %d/%d, want 2/2", len(firstQueueSnapshot.Queued), len(secondQueueSnapshot.Queued))
+	}
+	for index := range firstQueueSnapshot.Queued {
+		if firstQueueSnapshot.Queued[index] != secondQueueSnapshot.Queued[index] {
+			t.Fatalf("Snapshot queue changed at %d: %#v != %#v", index, firstQueueSnapshot.Queued[index], secondQueueSnapshot.Queued[index])
+		}
+	}
+	if err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID)); err != nil {
+		t.Fatal(err)
+	}
+	waitForQueuedMessages(t, environment, flowID, 1)
+	deleteErr := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID))
+	var channelMessageNotFound *dex.ChannelMessageNotFoundError
+	if !errors.As(deleteErr, &channelMessageNotFound) {
+		t.Fatalf("repeated queue delete error = %T %v", deleteErr, deleteErr)
+	}
 	if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
 		MessageID: MessageID(queued[0].MessageID),
-		Message:   UserMessage{Content: "urgent steering"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -143,15 +191,67 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	state = waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage && state.LastSequence > stateBeforeQueue.LastSequence
 	})
-	if !historyContains(t, environment, flowID, state, MessageRoleUser, "urgent steering") {
+	if !historyContains(t, environment, flowID, state, MessageRoleUser, "queued message") {
 		t.Fatal("steered message did not enter application history")
 	}
-	if historyContains(t, environment, flowID, state, MessageRoleUser, "queued message") {
-		t.Fatal("deleted queued message entered application history")
+	steerErr := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+		MessageID: MessageID(queued[0].MessageID),
+	})
+	var pendingMessageNotFound *PendingMessageNotFoundError
+	if !errors.As(steerErr, &pendingMessageNotFound) {
+		t.Fatalf("repeated queue steer error = %T %v", steerErr, steerErr)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.CompactionGeneration > 0
 	})
+}
+
+func TestAgentTerminalSnapshotIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-terminal-" + randomLocalID(t))
+	runID, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.sdk.StopFlow(t.Context(), string(flowID), dex.StopOptions{
+		Type:   dex.TerminateFlow,
+		Reason: "terminal Snapshot integration",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := environment.sdk.WaitForFlow(t.Context(), string(flowID), dex.WaitForFlowOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != dex.FlowTerminated {
+		t.Fatalf("Flow status = %v, want terminated", result.Status)
+	}
+
+	snapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	if snapshot.RunID != runID || snapshot.FlowStatus != FlowStatusTerminated {
+		t.Fatalf("terminal Snapshot identity = %#v", snapshot)
+	}
+	if snapshot.Description != nil || snapshot.ErrorType != nil ||
+		len(snapshot.History.Messages) != 0 || len(snapshot.Queued) != 0 || len(snapshot.Steered) != 0 {
+		t.Fatalf("terminal Snapshot durable view = %#v", snapshot)
+	}
+}
+
+func readSnapshot(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	request SnapshotRequest,
+) AgentSnapshot {
+	t.Helper()
+	snapshot, err := environment.agent.Snapshot(t.Context(), flowID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 type agentIntegrationEnvironment struct {

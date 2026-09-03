@@ -34,6 +34,9 @@ import (
 type AgentService interface {
 	Start(context.Context, agent.FlowID, agent.AgentConfig) (agent.RunID, error)
 	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
+	Snapshot(context.Context, agent.FlowID, agent.SnapshotRequest) (agent.AgentSnapshot, error)
+	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
+	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
 	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error
 	ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error
 	ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error)
@@ -183,6 +186,65 @@ func (handler *Handler) SendMessage(ctx context.Context, request *transportapi.S
 	return accepted(), nil
 }
 
+// GetAgentSnapshot returns one atomic durable application view.
+func (handler *Handler) GetAgentSnapshot(
+	ctx context.Context,
+	params transportapi.GetAgentSnapshotParams,
+) (transportapi.GetAgentSnapshotRes, error) {
+	request := agent.SnapshotRequest{Limit: params.Limit.Or(50)}
+	if beforeSequence, ok := params.BeforeSequence.Get(); ok {
+		sequence := agent.Sequence(beforeSequence)
+		request.BeforeSequence = &sequence
+	}
+	flowID := agent.FlowID(params.FlowId)
+	snapshot, err := handler.agent.Snapshot(ctx, flowID, request)
+	if err != nil {
+		return handler.snapshotError(ctx, flowID, err), nil
+	}
+	result, err := transportSnapshot(snapshot)
+	if err != nil {
+		handler.logFailure(ctx, flowID, err)
+		problem := newProblem(503, "Service Unavailable", "the Agent Snapshot could not be encoded")
+		return (*transportapi.GetAgentSnapshotServiceUnavailable)(&problem), nil
+	}
+	return &transportapi.AgentSnapshotHeaders{
+		CacheControl: transportapi.GetAgentSnapshotOKCacheControlNoStore,
+		Response:     result,
+	}, nil
+}
+
+// DeleteQueuedMessage removes one exact pending queued user message.
+func (handler *Handler) DeleteQueuedMessage(
+	ctx context.Context,
+	request *transportapi.QueueMutationRequest,
+) (transportapi.DeleteQueuedMessageRes, error) {
+	flowID := agent.FlowID(request.FlowId)
+	messageID := agent.MessageID(request.MessageId)
+	if err := handler.agent.DeleteQueuedMessage(ctx, flowID, messageID); err != nil {
+		return handler.deleteQueuedMessageError(ctx, flowID, err), nil
+	}
+	return &transportapi.QueueMutationResponse{
+		MessageId: request.MessageId,
+		Action:    transportapi.QueueActionDeleted,
+	}, nil
+}
+
+// SteerQueuedMessage atomically moves one queued message into steering.
+func (handler *Handler) SteerQueuedMessage(
+	ctx context.Context,
+	request *transportapi.QueueMutationRequest,
+) (transportapi.SteerQueuedMessageRes, error) {
+	flowID := agent.FlowID(request.FlowId)
+	messageID := agent.MessageID(request.MessageId)
+	if err := handler.agent.SteerMessage(ctx, flowID, agent.SteerMessageRequest{MessageID: messageID}); err != nil {
+		return handler.steerQueuedMessageError(ctx, flowID, err), nil
+	}
+	return &transportapi.QueueMutationResponse{
+		MessageId: request.MessageId,
+		Action:    transportapi.QueueActionSteered,
+	}, nil
+}
+
 // ExecutePlan durably accepts one exact plan revision command.
 func (handler *Handler) ExecutePlan(ctx context.Context, request *transportapi.ExecutePlanRequest) (transportapi.ExecutePlanRes, error) {
 	err := handler.agent.ExecutePlan(ctx, agent.FlowID(request.FlowId), agent.PlanExecutionRequest{
@@ -329,6 +391,356 @@ func providerEnvironmentVariable(provider agent.Provider) string {
 	}
 }
 
+func transportSnapshot(snapshot agent.AgentSnapshot) (transportapi.AgentSnapshot, error) {
+	history, err := transportHistoryPage(snapshot.History)
+	if err != nil {
+		return transportapi.AgentSnapshot{}, err
+	}
+	flowStatus, err := transportFlowStatus(snapshot.FlowStatus)
+	if err != nil {
+		return transportapi.AgentSnapshot{}, err
+	}
+	description, err := transportOptionalAgentDescription(snapshot.Description)
+	if err != nil {
+		return transportapi.AgentSnapshot{}, err
+	}
+	errorType, err := transportOptionalFlowErrorType(snapshot.ErrorType)
+	if err != nil {
+		return transportapi.AgentSnapshot{}, err
+	}
+	errorMessage := transportapi.NilString{}
+	if snapshot.ErrorMessage == nil {
+		errorMessage.SetToNull()
+	} else {
+		errorMessage.SetTo(*snapshot.ErrorMessage)
+	}
+	return transportapi.AgentSnapshot{
+		RunId:        transportapi.RunID(snapshot.RunID),
+		FlowStatus:   flowStatus,
+		ErrorType:    errorType,
+		ErrorMessage: errorMessage,
+		History:      history,
+		Description:  description,
+		Queued:       transportPendingUserMessages(snapshot.Queued),
+		Steered:      transportPendingUserMessages(snapshot.Steered),
+	}, nil
+}
+
+func transportOptionalAgentDescription(description *agent.AgentDescription) (transportapi.NilAgentDescription, error) {
+	result := transportapi.NilAgentDescription{}
+	if description == nil {
+		result.SetToNull()
+		return result, nil
+	}
+	mapped, err := transportAgentDescription(*description)
+	if err != nil {
+		return transportapi.NilAgentDescription{}, err
+	}
+	result.SetTo(mapped)
+	return result, nil
+}
+
+func transportOptionalFlowErrorType(errorType *agent.FlowErrorType) (transportapi.NilFlowErrorType, error) {
+	result := transportapi.NilFlowErrorType{}
+	if errorType == nil {
+		result.SetToNull()
+		return result, nil
+	}
+	mapped, err := transportFlowErrorType(*errorType)
+	if err != nil {
+		return transportapi.NilFlowErrorType{}, err
+	}
+	result.SetTo(mapped)
+	return result, nil
+}
+
+func transportHistoryPage(page agent.HistoryPage) (transportapi.HistoryPage, error) {
+	messages := make([]transportapi.SequencedMessage, 0, len(page.Messages))
+	for _, message := range page.Messages {
+		mapped, err := transportSequencedMessage(message)
+		if err != nil {
+			return transportapi.HistoryPage{}, err
+		}
+		messages = append(messages, mapped)
+	}
+	nextBeforeSequence := transportapi.NilSequence{}
+	if page.NextBeforeSequence == nil {
+		nextBeforeSequence.SetToNull()
+	} else {
+		nextBeforeSequence.SetTo(transportapi.Sequence(*page.NextBeforeSequence))
+	}
+	return transportapi.HistoryPage{
+		Messages:           messages,
+		NextBeforeSequence: nextBeforeSequence,
+	}, nil
+}
+
+func transportSequencedMessage(message agent.SequencedMessage) (transportapi.SequencedMessage, error) {
+	mapped, err := transportAgentMessage(message.Message)
+	if err != nil {
+		return transportapi.SequencedMessage{}, err
+	}
+	return transportapi.SequencedMessage{
+		Sequence: transportapi.Sequence(message.Sequence),
+		Message:  mapped,
+	}, nil
+}
+
+func transportAgentMessage(message agent.AgentMessage) (transportapi.AgentMessage, error) {
+	role, err := transportMessageRole(message.Role)
+	if err != nil {
+		return transportapi.AgentMessage{}, err
+	}
+	toolCalls := make([]transportapi.ToolCall, 0, len(message.ToolCalls))
+	for _, call := range message.ToolCalls {
+		toolCalls = append(toolCalls, transportapi.ToolCall{
+			ID:            transportapi.CallID(call.ID),
+			Name:          transportapi.ToolName(call.Name),
+			ArgumentsJson: call.Arguments.String(),
+		})
+	}
+	toolCallID := transportapi.NilCallID{}
+	if message.ToolCallID == nil {
+		toolCallID.SetToNull()
+	} else {
+		toolCallID.SetTo(transportapi.CallID(*message.ToolCallID))
+	}
+	toolName := transportapi.NilToolName{}
+	if message.ToolName == nil {
+		toolName.SetToNull()
+	} else {
+		toolName.SetTo(transportapi.ToolName(*message.ToolName))
+	}
+	return transportapi.AgentMessage{
+		Role:       role,
+		Content:    message.Content,
+		ToolCalls:  toolCalls,
+		ToolCallId: toolCallID,
+		ToolName:   toolName,
+		CreatedAt:  message.CreatedAt,
+	}, nil
+}
+
+func transportAgentDescription(description agent.AgentDescription) (transportapi.AgentDescription, error) {
+	status, err := transportAgentStatus(description.Status)
+	if err != nil {
+		return transportapi.AgentDescription{}, err
+	}
+	plan, err := transportOptionalAgentPlan(description.Plan)
+	if err != nil {
+		return transportapi.AgentDescription{}, err
+	}
+	availableTools := make([]transportapi.ToolName, len(description.AvailableTools))
+	for index, name := range description.AvailableTools {
+		availableTools[index] = transportapi.ToolName(name)
+	}
+	availableMCPServers := make([]string, len(description.AvailableMCPServers))
+	copy(availableMCPServers, description.AvailableMCPServers)
+	return transportapi.AgentDescription{
+		Status:                     status,
+		Model:                      string(description.Model),
+		SystemPrompt:               description.SystemPrompt,
+		FirstRetainedSequence:      int64(description.FirstRetainedSequence),
+		LastSequence:               int64(description.LastSequence),
+		SummarizedThroughSequence:  int64(description.SummarizedThroughSequence),
+		PendingApproval:            transportOptionalPendingApproval(description.PendingApproval),
+		PendingTimer:               transportOptionalPendingTimer(description.PendingTimer),
+		PendingUserInput:           transportOptionalPendingUserInput(description.PendingUserInput),
+		Plan:                       plan,
+		IsPlanExecutionRequested:   description.IsPlanExecutionRequested,
+		PendingQueuedMessageCount:  description.PendingQueuedMessageCount,
+		PendingSteeredMessageCount: description.PendingSteeredMessageCount,
+		AvailableMcpServers:        availableMCPServers,
+		AvailableTools:             availableTools,
+	}, nil
+}
+
+func transportPendingUserMessages(messages []agent.PendingUserMessage) []transportapi.PendingUserMessage {
+	result := make([]transportapi.PendingUserMessage, 0, len(messages))
+	for _, message := range messages {
+		result = append(result, transportapi.PendingUserMessage{
+			MessageId: transportapi.MessageID(message.MessageID),
+			Value: transportapi.UserMessage{
+				Content:  message.Value.Content,
+				PlanMode: message.Value.PlanMode,
+			},
+		})
+	}
+	return result
+}
+
+func transportOptionalPendingApproval(pending *agent.PendingApproval) transportapi.NilPendingApproval {
+	result := transportapi.NilPendingApproval{}
+	if pending == nil {
+		result.SetToNull()
+		return result
+	}
+	result.SetTo(transportapi.PendingApproval{
+		CallId:        transportapi.CallID(pending.CallID),
+		ToolName:      transportapi.ToolName(pending.ToolName),
+		ArgumentsJson: pending.Arguments.String(),
+	})
+	return result
+}
+
+func transportOptionalPendingTimer(pending *agent.PendingTimer) transportapi.NilPendingTimer {
+	result := transportapi.NilPendingTimer{}
+	if pending == nil {
+		result.SetToNull()
+		return result
+	}
+	result.SetTo(transportapi.PendingTimer{
+		CallId:          transportapi.CallID(pending.CallID),
+		DurationSeconds: pending.DurationSeconds,
+		Reason:          pending.Reason,
+	})
+	return result
+}
+
+func transportOptionalPendingUserInput(pending *agent.PendingUserInput) transportapi.NilPendingUserInput {
+	result := transportapi.NilPendingUserInput{}
+	if pending == nil {
+		result.SetToNull()
+		return result
+	}
+	result.SetTo(transportapi.PendingUserInput{
+		CallId:  transportapi.CallID(pending.CallID),
+		Prompt:  pending.Prompt,
+		Choices: append([]string(nil), pending.Choices...),
+	})
+	return result
+}
+
+func transportOptionalAgentPlan(plan *agent.AgentPlan) (transportapi.NilAgentPlan, error) {
+	result := transportapi.NilAgentPlan{}
+	if plan == nil {
+		result.SetToNull()
+		return result, nil
+	}
+	status, err := transportPlanStatus(plan.Status)
+	if err != nil {
+		return transportapi.NilAgentPlan{}, err
+	}
+	tasks := make([]transportapi.PlanTask, 0, len(plan.Tasks))
+	for _, task := range plan.Tasks {
+		taskStatus, err := transportTaskStatus(task.Status)
+		if err != nil {
+			return transportapi.NilAgentPlan{}, err
+		}
+		tasks = append(tasks, transportapi.PlanTask{Content: task.Content, Status: taskStatus})
+	}
+	result.SetTo(transportapi.AgentPlan{
+		Revision: int64(plan.Revision),
+		Status:   status,
+		Tasks:    tasks,
+	})
+	return result, nil
+}
+
+func transportFlowStatus(status agent.FlowStatus) (transportapi.FlowStatus, error) {
+	switch status {
+	case agent.FlowStatusRunning:
+		return transportapi.FlowStatusRunning, nil
+	case agent.FlowStatusCompleted:
+		return transportapi.FlowStatusCompleted, nil
+	case agent.FlowStatusFailed:
+		return transportapi.FlowStatusFailed, nil
+	case agent.FlowStatusTerminated:
+		return transportapi.FlowStatusTerminated, nil
+	case agent.FlowStatusCanceled:
+		return transportapi.FlowStatusCanceled, nil
+	case agent.FlowStatusContinuedAsNew:
+		return transportapi.FlowStatusContinuedAsNew, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "FlowStatus", Value: string(status)}
+	}
+}
+
+func transportFlowErrorType(errorType agent.FlowErrorType) (transportapi.FlowErrorType, error) {
+	switch errorType {
+	case agent.FlowErrorTypeStepDecision:
+		return transportapi.FlowErrorTypeStepDecision, nil
+	case agent.FlowErrorTypeClientAPI:
+		return transportapi.FlowErrorTypeClientAPI, nil
+	case agent.FlowErrorTypeWorkerMethod:
+		return transportapi.FlowErrorTypeWorkerMethod, nil
+	case agent.FlowErrorTypeInvalidUserCode:
+		return transportapi.FlowErrorTypeInvalidUserCode, nil
+	case agent.FlowErrorTypeInternal:
+		return transportapi.FlowErrorTypeInternal, nil
+	case agent.FlowErrorTypeTimeout:
+		return transportapi.FlowErrorTypeTimeout, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "FlowErrorType", Value: string(errorType)}
+	}
+}
+
+func transportAgentStatus(status agent.AgentStatus) (transportapi.AgentStatus, error) {
+	switch status {
+	case agent.AgentStatusInitializing:
+		return transportapi.AgentStatusInitializing, nil
+	case agent.AgentStatusWaitingForMessage:
+		return transportapi.AgentStatusWaitingForMessage, nil
+	case agent.AgentStatusCompactingContext:
+		return transportapi.AgentStatusCompactingContext, nil
+	case agent.AgentStatusCallingModel:
+		return transportapi.AgentStatusCallingModel, nil
+	case agent.AgentStatusRoutingTool:
+		return transportapi.AgentStatusRoutingTool, nil
+	case agent.AgentStatusWaitingForToolApproval:
+		return transportapi.AgentStatusWaitingForToolApproval, nil
+	case agent.AgentStatusExecutingTool:
+		return transportapi.AgentStatusExecutingTool, nil
+	case agent.AgentStatusWaitingForTimer:
+		return transportapi.AgentStatusWaitingForTimer, nil
+	case agent.AgentStatusApplyingSteering:
+		return transportapi.AgentStatusApplyingSteering, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "AgentStatus", Value: string(status)}
+	}
+}
+
+func transportMessageRole(role agent.MessageRole) (transportapi.MessageRole, error) {
+	switch role {
+	case agent.MessageRoleSystem:
+		return transportapi.MessageRoleSystem, nil
+	case agent.MessageRoleUser:
+		return transportapi.MessageRoleUser, nil
+	case agent.MessageRoleAssistant:
+		return transportapi.MessageRoleAssistant, nil
+	case agent.MessageRoleTool:
+		return transportapi.MessageRoleTool, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "MessageRole", Value: string(role)}
+	}
+}
+
+func transportPlanStatus(status agent.PlanStatus) (transportapi.PlanStatus, error) {
+	switch status {
+	case agent.PlanStatusDraft:
+		return transportapi.PlanStatusDraft, nil
+	case agent.PlanStatusActive:
+		return transportapi.PlanStatusActive, nil
+	case agent.PlanStatusCompleted:
+		return transportapi.PlanStatusCompleted, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "PlanStatus", Value: string(status)}
+	}
+}
+
+func transportTaskStatus(status agent.TaskStatus) (transportapi.TaskStatus, error) {
+	switch status {
+	case agent.TaskStatusPending:
+		return transportapi.TaskStatusPending, nil
+	case agent.TaskStatusInProgress:
+		return transportapi.TaskStatusInProgress, nil
+	case agent.TaskStatusCompleted:
+		return transportapi.TaskStatusCompleted, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "TaskStatus", Value: string(status)}
+	}
+}
+
 func transportStreamEvent(event agent.StreamEvent) (transportapi.StreamEvent, error) {
 	baseToken := transportapi.ResumeToken(event.ResumeToken)
 	switch event.Kind {
@@ -443,11 +855,18 @@ func classifyFailure(err error) failureKind {
 	var conflict *dex.RPCLockConflictError
 	var inactive *dex.FlowNotActiveError
 	var duplicate *dex.FlowAlreadyStartedError
+	var channelMessageNotFound *dex.ChannelMessageNotFoundError
 	var rejected *agent.CommandRejectedError
+	var pendingMessageNotFound *agent.PendingMessageNotFoundError
 	switch {
 	case errors.As(err, &notFound):
 		return failureNotFound
-	case errors.As(err, &conflict), errors.As(err, &inactive), errors.As(err, &duplicate), errors.As(err, &rejected):
+	case errors.As(err, &conflict),
+		errors.As(err, &inactive),
+		errors.As(err, &duplicate),
+		errors.As(err, &channelMessageNotFound),
+		errors.As(err, &rejected),
+		errors.As(err, &pendingMessageNotFound):
 		return failureConflict
 	default:
 		return failureUnavailable
@@ -512,6 +931,56 @@ func (handler *Handler) approveToolError(ctx context.Context, flowID agent.FlowI
 	}
 }
 
+func (handler *Handler) snapshotError(ctx context.Context, flowID agent.FlowID, err error) transportapi.GetAgentSnapshotRes {
+	handler.logFailure(ctx, flowID, err)
+	switch classifyFailure(err) {
+	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
+		return (*transportapi.GetAgentSnapshotNotFound)(&problem)
+	default:
+		problem := newProblem(503, "Service Unavailable", "the Agent Snapshot is unavailable")
+		return (*transportapi.GetAgentSnapshotServiceUnavailable)(&problem)
+	}
+}
+
+func (handler *Handler) deleteQueuedMessageError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) transportapi.DeleteQueuedMessageRes {
+	handler.logFailure(ctx, flowID, err)
+	switch classifyFailure(err) {
+	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
+		return (*transportapi.DeleteQueuedMessageNotFound)(&problem)
+	case failureConflict:
+		problem := newProblem(409, "Conflict", "the queued message is no longer pending")
+		return (*transportapi.DeleteQueuedMessageConflict)(&problem)
+	default:
+		problem := newProblem(503, "Service Unavailable", "the queued message could not be deleted")
+		return (*transportapi.DeleteQueuedMessageServiceUnavailable)(&problem)
+	}
+}
+
+func (handler *Handler) steerQueuedMessageError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) transportapi.SteerQueuedMessageRes {
+	handler.logFailure(ctx, flowID, err)
+	switch classifyFailure(err) {
+	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
+		return (*transportapi.SteerQueuedMessageNotFound)(&problem)
+	case failureConflict:
+		problem := newProblem(409, "Conflict", "the queued message is no longer pending")
+		return (*transportapi.SteerQueuedMessageConflict)(&problem)
+	default:
+		problem := newProblem(503, "Service Unavailable", "the queued message could not be steered")
+		return (*transportapi.SteerQueuedMessageServiceUnavailable)(&problem)
+	}
+}
+
 func commandProblem(err error) (transportapi.Problem, failureKind) {
 	kind := classifyFailure(err)
 	switch kind {
@@ -530,7 +999,7 @@ func (handler *Handler) readEventError(ctx context.Context, flowID agent.FlowID,
 	}
 	var pollTimeout *dex.LongPollTimeoutError
 	if errors.As(err, &pollTimeout) || errors.Is(err, context.DeadlineExceeded) {
-		return &transportapi.ReadEventGatewayTimeout{}, nil
+		return &transportapi.PollTimeout{Reason: transportapi.PollTimeoutReasonTimeout}, nil
 	}
 	handler.logFailure(ctx, flowID, err)
 	switch classifyFailure(err) {

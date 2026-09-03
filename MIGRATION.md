@@ -9,6 +9,10 @@ The released Dex Go SDK is the only runtime dependency boundary.
 The Python source under `reference/python/` is an immutable parity oracle copied
 from Dex OSS commit `13db6da5`.
 
+Dex PR 448 remains an open comparison target as of 2026-09-03. Its AI Agent
+changes were reviewed, but they are not copied into the immutable oracle or the
+vendored skill until they merge to Dex `main`.
+
 ## Delivery phases
 
 | Phase | Deliverable | Snapshot scope |
@@ -30,8 +34,8 @@ from Dex OSS commit `13db6da5`.
 
 ## Phase 1
 
-Phase 1 remains on `github.com/superdurable/dex/sdk-go v0.2.9` unless a separate,
-reviewable released-version upgrade is approved. It delivers:
+Phase 1 was completed on `github.com/superdurable/dex/sdk-go v0.2.9`. It
+delivers:
 
 - Typed configuration and domain packages.
 - Dex Client, Worker, BlobCache, MCP registry, HTTP server, and graceful
@@ -91,19 +95,57 @@ The SDK upgrade is its own commit. It updates `go.mod` and `go.sum`, contains no
 local `replace`, compiles all Phase 1 code, runs the complete Dex integration
 suite, and records breaking changes before application code changes.
 
+## Phase 2 SDK baseline
+
+The Phase 2 entry gates were reviewed against Dex commit `2f961961` on
+2026-09-03. That commit is tagged `sdk-go/v0.2.11` and `cli-v0.1.21`.
+
+- Dex PRs 442 through 444 provide server and client selective RPC state
+  loading.
+- `sdk-go/integ/rpc_selective_state_test.go` is the version-matched real-server
+  compile contract.
+- AttributeMap entries and pending Channel messages require explicit RPC load
+  selections.
+- Pending Channel snapshots preserve FIFO order, message IDs, and values.
+- Reading pending messages does not consume them.
+- Loading state, transactional execution, and Attribute locking are independent
+  controls.
+- `StateNotLoadedError` initially reported state omitted from the invocation
+  projection.
+- Dex PR 445 rejects `/` in AttributeMap and ChannelMap instance keys.
+
+Superagent uses decimal sequence values as `AgentMessages` instance keys. The
+slash restriction does not require a data migration.
+
+The vendored `dex-developer` skill is byte-identical at `13db6da5` and
+`ce1d734e`. Its provenance record now identifies the reviewed Phase 2 commit.
+
+### Dex Go SDK v0.2.12
+
+Superagent subsequently upgraded to Dex Go SDK `v0.2.12` at commit `ce1d734e`.
+The release preserves the selective RPC projection contract. It replaces the
+general `StateNotLoadedError` with two precise errors:
+
+- `AttributeMapNotLoadedError` for an omitted AttributeMap projection;
+- `ChannelMessagesNotLoadedError` for omitted pending Channel messages.
+
+Superagent does not branch on these errors. Snapshot selects both resource
+kinds explicitly. No application code migration was required.
+
 ## Phase 2 Snapshot contract
 
-The published Dex runnable example and installed SDK are the only signature
-sources. The typed application response conceptually contains a run ID,
-application history, Agent description, queued user messages, and steered user
-messages.
+The installed SDK and version-matched real-server compile contract are the only
+signature sources. The typed application response contains a run ID, Flow
+lifecycle, optional terminal failure, application history, optional Agent
+description, queued user messages, and steered user messages.
 
 - History comes from `AgentMessages`, never Dex execution history.
 - The RPC explicitly selects every required AttributeMap, Channel, and
   description Attribute.
 - The RPC is read-only and never consumes a Channel.
-- Pagination, terminal state, closed Flow, and missing Flow behavior follow the
-  released SDK.
+- Active Snapshots contain the complete durable Agent view. Terminal Snapshots
+  contain lifecycle metadata and an empty durable Agent view.
+- Missing Flow behavior follows the released SDK.
 - Dex resource descriptors remain package-private.
 - Generated transport types map explicitly to the domain snapshot.
 
@@ -113,6 +155,45 @@ mutation routes. The four legacy reads are never introduced.
 The browser loads or recovers with one Snapshot, atomically replaces its durable
 view through one reducer action, applies events for low-latency deltas, and
 re-snapshots after disconnects or sequence gaps.
+
+## Phase 2 implementation
+
+Phase 2 targets the released Dex Go SDK `v0.2.12` without a module replacement.
+The SDK upgrade was isolated from application changes and the complete Phase 1
+suite passed before Snapshot implementation began.
+
+The implemented Dex client invocation explicitly loads:
+
+- every retained `AgentMessages` AttributeMap entry;
+- pending `QueuedUserMessages` Channel messages;
+- pending `SteeredUserMessages` Channel messages.
+
+Normal Attributes used to construct `AgentDescription` follow the published RPC
+context contract. Snapshot loading is independent from locking and transactions:
+the RPC is read-only and neither consumes nor mutates a Channel. It returns the
+Dex invocation Run ID. The client reconciles successful RPC results with Dex
+visibility state because a just-closed Flow may briefly return its final active
+RPC projection. A terminal result uses `WaitForFlow` plus the matching searchable
+run and never presents stale active state as terminal durable data.
+
+OpenAPI `0.2.0` adds Snapshot plus queue delete and steer. ogen and Hey API
+generate both transport surfaces. Steer accepts only a stable queued message ID;
+the RPC resolves its original value from the explicitly loaded queue before one
+transactional delete-and-publish operation.
+
+The React application now provides the retained conversation experience:
+history paging, live assistant and reasoning-summary text, structured activity,
+plans, approvals, durable timers, input choices, queued and steered messages,
+plan mode, keyboard submission, and a fixed responsive composer. Snapshot
+atomically replaces the durable reducer view. Every Snapshot, event poll, and
+command owns cancellation and stale-response protection. Normal long-poll
+expiry uses a generated typed response rather than transport-error heuristics.
+Reasoning summaries remain separated by model invocation source and retain
+their timestamps and completion state. Message send immediately creates a
+non-actionable `Submitting` queue item. Failure restores the exact composer
+state. A later Snapshot replaces it with the durable message ID. The browser
+also reconciles every eight seconds while visible and on focus, online, and
+visible transitions.
 
 ## Tests
 
@@ -143,9 +224,11 @@ skips or weakened assertions.
 - `docs/flow-model.md` distinguishes application history from execution history.
 - `docs/adr/0001-wait-for-dex-snapshot.md` records the decision to wait.
 - `docs/adr/0002-separate-frontend-deployment.md` records the deployment boundary.
+- `docs/adr/0003-snapshot-reconciliation.md` records the adopted atomic read and
+  durable/live reconciliation semantics.
 - `CONTRIBUTING.md` documents skill loading, generation, and verification.
 - Phase 2's completion report records the Dex server commit, SDK version,
-  runnable example source, and test evidence.
+  compile-contract source, and test evidence.
 
 ## UI/UX
 
@@ -175,3 +258,10 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 1 fuzz | Domain JSON, enum, and built-in tool decoders completed 1.8M+ executions without a failure |
 | 2026-09-03 | Phase 1 gates | Governance, generation drift, formatting, binary build, vet, static analysis, unit/race tests, strict TypeScript, ESLint, Vitest, production Webpack, and Playwright passed |
 | 2026-09-03 | Deployment boundary | Pure API binary, standalone `web/dist`, runtime origin validation, exact CORS policy, cross-origin E2E, and full repository gates passed |
+| 2026-09-03 | Phase 2 SDK gate | Dex `2f961961`, Go SDK `v0.2.11`, CLI `v0.1.21`, selective-state real-server compile contract, typed errors, and slash-key change reviewed; Phase 1 integration passed before application changes |
+| 2026-09-03 | SDK `v0.2.12` | Dex `ce1d734e`; reviewed the split unloaded-state errors, confirmed unchanged Snapshot selectors, refreshed skill provenance, and passed the full repository, real Dex integration, and visualization gates |
+| 2026-09-03 | Phase 2 Snapshot | One RPC returned Run ID, paged `AgentMessages` history, description, FIFO queued and steered messages; repeated reads preserved IDs and did not consume Channels; delete/steer stale IDs returned typed failures; cold Worker replacement passed |
+| 2026-09-03 | Phase 2 UI | Strict TypeScript, type-aware ESLint, 16 Vitest checks, production Webpack, and cross-origin Playwright passed; browser initialization made one Snapshot request and zero legacy reads |
+| 2026-09-03 | Phase 2 graph | `dexcli visualize` with CLI `v0.1.21`: valid graph, five RPCs including Snapshot, and zero blocking diagnostics |
+| 2026-09-03 | Phase 2 parity hardening | Dex server `eba9d9a5` with Go SDK `v0.2.12`: active durability and terminal Snapshot integrations passed; 23 Vitest checks cover terminal state, source-separated reasoning, optimistic send recovery, and focus reconciliation |
+| 2026-09-03 | Go Flow Definition | Generated `flow-definitions/ai-agent.json` from `internal/agent/flow.go`; drift check passed and Dex Web loaded `AIAgentFlow` as valid with zero diagnostics |

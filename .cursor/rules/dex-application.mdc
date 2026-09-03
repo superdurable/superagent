@@ -9,7 +9,8 @@ alwaysApply: false
 Read `skills/dex-developer/SKILL.md` and every routed reference in each turn
 that touches Dex concepts.
 
-- Use only the installed released SDK and version-matched runnable examples.
+- Use only the installed released SDK and version-matched runnable examples or
+  real-server compile-contract tests.
 - Keep the static Flow graph and resource use visible to `dexcli visualize`.
 - Put durable conditions in `WaitFor` and external effects in `Execute`.
 - Treat each WaitFor, Execute, and RPC as an independent atomic boundary.

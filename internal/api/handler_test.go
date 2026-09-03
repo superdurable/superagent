@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/internal/agent"
 	transportapi "github.com/superdurable/superagent/internal/api/generated"
 )
@@ -104,6 +105,220 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	}
 }
 
+func TestReadEventMapsPollTimeoutToTypedResponse(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{eventErr: context.DeadlineExceeded}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.ReadEvent(context.Background(), transportapi.ReadEventParams{
+		FlowId: "flow-1", Stream: transportapi.EventStreamAssistant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeout, ok := response.(*transportapi.PollTimeout)
+	if !ok || timeout.Reason != transportapi.PollTimeoutReasonTimeout {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
+	t.Parallel()
+	createdAt := time.Unix(1, 0).UTC()
+	callID := agent.CallID("call-1")
+	toolName := agent.ToolName("lookup")
+	service := &fakeAgentService{snapshot: agent.AgentSnapshot{
+		RunID:      "run-1",
+		FlowStatus: agent.FlowStatusRunning,
+		History: agent.HistoryPage{Messages: []agent.SequencedMessage{{
+			Sequence: 1,
+			Message: agent.AgentMessage{
+				Role:       agent.MessageRoleAssistant,
+				Content:    "hello",
+				ToolCalls:  []agent.ToolCall{{ID: callID, Name: toolName, Arguments: agent.MustJSONObject(`{"path":"README.md"}`)}},
+				ToolCallID: &callID,
+				ToolName:   &toolName,
+				CreatedAt:  createdAt,
+			},
+		}}},
+		Description: &agent.AgentDescription{
+			Status:                     agent.AgentStatusWaitingForToolApproval,
+			Model:                      "openai/gpt-5-mini",
+			SystemPrompt:               "be helpful",
+			FirstRetainedSequence:      1,
+			LastSequence:               1,
+			PendingApproval:            &agent.PendingApproval{CallID: callID, ToolName: toolName, Arguments: agent.MustJSONObject(`{"path":"README.md"}`)},
+			Plan:                       &agent.AgentPlan{Revision: 1, Status: agent.PlanStatusDraft, Tasks: []agent.PlanTask{{Content: "inspect", Status: agent.TaskStatusPending}}},
+			PendingQueuedMessageCount:  1,
+			PendingSteeredMessageCount: 0,
+			AvailableMCPServers:        []string{"files"},
+			AvailableTools:             []agent.ToolName{"lookup"},
+		},
+		Queued:  []agent.PendingUserMessage{{MessageID: "message-1", Value: agent.UserMessage{Content: "later"}}},
+		Steered: []agent.PendingUserMessage{},
+	}}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
+		FlowId: "flow-1",
+		Limit:  transportapi.NewOptInt(50),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := response.(*transportapi.AgentSnapshotHeaders)
+	if !ok {
+		t.Fatalf("response type = %T", response)
+	}
+	if result.CacheControl != transportapi.GetAgentSnapshotOKCacheControlNoStore {
+		t.Fatalf("Cache-Control = %q", result.CacheControl)
+	}
+	if validationErr := result.Validate(); validationErr != nil {
+		t.Fatalf("validate response: %v", validationErr)
+	}
+	snapshot := &result.Response
+	if snapshot.RunId != "run-1" || snapshot.FlowStatus != transportapi.FlowStatusRunning ||
+		len(snapshot.History.Messages) != 1 || len(snapshot.Queued) != 1 {
+		t.Fatalf("Snapshot = %#v", snapshot)
+	}
+	message := snapshot.History.Messages[0].Message
+	if message.Role != transportapi.MessageRoleAssistant ||
+		message.CreatedAt != createdAt ||
+		message.ToolCalls[0].ArgumentsJson != `{"path":"README.md"}` {
+		t.Fatalf("Snapshot message = %#v", message)
+	}
+	description, ok := snapshot.Description.Get()
+	if !ok || description.PendingApproval.IsNull() || description.Plan.IsNull() {
+		t.Fatalf("Snapshot description = %#v", snapshot.Description)
+	}
+}
+
+func TestGetAgentSnapshotMapsTerminalFlowResult(t *testing.T) {
+	t.Parallel()
+	errorType := agent.FlowErrorTypeWorkerMethod
+	errorMessage := "worker failed"
+	handler := newTestHandler(&fakeAgentService{snapshot: agent.AgentSnapshot{
+		RunID:        "run-terminal",
+		FlowStatus:   agent.FlowStatusFailed,
+		ErrorType:    &errorType,
+		ErrorMessage: &errorMessage,
+		History:      agent.HistoryPage{Messages: []agent.SequencedMessage{}},
+		Queued:       []agent.PendingUserMessage{},
+		Steered:      []agent.PendingUserMessage{},
+	}}, fakeCredentials{})
+	response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
+		FlowId: "flow-terminal",
+		Limit:  transportapi.NewOptInt(50),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := response.(*transportapi.AgentSnapshotHeaders)
+	if !ok {
+		t.Fatalf("response type = %T", response)
+	}
+	snapshot := result.Response
+	if snapshot.FlowStatus != transportapi.FlowStatusFailed || !snapshot.Description.IsNull() {
+		t.Fatalf("terminal Snapshot = %#v", snapshot)
+	}
+	mappedErrorType, ok := snapshot.ErrorType.Get()
+	if !ok || mappedErrorType != transportapi.FlowErrorTypeWorkerMethod {
+		t.Fatalf("terminal error type = %#v", snapshot.ErrorType)
+	}
+	if mappedMessage, ok := snapshot.ErrorMessage.Get(); !ok || mappedMessage != errorMessage {
+		t.Fatalf("terminal error message = %#v", snapshot.ErrorMessage)
+	}
+}
+
+func TestGetAgentSnapshotPreservesDexFlowLifecycleErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want func(transportapi.GetAgentSnapshotRes) bool
+	}{
+		{
+			name: "missing",
+			err:  &dex.FlowNotFoundError{ServiceError: &dex.ServiceError{}},
+			want: func(response transportapi.GetAgentSnapshotRes) bool {
+				_, ok := response.(*transportapi.GetAgentSnapshotNotFound)
+				return ok
+			},
+		},
+		{
+			name: "inactive",
+			err:  &dex.FlowNotActiveError{ServiceError: &dex.ServiceError{}},
+			want: func(response transportapi.GetAgentSnapshotRes) bool {
+				_, ok := response.(*transportapi.GetAgentSnapshotServiceUnavailable)
+				return ok
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			handler := newTestHandler(&fakeAgentService{snapshotErr: test.err}, fakeCredentials{})
+			response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
+				FlowId: "flow-1",
+				Limit:  transportapi.NewOptInt(50),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !test.want(response) {
+				t.Fatalf("response type = %T", response)
+			}
+		})
+	}
+}
+
+func TestQueueMutationsUseOnlyGeneratedMessageID(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{}
+	handler := newTestHandler(service, fakeCredentials{})
+	request := &transportapi.QueueMutationRequest{FlowId: "flow-1", MessageId: "message-1"}
+
+	deleted, err := handler.DeleteQueuedMessage(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResult, ok := deleted.(*transportapi.QueueMutationResponse)
+	if !ok || deleteResult.Action != transportapi.QueueActionDeleted || service.deletedMessageID != "message-1" {
+		t.Fatalf("delete response = %#v, message ID = %q", deleted, service.deletedMessageID)
+	}
+
+	steered, err := handler.SteerQueuedMessage(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steerResult, ok := steered.(*transportapi.QueueMutationResponse)
+	if !ok || steerResult.Action != transportapi.QueueActionSteered || service.steeredMessageID != "message-1" {
+		t.Fatalf("steer response = %#v, message ID = %q", steered, service.steeredMessageID)
+	}
+}
+
+func TestStaleQueueMutationMapsToConflict(t *testing.T) {
+	t.Parallel()
+	stale := &agent.PendingMessageNotFoundError{MessageID: "message-1"}
+	service := &fakeAgentService{deleteErr: stale, steerErr: stale}
+	handler := newTestHandler(service, fakeCredentials{})
+	request := &transportapi.QueueMutationRequest{FlowId: "flow-1", MessageId: "message-1"}
+
+	deleted, err := handler.DeleteQueuedMessage(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deleted.(*transportapi.DeleteQueuedMessageConflict); !ok {
+		t.Fatalf("delete response type = %T", deleted)
+	}
+
+	steered, err := handler.SteerQueuedMessage(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := steered.(*transportapi.SteerQueuedMessageConflict); !ok {
+		t.Fatalf("steer response type = %T", steered)
+	}
+}
+
 func TestPortalUsesTypedCredentialAndToolProjection(t *testing.T) {
 	t.Parallel()
 	handler := newTestHandler(&fakeAgentService{}, fakeCredentials{agent.ProviderOpenAI: true})
@@ -136,11 +351,17 @@ func newTestHandler(service *fakeAgentService, credentials fakeCredentials) *Han
 }
 
 type fakeAgentService struct {
-	started    agent.AgentConfig
-	startCalls int
-	sendErr    error
-	event      agent.StreamEvent
-	eventErr   error
+	started          agent.AgentConfig
+	startCalls       int
+	sendErr          error
+	snapshot         agent.AgentSnapshot
+	snapshotErr      error
+	deletedMessageID agent.MessageID
+	deleteErr        error
+	steeredMessageID agent.MessageID
+	steerErr         error
+	event            agent.StreamEvent
+	eventErr         error
 }
 
 func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, config agent.AgentConfig) (agent.RunID, error) {
@@ -151,6 +372,32 @@ func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, config
 
 func (service *fakeAgentService) SendMessage(context.Context, agent.FlowID, agent.UserMessage) error {
 	return service.sendErr
+}
+
+func (service *fakeAgentService) Snapshot(
+	context.Context,
+	agent.FlowID,
+	agent.SnapshotRequest,
+) (agent.AgentSnapshot, error) {
+	return service.snapshot, service.snapshotErr
+}
+
+func (service *fakeAgentService) DeleteQueuedMessage(
+	_ context.Context,
+	_ agent.FlowID,
+	messageID agent.MessageID,
+) error {
+	service.deletedMessageID = messageID
+	return service.deleteErr
+}
+
+func (service *fakeAgentService) SteerMessage(
+	_ context.Context,
+	_ agent.FlowID,
+	request agent.SteerMessageRequest,
+) error {
+	service.steeredMessageID = request.MessageID
+	return service.steerErr
 }
 
 func (*fakeAgentService) ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error {

@@ -1,24 +1,25 @@
 # Superagent
 
 Superagent is a standalone, production-oriented AI agent built on Dex durable
-execution. The current Phase 1 implementation ports the Python agent core to Go
-on the released Dex Go SDK `v0.2.9`, retains the React application, and uses
+execution. The Phase 2 implementation ports the Python agent core to Go on the
+released Dex Go SDK `v0.2.12`, retains the React application, and uses
 OpenAPI-generated server and browser contracts.
 
 The immutable upstream Python baseline is under `reference/python/`. Migration
 scope, external gates, and evidence are tracked in `MIGRATION.md`; package and
 durability boundaries are described in `ARCHITECTURE.md`.
 
-## Phase 1 scope
+## Phase 2 scope
 
-Phase 1 includes typed Agent state and commands, plans, approvals, user input,
+The application includes typed Agent state and commands, plans, approvals, user input,
 durable timers, steering, compaction, buffered streams, provider adapters, MCP
-stdio and Streamable HTTP transports, a separately deployable launch portal,
-and graceful process shutdown.
+stdio and Streamable HTTP transports, a separately deployable React application,
+and graceful process shutdown. One atomic Snapshot read restores application
+history, Agent description, and queued and steered messages. Generated event
+polling supplies low-latency deltas between durable reconciliations.
 
-The conversation read surface deliberately waits for the released Dex Snapshot
-API. There are no temporary history, queue-read, describe, status, Snapshot, or
-queue-mutation HTTP routes. The launch portal makes that boundary explicit.
+The legacy history, queue-read, describe, and status routes do not exist. Queue
+delete and steer accept only stable message IDs returned by Snapshot.
 
 ## Prerequisites
 
@@ -118,6 +119,39 @@ DEX_REPO=/absolute/path/to/dex make flow-visualize
 `make check` is deterministic and credential-free. The Dex integration target
 requires a running server. The explicit live target is the only test that reads
 `OPENAI_API_KEY` from the ignored root `.env`.
+
+## Flow rendering
+
+Generate the checked-in Go `AIAgentFlow` definition with a version-matched Dex
+checkout:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make generate-flow-definition
+DEX_REPO=/absolute/path/to/dex make check-flow-definition
+```
+
+Render the Go source directly in a temporary Flow Rendering page:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make flow-visualize
+```
+
+Render the generated JSON together with any future definitions in
+`flow-definitions/`:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make flow-render
+```
+
+`flow-render` starts a local Dex development environment. Open the printed Dex
+Web address and select **Flow Rendering**. Definitions are loaded at startup, so
+restart the command after regenerating them.
+
+With a compatible released `dexcli`, the equivalent direct command is:
+
+```bash
+dexcli dev --flow-rendering-dir ./flow-definitions
+```
 
 Read `AGENTS.md` before changing the repository. Every Dex Flow, Step, RPC,
 Channel, Stream, Timer, retry, or recovery change must also follow the vendored

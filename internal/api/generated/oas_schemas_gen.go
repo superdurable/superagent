@@ -134,6 +134,175 @@ func (s *ActivityStreamEventKind) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/AgentDescription
+type AgentDescription struct {
+	Status                     AgentStatus         `json:"status"`
+	Model                      string              `json:"model"`
+	SystemPrompt               string              `json:"systemPrompt"`
+	FirstRetainedSequence      int64               `json:"firstRetainedSequence"`
+	LastSequence               int64               `json:"lastSequence"`
+	SummarizedThroughSequence  int64               `json:"summarizedThroughSequence"`
+	PendingApproval            NilPendingApproval  `json:"pendingApproval"`
+	PendingTimer               NilPendingTimer     `json:"pendingTimer"`
+	PendingUserInput           NilPendingUserInput `json:"pendingUserInput"`
+	Plan                       NilAgentPlan        `json:"plan"`
+	IsPlanExecutionRequested   bool                `json:"isPlanExecutionRequested"`
+	PendingQueuedMessageCount  int                 `json:"pendingQueuedMessageCount"`
+	PendingSteeredMessageCount int                 `json:"pendingSteeredMessageCount"`
+	AvailableMcpServers        []string            `json:"availableMcpServers"`
+	AvailableTools             []ToolName          `json:"availableTools"`
+}
+
+// GetStatus returns the value of Status.
+func (s *AgentDescription) GetStatus() AgentStatus {
+	return s.Status
+}
+
+// GetModel returns the value of Model.
+func (s *AgentDescription) GetModel() string {
+	return s.Model
+}
+
+// GetSystemPrompt returns the value of SystemPrompt.
+func (s *AgentDescription) GetSystemPrompt() string {
+	return s.SystemPrompt
+}
+
+// GetFirstRetainedSequence returns the value of FirstRetainedSequence.
+func (s *AgentDescription) GetFirstRetainedSequence() int64 {
+	return s.FirstRetainedSequence
+}
+
+// GetLastSequence returns the value of LastSequence.
+func (s *AgentDescription) GetLastSequence() int64 {
+	return s.LastSequence
+}
+
+// GetSummarizedThroughSequence returns the value of SummarizedThroughSequence.
+func (s *AgentDescription) GetSummarizedThroughSequence() int64 {
+	return s.SummarizedThroughSequence
+}
+
+// GetPendingApproval returns the value of PendingApproval.
+func (s *AgentDescription) GetPendingApproval() NilPendingApproval {
+	return s.PendingApproval
+}
+
+// GetPendingTimer returns the value of PendingTimer.
+func (s *AgentDescription) GetPendingTimer() NilPendingTimer {
+	return s.PendingTimer
+}
+
+// GetPendingUserInput returns the value of PendingUserInput.
+func (s *AgentDescription) GetPendingUserInput() NilPendingUserInput {
+	return s.PendingUserInput
+}
+
+// GetPlan returns the value of Plan.
+func (s *AgentDescription) GetPlan() NilAgentPlan {
+	return s.Plan
+}
+
+// GetIsPlanExecutionRequested returns the value of IsPlanExecutionRequested.
+func (s *AgentDescription) GetIsPlanExecutionRequested() bool {
+	return s.IsPlanExecutionRequested
+}
+
+// GetPendingQueuedMessageCount returns the value of PendingQueuedMessageCount.
+func (s *AgentDescription) GetPendingQueuedMessageCount() int {
+	return s.PendingQueuedMessageCount
+}
+
+// GetPendingSteeredMessageCount returns the value of PendingSteeredMessageCount.
+func (s *AgentDescription) GetPendingSteeredMessageCount() int {
+	return s.PendingSteeredMessageCount
+}
+
+// GetAvailableMcpServers returns the value of AvailableMcpServers.
+func (s *AgentDescription) GetAvailableMcpServers() []string {
+	return s.AvailableMcpServers
+}
+
+// GetAvailableTools returns the value of AvailableTools.
+func (s *AgentDescription) GetAvailableTools() []ToolName {
+	return s.AvailableTools
+}
+
+// SetStatus sets the value of Status.
+func (s *AgentDescription) SetStatus(val AgentStatus) {
+	s.Status = val
+}
+
+// SetModel sets the value of Model.
+func (s *AgentDescription) SetModel(val string) {
+	s.Model = val
+}
+
+// SetSystemPrompt sets the value of SystemPrompt.
+func (s *AgentDescription) SetSystemPrompt(val string) {
+	s.SystemPrompt = val
+}
+
+// SetFirstRetainedSequence sets the value of FirstRetainedSequence.
+func (s *AgentDescription) SetFirstRetainedSequence(val int64) {
+	s.FirstRetainedSequence = val
+}
+
+// SetLastSequence sets the value of LastSequence.
+func (s *AgentDescription) SetLastSequence(val int64) {
+	s.LastSequence = val
+}
+
+// SetSummarizedThroughSequence sets the value of SummarizedThroughSequence.
+func (s *AgentDescription) SetSummarizedThroughSequence(val int64) {
+	s.SummarizedThroughSequence = val
+}
+
+// SetPendingApproval sets the value of PendingApproval.
+func (s *AgentDescription) SetPendingApproval(val NilPendingApproval) {
+	s.PendingApproval = val
+}
+
+// SetPendingTimer sets the value of PendingTimer.
+func (s *AgentDescription) SetPendingTimer(val NilPendingTimer) {
+	s.PendingTimer = val
+}
+
+// SetPendingUserInput sets the value of PendingUserInput.
+func (s *AgentDescription) SetPendingUserInput(val NilPendingUserInput) {
+	s.PendingUserInput = val
+}
+
+// SetPlan sets the value of Plan.
+func (s *AgentDescription) SetPlan(val NilAgentPlan) {
+	s.Plan = val
+}
+
+// SetIsPlanExecutionRequested sets the value of IsPlanExecutionRequested.
+func (s *AgentDescription) SetIsPlanExecutionRequested(val bool) {
+	s.IsPlanExecutionRequested = val
+}
+
+// SetPendingQueuedMessageCount sets the value of PendingQueuedMessageCount.
+func (s *AgentDescription) SetPendingQueuedMessageCount(val int) {
+	s.PendingQueuedMessageCount = val
+}
+
+// SetPendingSteeredMessageCount sets the value of PendingSteeredMessageCount.
+func (s *AgentDescription) SetPendingSteeredMessageCount(val int) {
+	s.PendingSteeredMessageCount = val
+}
+
+// SetAvailableMcpServers sets the value of AvailableMcpServers.
+func (s *AgentDescription) SetAvailableMcpServers(val []string) {
+	s.AvailableMcpServers = val
+}
+
+// SetAvailableTools sets the value of AvailableTools.
+func (s *AgentDescription) SetAvailableTools(val []ToolName) {
+	s.AvailableTools = val
+}
+
 // Ref: #/components/schemas/AgentEvent
 type AgentEvent struct {
 	Kind     EventKind   `json:"kind"`
@@ -180,6 +349,324 @@ func (s *AgentEvent) SetCallId(val NilCallID) {
 // SetToolName sets the value of ToolName.
 func (s *AgentEvent) SetToolName(val NilToolName) {
 	s.ToolName = val
+}
+
+// Ref: #/components/schemas/AgentMessage
+type AgentMessage struct {
+	Role       MessageRole `json:"role"`
+	Content    string      `json:"content"`
+	ToolCalls  []ToolCall  `json:"toolCalls"`
+	ToolCallId NilCallID   `json:"toolCallId"`
+	ToolName   NilToolName `json:"toolName"`
+	CreatedAt  time.Time   `json:"createdAt"`
+}
+
+// GetRole returns the value of Role.
+func (s *AgentMessage) GetRole() MessageRole {
+	return s.Role
+}
+
+// GetContent returns the value of Content.
+func (s *AgentMessage) GetContent() string {
+	return s.Content
+}
+
+// GetToolCalls returns the value of ToolCalls.
+func (s *AgentMessage) GetToolCalls() []ToolCall {
+	return s.ToolCalls
+}
+
+// GetToolCallId returns the value of ToolCallId.
+func (s *AgentMessage) GetToolCallId() NilCallID {
+	return s.ToolCallId
+}
+
+// GetToolName returns the value of ToolName.
+func (s *AgentMessage) GetToolName() NilToolName {
+	return s.ToolName
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *AgentMessage) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// SetRole sets the value of Role.
+func (s *AgentMessage) SetRole(val MessageRole) {
+	s.Role = val
+}
+
+// SetContent sets the value of Content.
+func (s *AgentMessage) SetContent(val string) {
+	s.Content = val
+}
+
+// SetToolCalls sets the value of ToolCalls.
+func (s *AgentMessage) SetToolCalls(val []ToolCall) {
+	s.ToolCalls = val
+}
+
+// SetToolCallId sets the value of ToolCallId.
+func (s *AgentMessage) SetToolCallId(val NilCallID) {
+	s.ToolCallId = val
+}
+
+// SetToolName sets the value of ToolName.
+func (s *AgentMessage) SetToolName(val NilToolName) {
+	s.ToolName = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *AgentMessage) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// Ref: #/components/schemas/AgentPlan
+type AgentPlan struct {
+	Revision int64      `json:"revision"`
+	Status   PlanStatus `json:"status"`
+	Tasks    []PlanTask `json:"tasks"`
+}
+
+// GetRevision returns the value of Revision.
+func (s *AgentPlan) GetRevision() int64 {
+	return s.Revision
+}
+
+// GetStatus returns the value of Status.
+func (s *AgentPlan) GetStatus() PlanStatus {
+	return s.Status
+}
+
+// GetTasks returns the value of Tasks.
+func (s *AgentPlan) GetTasks() []PlanTask {
+	return s.Tasks
+}
+
+// SetRevision sets the value of Revision.
+func (s *AgentPlan) SetRevision(val int64) {
+	s.Revision = val
+}
+
+// SetStatus sets the value of Status.
+func (s *AgentPlan) SetStatus(val PlanStatus) {
+	s.Status = val
+}
+
+// SetTasks sets the value of Tasks.
+func (s *AgentPlan) SetTasks(val []PlanTask) {
+	s.Tasks = val
+}
+
+// Ref: #/components/schemas/AgentSnapshot
+type AgentSnapshot struct {
+	RunId        RunID                `json:"runId"`
+	FlowStatus   FlowStatus           `json:"flowStatus"`
+	ErrorType    NilFlowErrorType     `json:"errorType"`
+	ErrorMessage NilString            `json:"errorMessage"`
+	History      HistoryPage          `json:"history"`
+	Description  NilAgentDescription  `json:"description"`
+	Queued       []PendingUserMessage `json:"queued"`
+	Steered      []PendingUserMessage `json:"steered"`
+}
+
+// GetRunId returns the value of RunId.
+func (s *AgentSnapshot) GetRunId() RunID {
+	return s.RunId
+}
+
+// GetFlowStatus returns the value of FlowStatus.
+func (s *AgentSnapshot) GetFlowStatus() FlowStatus {
+	return s.FlowStatus
+}
+
+// GetErrorType returns the value of ErrorType.
+func (s *AgentSnapshot) GetErrorType() NilFlowErrorType {
+	return s.ErrorType
+}
+
+// GetErrorMessage returns the value of ErrorMessage.
+func (s *AgentSnapshot) GetErrorMessage() NilString {
+	return s.ErrorMessage
+}
+
+// GetHistory returns the value of History.
+func (s *AgentSnapshot) GetHistory() HistoryPage {
+	return s.History
+}
+
+// GetDescription returns the value of Description.
+func (s *AgentSnapshot) GetDescription() NilAgentDescription {
+	return s.Description
+}
+
+// GetQueued returns the value of Queued.
+func (s *AgentSnapshot) GetQueued() []PendingUserMessage {
+	return s.Queued
+}
+
+// GetSteered returns the value of Steered.
+func (s *AgentSnapshot) GetSteered() []PendingUserMessage {
+	return s.Steered
+}
+
+// SetRunId sets the value of RunId.
+func (s *AgentSnapshot) SetRunId(val RunID) {
+	s.RunId = val
+}
+
+// SetFlowStatus sets the value of FlowStatus.
+func (s *AgentSnapshot) SetFlowStatus(val FlowStatus) {
+	s.FlowStatus = val
+}
+
+// SetErrorType sets the value of ErrorType.
+func (s *AgentSnapshot) SetErrorType(val NilFlowErrorType) {
+	s.ErrorType = val
+}
+
+// SetErrorMessage sets the value of ErrorMessage.
+func (s *AgentSnapshot) SetErrorMessage(val NilString) {
+	s.ErrorMessage = val
+}
+
+// SetHistory sets the value of History.
+func (s *AgentSnapshot) SetHistory(val HistoryPage) {
+	s.History = val
+}
+
+// SetDescription sets the value of Description.
+func (s *AgentSnapshot) SetDescription(val NilAgentDescription) {
+	s.Description = val
+}
+
+// SetQueued sets the value of Queued.
+func (s *AgentSnapshot) SetQueued(val []PendingUserMessage) {
+	s.Queued = val
+}
+
+// SetSteered sets the value of Steered.
+func (s *AgentSnapshot) SetSteered(val []PendingUserMessage) {
+	s.Steered = val
+}
+
+// AgentSnapshotHeaders wraps AgentSnapshot with response headers.
+type AgentSnapshotHeaders struct {
+	CacheControl GetAgentSnapshotOKCacheControl
+	Response     AgentSnapshot
+}
+
+// GetCacheControl returns the value of CacheControl.
+func (s *AgentSnapshotHeaders) GetCacheControl() GetAgentSnapshotOKCacheControl {
+	return s.CacheControl
+}
+
+// GetResponse returns the value of Response.
+func (s *AgentSnapshotHeaders) GetResponse() AgentSnapshot {
+	return s.Response
+}
+
+// SetCacheControl sets the value of CacheControl.
+func (s *AgentSnapshotHeaders) SetCacheControl(val GetAgentSnapshotOKCacheControl) {
+	s.CacheControl = val
+}
+
+// SetResponse sets the value of Response.
+func (s *AgentSnapshotHeaders) SetResponse(val AgentSnapshot) {
+	s.Response = val
+}
+
+func (*AgentSnapshotHeaders) getAgentSnapshotRes() {}
+
+// Ref: #/components/schemas/AgentStatus
+type AgentStatus string
+
+const (
+	AgentStatusInitializing           AgentStatus = "initializing"
+	AgentStatusWaitingForMessage      AgentStatus = "waiting_for_message"
+	AgentStatusCompactingContext      AgentStatus = "compacting_context"
+	AgentStatusCallingModel           AgentStatus = "calling_model"
+	AgentStatusRoutingTool            AgentStatus = "routing_tool"
+	AgentStatusWaitingForToolApproval AgentStatus = "waiting_for_tool_approval"
+	AgentStatusExecutingTool          AgentStatus = "executing_tool"
+	AgentStatusWaitingForTimer        AgentStatus = "waiting_for_timer"
+	AgentStatusApplyingSteering       AgentStatus = "applying_steering"
+)
+
+// AllValues returns all AgentStatus values.
+func (AgentStatus) AllValues() []AgentStatus {
+	return []AgentStatus{
+		AgentStatusInitializing,
+		AgentStatusWaitingForMessage,
+		AgentStatusCompactingContext,
+		AgentStatusCallingModel,
+		AgentStatusRoutingTool,
+		AgentStatusWaitingForToolApproval,
+		AgentStatusExecutingTool,
+		AgentStatusWaitingForTimer,
+		AgentStatusApplyingSteering,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AgentStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case AgentStatusInitializing:
+		return []byte(s), nil
+	case AgentStatusWaitingForMessage:
+		return []byte(s), nil
+	case AgentStatusCompactingContext:
+		return []byte(s), nil
+	case AgentStatusCallingModel:
+		return []byte(s), nil
+	case AgentStatusRoutingTool:
+		return []byte(s), nil
+	case AgentStatusWaitingForToolApproval:
+		return []byte(s), nil
+	case AgentStatusExecutingTool:
+		return []byte(s), nil
+	case AgentStatusWaitingForTimer:
+		return []byte(s), nil
+	case AgentStatusApplyingSteering:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AgentStatus) UnmarshalText(data []byte) error {
+	switch AgentStatus(data) {
+	case AgentStatusInitializing:
+		*s = AgentStatusInitializing
+		return nil
+	case AgentStatusWaitingForMessage:
+		*s = AgentStatusWaitingForMessage
+		return nil
+	case AgentStatusCompactingContext:
+		*s = AgentStatusCompactingContext
+		return nil
+	case AgentStatusCallingModel:
+		*s = AgentStatusCallingModel
+		return nil
+	case AgentStatusRoutingTool:
+		*s = AgentStatusRoutingTool
+		return nil
+	case AgentStatusWaitingForToolApproval:
+		*s = AgentStatusWaitingForToolApproval
+		return nil
+	case AgentStatusExecutingTool:
+		*s = AgentStatusExecutingTool
+		return nil
+	case AgentStatusWaitingForTimer:
+		*s = AgentStatusWaitingForTimer
+		return nil
+	case AgentStatusApplyingSteering:
+		*s = AgentStatusApplyingSteering
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 type ApproveToolBadRequest Problem
@@ -293,6 +780,22 @@ func (s *AssistantStreamEventKind) UnmarshalText(data []byte) error {
 }
 
 type CallID string
+
+type DeleteQueuedMessageBadRequest Problem
+
+func (*DeleteQueuedMessageBadRequest) deleteQueuedMessageRes() {}
+
+type DeleteQueuedMessageConflict Problem
+
+func (*DeleteQueuedMessageConflict) deleteQueuedMessageRes() {}
+
+type DeleteQueuedMessageNotFound Problem
+
+func (*DeleteQueuedMessageNotFound) deleteQueuedMessageRes() {}
+
+type DeleteQueuedMessageServiceUnavailable Problem
+
+func (*DeleteQueuedMessageServiceUnavailable) deleteQueuedMessageRes() {}
 
 // Ref: #/components/schemas/EventKind
 type EventKind string
@@ -504,7 +1007,193 @@ type ExecutePlanServiceUnavailable Problem
 
 func (*ExecutePlanServiceUnavailable) executePlanRes() {}
 
+// Ref: #/components/schemas/FlowErrorType
+type FlowErrorType string
+
+const (
+	FlowErrorTypeStepDecision    FlowErrorType = "step_decision"
+	FlowErrorTypeClientAPI       FlowErrorType = "client_api"
+	FlowErrorTypeWorkerMethod    FlowErrorType = "worker_method"
+	FlowErrorTypeInvalidUserCode FlowErrorType = "invalid_user_code"
+	FlowErrorTypeInternal        FlowErrorType = "internal"
+	FlowErrorTypeTimeout         FlowErrorType = "timeout"
+)
+
+// AllValues returns all FlowErrorType values.
+func (FlowErrorType) AllValues() []FlowErrorType {
+	return []FlowErrorType{
+		FlowErrorTypeStepDecision,
+		FlowErrorTypeClientAPI,
+		FlowErrorTypeWorkerMethod,
+		FlowErrorTypeInvalidUserCode,
+		FlowErrorTypeInternal,
+		FlowErrorTypeTimeout,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s FlowErrorType) MarshalText() ([]byte, error) {
+	switch s {
+	case FlowErrorTypeStepDecision:
+		return []byte(s), nil
+	case FlowErrorTypeClientAPI:
+		return []byte(s), nil
+	case FlowErrorTypeWorkerMethod:
+		return []byte(s), nil
+	case FlowErrorTypeInvalidUserCode:
+		return []byte(s), nil
+	case FlowErrorTypeInternal:
+		return []byte(s), nil
+	case FlowErrorTypeTimeout:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *FlowErrorType) UnmarshalText(data []byte) error {
+	switch FlowErrorType(data) {
+	case FlowErrorTypeStepDecision:
+		*s = FlowErrorTypeStepDecision
+		return nil
+	case FlowErrorTypeClientAPI:
+		*s = FlowErrorTypeClientAPI
+		return nil
+	case FlowErrorTypeWorkerMethod:
+		*s = FlowErrorTypeWorkerMethod
+		return nil
+	case FlowErrorTypeInvalidUserCode:
+		*s = FlowErrorTypeInvalidUserCode
+		return nil
+	case FlowErrorTypeInternal:
+		*s = FlowErrorTypeInternal
+		return nil
+	case FlowErrorTypeTimeout:
+		*s = FlowErrorTypeTimeout
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 type FlowID string
+
+// Ref: #/components/schemas/FlowStatus
+type FlowStatus string
+
+const (
+	FlowStatusRunning        FlowStatus = "running"
+	FlowStatusCompleted      FlowStatus = "completed"
+	FlowStatusFailed         FlowStatus = "failed"
+	FlowStatusTerminated     FlowStatus = "terminated"
+	FlowStatusCanceled       FlowStatus = "canceled"
+	FlowStatusContinuedAsNew FlowStatus = "continued_as_new"
+)
+
+// AllValues returns all FlowStatus values.
+func (FlowStatus) AllValues() []FlowStatus {
+	return []FlowStatus{
+		FlowStatusRunning,
+		FlowStatusCompleted,
+		FlowStatusFailed,
+		FlowStatusTerminated,
+		FlowStatusCanceled,
+		FlowStatusContinuedAsNew,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s FlowStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case FlowStatusRunning:
+		return []byte(s), nil
+	case FlowStatusCompleted:
+		return []byte(s), nil
+	case FlowStatusFailed:
+		return []byte(s), nil
+	case FlowStatusTerminated:
+		return []byte(s), nil
+	case FlowStatusCanceled:
+		return []byte(s), nil
+	case FlowStatusContinuedAsNew:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *FlowStatus) UnmarshalText(data []byte) error {
+	switch FlowStatus(data) {
+	case FlowStatusRunning:
+		*s = FlowStatusRunning
+		return nil
+	case FlowStatusCompleted:
+		*s = FlowStatusCompleted
+		return nil
+	case FlowStatusFailed:
+		*s = FlowStatusFailed
+		return nil
+	case FlowStatusTerminated:
+		*s = FlowStatusTerminated
+		return nil
+	case FlowStatusCanceled:
+		*s = FlowStatusCanceled
+		return nil
+	case FlowStatusContinuedAsNew:
+		*s = FlowStatusContinuedAsNew
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type GetAgentSnapshotBadRequest Problem
+
+func (*GetAgentSnapshotBadRequest) getAgentSnapshotRes() {}
+
+type GetAgentSnapshotNotFound Problem
+
+func (*GetAgentSnapshotNotFound) getAgentSnapshotRes() {}
+
+type GetAgentSnapshotOKCacheControl string
+
+const (
+	GetAgentSnapshotOKCacheControlNoStore GetAgentSnapshotOKCacheControl = "no-store"
+)
+
+// AllValues returns all GetAgentSnapshotOKCacheControl values.
+func (GetAgentSnapshotOKCacheControl) AllValues() []GetAgentSnapshotOKCacheControl {
+	return []GetAgentSnapshotOKCacheControl{
+		GetAgentSnapshotOKCacheControlNoStore,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s GetAgentSnapshotOKCacheControl) MarshalText() ([]byte, error) {
+	switch s {
+	case GetAgentSnapshotOKCacheControlNoStore:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *GetAgentSnapshotOKCacheControl) UnmarshalText(data []byte) error {
+	switch GetAgentSnapshotOKCacheControl(data) {
+	case GetAgentSnapshotOKCacheControlNoStore:
+		*s = GetAgentSnapshotOKCacheControlNoStore
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type GetAgentSnapshotServiceUnavailable Problem
+
+func (*GetAgentSnapshotServiceUnavailable) getAgentSnapshotRes() {}
 
 // Ref: #/components/schemas/Health
 type Health struct {
@@ -558,6 +1247,180 @@ func (s *HealthStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/HistoryPage
+type HistoryPage struct {
+	Messages           []SequencedMessage `json:"messages"`
+	NextBeforeSequence NilSequence        `json:"nextBeforeSequence"`
+}
+
+// GetMessages returns the value of Messages.
+func (s *HistoryPage) GetMessages() []SequencedMessage {
+	return s.Messages
+}
+
+// GetNextBeforeSequence returns the value of NextBeforeSequence.
+func (s *HistoryPage) GetNextBeforeSequence() NilSequence {
+	return s.NextBeforeSequence
+}
+
+// SetMessages sets the value of Messages.
+func (s *HistoryPage) SetMessages(val []SequencedMessage) {
+	s.Messages = val
+}
+
+// SetNextBeforeSequence sets the value of NextBeforeSequence.
+func (s *HistoryPage) SetNextBeforeSequence(val NilSequence) {
+	s.NextBeforeSequence = val
+}
+
+type MessageID string
+
+// Ref: #/components/schemas/MessageRole
+type MessageRole string
+
+const (
+	MessageRoleSystem    MessageRole = "system"
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
+	MessageRoleTool      MessageRole = "tool"
+)
+
+// AllValues returns all MessageRole values.
+func (MessageRole) AllValues() []MessageRole {
+	return []MessageRole{
+		MessageRoleSystem,
+		MessageRoleUser,
+		MessageRoleAssistant,
+		MessageRoleTool,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MessageRole) MarshalText() ([]byte, error) {
+	switch s {
+	case MessageRoleSystem:
+		return []byte(s), nil
+	case MessageRoleUser:
+		return []byte(s), nil
+	case MessageRoleAssistant:
+		return []byte(s), nil
+	case MessageRoleTool:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MessageRole) UnmarshalText(data []byte) error {
+	switch MessageRole(data) {
+	case MessageRoleSystem:
+		*s = MessageRoleSystem
+		return nil
+	case MessageRoleUser:
+		*s = MessageRoleUser
+		return nil
+	case MessageRoleAssistant:
+		*s = MessageRoleAssistant
+		return nil
+	case MessageRoleTool:
+		*s = MessageRoleTool
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// NewNilAgentDescription returns new NilAgentDescription with value set to v.
+func NewNilAgentDescription(v AgentDescription) NilAgentDescription {
+	return NilAgentDescription{
+		Value: v,
+	}
+}
+
+// NilAgentDescription is nullable AgentDescription.
+type NilAgentDescription struct {
+	Value AgentDescription
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilAgentDescription) SetTo(v AgentDescription) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilAgentDescription) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilAgentDescription) SetToNull() {
+	o.Null = true
+	var v AgentDescription
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilAgentDescription) Get() (v AgentDescription, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilAgentDescription) Or(d AgentDescription) AgentDescription {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilAgentPlan returns new NilAgentPlan with value set to v.
+func NewNilAgentPlan(v AgentPlan) NilAgentPlan {
+	return NilAgentPlan{
+		Value: v,
+	}
+}
+
+// NilAgentPlan is nullable AgentPlan.
+type NilAgentPlan struct {
+	Value AgentPlan
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilAgentPlan) SetTo(v AgentPlan) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilAgentPlan) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilAgentPlan) SetToNull() {
+	o.Null = true
+	var v AgentPlan
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilAgentPlan) Get() (v AgentPlan, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilAgentPlan) Or(d AgentPlan) AgentPlan {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilCallID returns new NilCallID with value set to v.
 func NewNilCallID(v CallID) NilCallID {
 	return NilCallID{
@@ -597,6 +1460,231 @@ func (o NilCallID) Get() (v CallID, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o NilCallID) Or(d CallID) CallID {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilFlowErrorType returns new NilFlowErrorType with value set to v.
+func NewNilFlowErrorType(v FlowErrorType) NilFlowErrorType {
+	return NilFlowErrorType{
+		Value: v,
+	}
+}
+
+// NilFlowErrorType is nullable FlowErrorType.
+type NilFlowErrorType struct {
+	Value FlowErrorType
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilFlowErrorType) SetTo(v FlowErrorType) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilFlowErrorType) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilFlowErrorType) SetToNull() {
+	o.Null = true
+	var v FlowErrorType
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilFlowErrorType) Get() (v FlowErrorType, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilFlowErrorType) Or(d FlowErrorType) FlowErrorType {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilPendingApproval returns new NilPendingApproval with value set to v.
+func NewNilPendingApproval(v PendingApproval) NilPendingApproval {
+	return NilPendingApproval{
+		Value: v,
+	}
+}
+
+// NilPendingApproval is nullable PendingApproval.
+type NilPendingApproval struct {
+	Value PendingApproval
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilPendingApproval) SetTo(v PendingApproval) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilPendingApproval) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilPendingApproval) SetToNull() {
+	o.Null = true
+	var v PendingApproval
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilPendingApproval) Get() (v PendingApproval, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilPendingApproval) Or(d PendingApproval) PendingApproval {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilPendingTimer returns new NilPendingTimer with value set to v.
+func NewNilPendingTimer(v PendingTimer) NilPendingTimer {
+	return NilPendingTimer{
+		Value: v,
+	}
+}
+
+// NilPendingTimer is nullable PendingTimer.
+type NilPendingTimer struct {
+	Value PendingTimer
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilPendingTimer) SetTo(v PendingTimer) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilPendingTimer) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilPendingTimer) SetToNull() {
+	o.Null = true
+	var v PendingTimer
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilPendingTimer) Get() (v PendingTimer, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilPendingTimer) Or(d PendingTimer) PendingTimer {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilPendingUserInput returns new NilPendingUserInput with value set to v.
+func NewNilPendingUserInput(v PendingUserInput) NilPendingUserInput {
+	return NilPendingUserInput{
+		Value: v,
+	}
+}
+
+// NilPendingUserInput is nullable PendingUserInput.
+type NilPendingUserInput struct {
+	Value PendingUserInput
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilPendingUserInput) SetTo(v PendingUserInput) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilPendingUserInput) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilPendingUserInput) SetToNull() {
+	o.Null = true
+	var v PendingUserInput
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilPendingUserInput) Get() (v PendingUserInput, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilPendingUserInput) Or(d PendingUserInput) PendingUserInput {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilSequence returns new NilSequence with value set to v.
+func NewNilSequence(v Sequence) NilSequence {
+	return NilSequence{
+		Value: v,
+	}
+}
+
+// NilSequence is nullable Sequence.
+type NilSequence struct {
+	Value Sequence
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilSequence) SetTo(v Sequence) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilSequence) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilSequence) SetToNull() {
+	o.Null = true
+	var v Sequence
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilSequence) Get() (v Sequence, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilSequence) Or(d Sequence) Sequence {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -739,6 +1827,52 @@ func (o OptFloat64) Or(d float64) float64 {
 	return d
 }
 
+// NewOptInt returns new OptInt with value set to v.
+func NewOptInt(v int) OptInt {
+	return OptInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt is optional int.
+type OptInt struct {
+	Value int
+	Set   bool
+}
+
+// IsSet returns true if OptInt was set.
+func (o OptInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt) SetTo(v int) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt) Get() (v int, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -853,6 +1987,52 @@ func (o OptResumeToken) Or(d ResumeToken) ResumeToken {
 	return d
 }
 
+// NewOptSequence returns new OptSequence with value set to v.
+func NewOptSequence(v Sequence) OptSequence {
+	return OptSequence{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptSequence is optional Sequence.
+type OptSequence struct {
+	Value Sequence
+	Set   bool
+}
+
+// IsSet returns true if OptSequence was set.
+func (o OptSequence) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptSequence) Reset() {
+	var v Sequence
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptSequence) SetTo(v Sequence) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptSequence) Get() (v Sequence, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptSequence) Or(d Sequence) Sequence {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -897,6 +2077,270 @@ func (o OptString) Or(d string) string {
 		return v
 	}
 	return d
+}
+
+// Ref: #/components/schemas/PendingApproval
+type PendingApproval struct {
+	CallId        CallID   `json:"callId"`
+	ToolName      ToolName `json:"toolName"`
+	ArgumentsJson string   `json:"argumentsJson"`
+}
+
+// GetCallId returns the value of CallId.
+func (s *PendingApproval) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetToolName returns the value of ToolName.
+func (s *PendingApproval) GetToolName() ToolName {
+	return s.ToolName
+}
+
+// GetArgumentsJson returns the value of ArgumentsJson.
+func (s *PendingApproval) GetArgumentsJson() string {
+	return s.ArgumentsJson
+}
+
+// SetCallId sets the value of CallId.
+func (s *PendingApproval) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetToolName sets the value of ToolName.
+func (s *PendingApproval) SetToolName(val ToolName) {
+	s.ToolName = val
+}
+
+// SetArgumentsJson sets the value of ArgumentsJson.
+func (s *PendingApproval) SetArgumentsJson(val string) {
+	s.ArgumentsJson = val
+}
+
+// Ref: #/components/schemas/PendingTimer
+type PendingTimer struct {
+	CallId          CallID `json:"callId"`
+	DurationSeconds int64  `json:"durationSeconds"`
+	Reason          string `json:"reason"`
+}
+
+// GetCallId returns the value of CallId.
+func (s *PendingTimer) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetDurationSeconds returns the value of DurationSeconds.
+func (s *PendingTimer) GetDurationSeconds() int64 {
+	return s.DurationSeconds
+}
+
+// GetReason returns the value of Reason.
+func (s *PendingTimer) GetReason() string {
+	return s.Reason
+}
+
+// SetCallId sets the value of CallId.
+func (s *PendingTimer) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetDurationSeconds sets the value of DurationSeconds.
+func (s *PendingTimer) SetDurationSeconds(val int64) {
+	s.DurationSeconds = val
+}
+
+// SetReason sets the value of Reason.
+func (s *PendingTimer) SetReason(val string) {
+	s.Reason = val
+}
+
+// Ref: #/components/schemas/PendingUserInput
+type PendingUserInput struct {
+	CallId  CallID   `json:"callId"`
+	Prompt  string   `json:"prompt"`
+	Choices []string `json:"choices"`
+}
+
+// GetCallId returns the value of CallId.
+func (s *PendingUserInput) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetPrompt returns the value of Prompt.
+func (s *PendingUserInput) GetPrompt() string {
+	return s.Prompt
+}
+
+// GetChoices returns the value of Choices.
+func (s *PendingUserInput) GetChoices() []string {
+	return s.Choices
+}
+
+// SetCallId sets the value of CallId.
+func (s *PendingUserInput) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetPrompt sets the value of Prompt.
+func (s *PendingUserInput) SetPrompt(val string) {
+	s.Prompt = val
+}
+
+// SetChoices sets the value of Choices.
+func (s *PendingUserInput) SetChoices(val []string) {
+	s.Choices = val
+}
+
+// Ref: #/components/schemas/PendingUserMessage
+type PendingUserMessage struct {
+	MessageId MessageID   `json:"messageId"`
+	Value     UserMessage `json:"value"`
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *PendingUserMessage) GetMessageId() MessageID {
+	return s.MessageId
+}
+
+// GetValue returns the value of Value.
+func (s *PendingUserMessage) GetValue() UserMessage {
+	return s.Value
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *PendingUserMessage) SetMessageId(val MessageID) {
+	s.MessageId = val
+}
+
+// SetValue sets the value of Value.
+func (s *PendingUserMessage) SetValue(val UserMessage) {
+	s.Value = val
+}
+
+// Ref: #/components/schemas/PlanStatus
+type PlanStatus string
+
+const (
+	PlanStatusDraft     PlanStatus = "draft"
+	PlanStatusActive    PlanStatus = "active"
+	PlanStatusCompleted PlanStatus = "completed"
+)
+
+// AllValues returns all PlanStatus values.
+func (PlanStatus) AllValues() []PlanStatus {
+	return []PlanStatus{
+		PlanStatusDraft,
+		PlanStatusActive,
+		PlanStatusCompleted,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PlanStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case PlanStatusDraft:
+		return []byte(s), nil
+	case PlanStatusActive:
+		return []byte(s), nil
+	case PlanStatusCompleted:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PlanStatus) UnmarshalText(data []byte) error {
+	switch PlanStatus(data) {
+	case PlanStatusDraft:
+		*s = PlanStatusDraft
+		return nil
+	case PlanStatusActive:
+		*s = PlanStatusActive
+		return nil
+	case PlanStatusCompleted:
+		*s = PlanStatusCompleted
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/PlanTask
+type PlanTask struct {
+	Content string     `json:"content"`
+	Status  TaskStatus `json:"status"`
+}
+
+// GetContent returns the value of Content.
+func (s *PlanTask) GetContent() string {
+	return s.Content
+}
+
+// GetStatus returns the value of Status.
+func (s *PlanTask) GetStatus() TaskStatus {
+	return s.Status
+}
+
+// SetContent sets the value of Content.
+func (s *PlanTask) SetContent(val string) {
+	s.Content = val
+}
+
+// SetStatus sets the value of Status.
+func (s *PlanTask) SetStatus(val TaskStatus) {
+	s.Status = val
+}
+
+// Ref: #/components/schemas/PollTimeout
+type PollTimeout struct {
+	Reason PollTimeoutReason `json:"reason"`
+}
+
+// GetReason returns the value of Reason.
+func (s *PollTimeout) GetReason() PollTimeoutReason {
+	return s.Reason
+}
+
+// SetReason sets the value of Reason.
+func (s *PollTimeout) SetReason(val PollTimeoutReason) {
+	s.Reason = val
+}
+
+func (*PollTimeout) readEventRes() {}
+
+// Ref: #/components/schemas/PollTimeoutReason
+type PollTimeoutReason string
+
+const (
+	PollTimeoutReasonTimeout PollTimeoutReason = "timeout"
+)
+
+// AllValues returns all PollTimeoutReason values.
+func (PollTimeoutReason) AllValues() []PollTimeoutReason {
+	return []PollTimeoutReason{
+		PollTimeoutReasonTimeout,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PollTimeoutReason) MarshalText() ([]byte, error) {
+	switch s {
+	case PollTimeoutReasonTimeout:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PollTimeoutReason) UnmarshalText(data []byte) error {
+	switch PollTimeoutReason(data) {
+	case PollTimeoutReasonTimeout:
+		*s = PollTimeoutReasonTimeout
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/Portal
@@ -1192,14 +2636,106 @@ func (s *Provider) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/QueueAction
+type QueueAction string
+
+const (
+	QueueActionDeleted QueueAction = "deleted"
+	QueueActionSteered QueueAction = "steered"
+)
+
+// AllValues returns all QueueAction values.
+func (QueueAction) AllValues() []QueueAction {
+	return []QueueAction{
+		QueueActionDeleted,
+		QueueActionSteered,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s QueueAction) MarshalText() ([]byte, error) {
+	switch s {
+	case QueueActionDeleted:
+		return []byte(s), nil
+	case QueueActionSteered:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *QueueAction) UnmarshalText(data []byte) error {
+	switch QueueAction(data) {
+	case QueueActionDeleted:
+		*s = QueueActionDeleted
+		return nil
+	case QueueActionSteered:
+		*s = QueueActionSteered
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/QueueMutationRequest
+type QueueMutationRequest struct {
+	FlowId    FlowID    `json:"flowId"`
+	MessageId MessageID `json:"messageId"`
+}
+
+// GetFlowId returns the value of FlowId.
+func (s *QueueMutationRequest) GetFlowId() FlowID {
+	return s.FlowId
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *QueueMutationRequest) GetMessageId() MessageID {
+	return s.MessageId
+}
+
+// SetFlowId sets the value of FlowId.
+func (s *QueueMutationRequest) SetFlowId(val FlowID) {
+	s.FlowId = val
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *QueueMutationRequest) SetMessageId(val MessageID) {
+	s.MessageId = val
+}
+
+// Ref: #/components/schemas/QueueMutationResponse
+type QueueMutationResponse struct {
+	MessageId MessageID   `json:"messageId"`
+	Action    QueueAction `json:"action"`
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *QueueMutationResponse) GetMessageId() MessageID {
+	return s.MessageId
+}
+
+// GetAction returns the value of Action.
+func (s *QueueMutationResponse) GetAction() QueueAction {
+	return s.Action
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *QueueMutationResponse) SetMessageId(val MessageID) {
+	s.MessageId = val
+}
+
+// SetAction sets the value of Action.
+func (s *QueueMutationResponse) SetAction(val QueueAction) {
+	s.Action = val
+}
+
+func (*QueueMutationResponse) deleteQueuedMessageRes() {}
+func (*QueueMutationResponse) steerQueuedMessageRes()  {}
+
 type ReadEventBadRequest Problem
 
 func (*ReadEventBadRequest) readEventRes() {}
-
-// ReadEventGatewayTimeout is response for ReadEvent operation.
-type ReadEventGatewayTimeout struct{}
-
-func (*ReadEventGatewayTimeout) readEventRes() {}
 
 type ReadEventGone Problem
 
@@ -1309,6 +2845,8 @@ func (s *ReasoningStreamEventKind) UnmarshalText(data []byte) error {
 
 type ResumeToken string
 
+type RunID string
+
 type SendMessageBadRequest Problem
 
 func (*SendMessageBadRequest) sendMessageRes() {}
@@ -1361,6 +2899,34 @@ func (s *SendMessageRequest) SetPlanMode(val bool) {
 type SendMessageServiceUnavailable Problem
 
 func (*SendMessageServiceUnavailable) sendMessageRes() {}
+
+type Sequence int64
+
+// Ref: #/components/schemas/SequencedMessage
+type SequencedMessage struct {
+	Sequence Sequence     `json:"sequence"`
+	Message  AgentMessage `json:"message"`
+}
+
+// GetSequence returns the value of Sequence.
+func (s *SequencedMessage) GetSequence() Sequence {
+	return s.Sequence
+}
+
+// GetMessage returns the value of Message.
+func (s *SequencedMessage) GetMessage() AgentMessage {
+	return s.Message
+}
+
+// SetSequence sets the value of Sequence.
+func (s *SequencedMessage) SetSequence(val Sequence) {
+	s.Sequence = val
+}
+
+// SetMessage sets the value of Message.
+func (s *SequencedMessage) SetMessage(val AgentMessage) {
+	s.Message = val
+}
 
 type StartAgentBadRequest Problem
 
@@ -1527,6 +3093,22 @@ type StartAgentServiceUnavailable Problem
 
 func (*StartAgentServiceUnavailable) startAgentRes() {}
 
+type SteerQueuedMessageBadRequest Problem
+
+func (*SteerQueuedMessageBadRequest) steerQueuedMessageRes() {}
+
+type SteerQueuedMessageConflict Problem
+
+func (*SteerQueuedMessageConflict) steerQueuedMessageRes() {}
+
+type SteerQueuedMessageNotFound Problem
+
+func (*SteerQueuedMessageNotFound) steerQueuedMessageRes() {}
+
+type SteerQueuedMessageServiceUnavailable Problem
+
+func (*SteerQueuedMessageServiceUnavailable) steerQueuedMessageRes() {}
+
 // Ref: #/components/schemas/StreamEvent
 // StreamEvent represents sum type.
 type StreamEvent struct {
@@ -1621,6 +3203,55 @@ func NewActivityStreamEventStreamEvent(v ActivityStreamEvent) StreamEvent {
 
 func (*StreamEvent) readEventRes() {}
 
+// Ref: #/components/schemas/TaskStatus
+type TaskStatus string
+
+const (
+	TaskStatusPending    TaskStatus = "pending"
+	TaskStatusInProgress TaskStatus = "in_progress"
+	TaskStatusCompleted  TaskStatus = "completed"
+)
+
+// AllValues returns all TaskStatus values.
+func (TaskStatus) AllValues() []TaskStatus {
+	return []TaskStatus{
+		TaskStatusPending,
+		TaskStatusInProgress,
+		TaskStatusCompleted,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TaskStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case TaskStatusPending:
+		return []byte(s), nil
+	case TaskStatusInProgress:
+		return []byte(s), nil
+	case TaskStatusCompleted:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TaskStatus) UnmarshalText(data []byte) error {
+	switch TaskStatus(data) {
+	case TaskStatusPending:
+		*s = TaskStatusPending
+		return nil
+	case TaskStatusInProgress:
+		*s = TaskStatusInProgress
+		return nil
+	case TaskStatusCompleted:
+		*s = TaskStatusCompleted
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/ToolApprovalRequest
 type ToolApprovalRequest struct {
 	FlowId   FlowID `json:"flowId"`
@@ -1658,4 +3289,67 @@ func (s *ToolApprovalRequest) SetApproved(val bool) {
 	s.Approved = val
 }
 
+// Ref: #/components/schemas/ToolCall
+type ToolCall struct {
+	ID            CallID   `json:"id"`
+	Name          ToolName `json:"name"`
+	ArgumentsJson string   `json:"argumentsJson"`
+}
+
+// GetID returns the value of ID.
+func (s *ToolCall) GetID() CallID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *ToolCall) GetName() ToolName {
+	return s.Name
+}
+
+// GetArgumentsJson returns the value of ArgumentsJson.
+func (s *ToolCall) GetArgumentsJson() string {
+	return s.ArgumentsJson
+}
+
+// SetID sets the value of ID.
+func (s *ToolCall) SetID(val CallID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *ToolCall) SetName(val ToolName) {
+	s.Name = val
+}
+
+// SetArgumentsJson sets the value of ArgumentsJson.
+func (s *ToolCall) SetArgumentsJson(val string) {
+	s.ArgumentsJson = val
+}
+
 type ToolName string
+
+// Ref: #/components/schemas/UserMessage
+type UserMessage struct {
+	Content  string `json:"content"`
+	PlanMode bool   `json:"planMode"`
+}
+
+// GetContent returns the value of Content.
+func (s *UserMessage) GetContent() string {
+	return s.Content
+}
+
+// GetPlanMode returns the value of PlanMode.
+func (s *UserMessage) GetPlanMode() bool {
+	return s.PlanMode
+}
+
+// SetContent sets the value of Content.
+func (s *UserMessage) SetContent(val string) {
+	s.Content = val
+}
+
+// SetPlanMode sets the value of PlanMode.
+func (s *UserMessage) SetPlanMode(val bool) {
+	s.PlanMode = val
+}

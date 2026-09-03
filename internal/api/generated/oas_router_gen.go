@@ -11,13 +11,19 @@ import (
 )
 
 var (
-	rn10AllowedHeaders = map[string]string{
-		"POST": "Content-Type",
-	}
 	rn3AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn11AllowedHeaders = map[string]string{
+	rn17AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
+	}
+	rn13AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
+	}
+	rn4AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
+	}
+	rn15AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
 	rn1AllowedHeaders = map[string]string{
@@ -137,29 +143,107 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 
-				case 'm': // Prefix: "messages"
+				case 'm': // Prefix: "message"
 
-					if l := len("messages"); len(elem) >= l && elem[0:l] == "messages" {
+					if l := len("message"); len(elem) >= l && elem[0:l] == "message" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch r.Method {
-						case "POST":
-							s.handleSendMessageRequest([0]string{}, elemIsEscaped, w, r)
-						default:
-							s.notAllowed(w, r, notAllowedParams{
-								allowedMethods: "POST",
-								allowedHeaders: rn10AllowedHeaders,
-								acceptPost:     "application/json",
-								acceptPatch:    "",
-							})
+						break
+					}
+					switch elem[0] {
+					case '-': // Prefix: "-queue/"
+
+						if l := len("-queue/"); len(elem) >= l && elem[0:l] == "-queue/" {
+							elem = elem[l:]
+						} else {
+							break
 						}
 
-						return
+						if len(elem) == 0 {
+							break
+						}
+						switch elem[0] {
+						case 'd': // Prefix: "delete"
+
+							if l := len("delete"); len(elem) >= l && elem[0:l] == "delete" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch r.Method {
+								case "POST":
+									s.handleDeleteQueuedMessageRequest([0]string{}, elemIsEscaped, w, r)
+								default:
+									s.notAllowed(w, r, notAllowedParams{
+										allowedMethods: "POST",
+										allowedHeaders: rn3AllowedHeaders,
+										acceptPost:     "application/json",
+										acceptPatch:    "",
+									})
+								}
+
+								return
+							}
+
+						case 's': // Prefix: "steer"
+
+							if l := len("steer"); len(elem) >= l && elem[0:l] == "steer" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch r.Method {
+								case "POST":
+									s.handleSteerQueuedMessageRequest([0]string{}, elemIsEscaped, w, r)
+								default:
+									s.notAllowed(w, r, notAllowedParams{
+										allowedMethods: "POST",
+										allowedHeaders: rn17AllowedHeaders,
+										acceptPost:     "application/json",
+										acceptPatch:    "",
+									})
+								}
+
+								return
+							}
+
+						}
+
+					case 's': // Prefix: "s"
+
+						if l := len("s"); len(elem) >= l && elem[0:l] == "s" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "POST":
+								s.handleSendMessageRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "POST",
+									allowedHeaders: rn13AllowedHeaders,
+									acceptPost:     "application/json",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
 					}
 
 				case 'p': // Prefix: "p"
@@ -190,7 +274,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "POST",
-									allowedHeaders: rn3AllowedHeaders,
+									allowedHeaders: rn4AllowedHeaders,
 									acceptPost:     "application/json",
 									acceptPatch:    "",
 								})
@@ -226,29 +310,68 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					}
 
-				case 's': // Prefix: "start"
+				case 's': // Prefix: "s"
 
-					if l := len("start"); len(elem) >= l && elem[0:l] == "start" {
+					if l := len("s"); len(elem) >= l && elem[0:l] == "s" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch r.Method {
-						case "POST":
-							s.handleStartAgentRequest([0]string{}, elemIsEscaped, w, r)
-						default:
-							s.notAllowed(w, r, notAllowedParams{
-								allowedMethods: "POST",
-								allowedHeaders: rn11AllowedHeaders,
-								acceptPost:     "application/json",
-								acceptPatch:    "",
-							})
+						break
+					}
+					switch elem[0] {
+					case 'n': // Prefix: "napshot"
+
+						if l := len("napshot"); len(elem) >= l && elem[0:l] == "napshot" {
+							elem = elem[l:]
+						} else {
+							break
 						}
 
-						return
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleGetAgentSnapshotRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET",
+									allowedHeaders: nil,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					case 't': // Prefix: "tart"
+
+						if l := len("tart"); len(elem) >= l && elem[0:l] == "tart" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "POST":
+								s.handleStartAgentRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "POST",
+									allowedHeaders: rn15AllowedHeaders,
+									acceptPost:     "application/json",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
 					}
 
 				case 't': // Prefix: "tool-approvals"
@@ -465,29 +588,107 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						}
 					}
 
-				case 'm': // Prefix: "messages"
+				case 'm': // Prefix: "message"
 
-					if l := len("messages"); len(elem) >= l && elem[0:l] == "messages" {
+					if l := len("message"); len(elem) >= l && elem[0:l] == "message" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch method {
-						case "POST":
-							r.name = SendMessageOperation
-							r.summary = "Queue a user message or answer pending user input"
-							r.operationID = "sendMessage"
-							r.operationGroup = ""
-							r.pathPattern = "/products/ai-agent/messages"
-							r.args = args
-							r.count = 0
-							return r, true
-						default:
-							return
+						break
+					}
+					switch elem[0] {
+					case '-': // Prefix: "-queue/"
+
+						if l := len("-queue/"); len(elem) >= l && elem[0:l] == "-queue/" {
+							elem = elem[l:]
+						} else {
+							break
 						}
+
+						if len(elem) == 0 {
+							break
+						}
+						switch elem[0] {
+						case 'd': // Prefix: "delete"
+
+							if l := len("delete"); len(elem) >= l && elem[0:l] == "delete" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch method {
+								case "POST":
+									r.name = DeleteQueuedMessageOperation
+									r.summary = "Delete one exact pending queued user message"
+									r.operationID = "deleteQueuedMessage"
+									r.operationGroup = ""
+									r.pathPattern = "/products/ai-agent/message-queue/delete"
+									r.args = args
+									r.count = 0
+									return r, true
+								default:
+									return
+								}
+							}
+
+						case 's': // Prefix: "steer"
+
+							if l := len("steer"); len(elem) >= l && elem[0:l] == "steer" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch method {
+								case "POST":
+									r.name = SteerQueuedMessageOperation
+									r.summary = "Atomically move one queued user message into steering"
+									r.operationID = "steerQueuedMessage"
+									r.operationGroup = ""
+									r.pathPattern = "/products/ai-agent/message-queue/steer"
+									r.args = args
+									r.count = 0
+									return r, true
+								default:
+									return
+								}
+							}
+
+						}
+
+					case 's': // Prefix: "s"
+
+						if l := len("s"); len(elem) >= l && elem[0:l] == "s" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "POST":
+								r.name = SendMessageOperation
+								r.summary = "Queue a user message or answer pending user input"
+								r.operationID = "sendMessage"
+								r.operationGroup = ""
+								r.pathPattern = "/products/ai-agent/messages"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
 					}
 
 				case 'p': // Prefix: "p"
@@ -554,29 +755,68 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 
 					}
 
-				case 's': // Prefix: "start"
+				case 's': // Prefix: "s"
 
-					if l := len("start"); len(elem) >= l && elem[0:l] == "start" {
+					if l := len("s"); len(elem) >= l && elem[0:l] == "s" {
 						elem = elem[l:]
 					} else {
 						break
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
-						switch method {
-						case "POST":
-							r.name = StartAgentOperation
-							r.summary = "Start one durable Agent Flow"
-							r.operationID = "startAgent"
-							r.operationGroup = ""
-							r.pathPattern = "/products/ai-agent/start"
-							r.args = args
-							r.count = 0
-							return r, true
-						default:
-							return
+						break
+					}
+					switch elem[0] {
+					case 'n': // Prefix: "napshot"
+
+						if l := len("napshot"); len(elem) >= l && elem[0:l] == "napshot" {
+							elem = elem[l:]
+						} else {
+							break
 						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = GetAgentSnapshotOperation
+								r.summary = "Read one atomic durable Agent application view"
+								r.operationID = "getAgentSnapshot"
+								r.operationGroup = ""
+								r.pathPattern = "/products/ai-agent/snapshot"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
+					case 't': // Prefix: "tart"
+
+						if l := len("tart"); len(elem) >= l && elem[0:l] == "tart" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "POST":
+								r.name = StartAgentOperation
+								r.summary = "Start one durable Agent Flow"
+								r.operationID = "startAgent"
+								r.operationGroup = ""
+								r.pathPattern = "/products/ai-agent/start"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
 					}
 
 				case 't': // Prefix: "tool-approvals"

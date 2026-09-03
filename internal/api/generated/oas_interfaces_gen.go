@@ -5,8 +5,16 @@ type ApproveToolRes interface {
 	approveToolRes()
 }
 
+type DeleteQueuedMessageRes interface {
+	deleteQueuedMessageRes()
+}
+
 type ExecutePlanRes interface {
 	executePlanRes()
+}
+
+type GetAgentSnapshotRes interface {
+	getAgentSnapshotRes()
 }
 
 type GetPortalRes interface {
@@ -27,4 +35,8 @@ type SendMessageRes interface {
 
 type StartAgentRes interface {
 	startAgentRes()
+}
+
+type SteerQueuedMessageRes interface {
+	steerQueuedMessageRes()
 }

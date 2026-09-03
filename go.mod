@@ -11,7 +11,7 @@ require (
 	github.com/ogen-go/ogen v1.24.0
 	github.com/openai/openai-go/v3 v3.55.0
 	github.com/superdurable/dex/blob-cache-go v0.1.0
-	github.com/superdurable/dex/sdk-go v0.2.9
+	github.com/superdurable/dex/sdk-go v0.2.12
 	golang.org/x/net v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
 )

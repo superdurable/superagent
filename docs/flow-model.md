@@ -8,7 +8,7 @@
 - Completion: intentionally open-ended in Phase 1; the Agent waits for the next
   user command after each turn
 - Command RPCs: `SendMessage`, `SteerMessage`, `ApproveTool`, and `ExecutePlan`
-- Read RPCs: intentionally absent until the released Dex Snapshot API
+- Read RPC: `Snapshot`
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic
 commit. Provider and MCP calls are external effects and are not part of a Dex
@@ -97,8 +97,21 @@ Application history is the `AgentMessages` AttributeMap plus range metadata in
 Sequence keys are fixed-width monotonic values. Context reconstruction reads
 known keys from the retained range and does not enumerate an unbounded map.
 Compaction commits a cumulative summary with its exact covered sequence before
-deleting messages. Current Phase 1 code never exposes this history through an
-HTTP read endpoint.
+deleting messages.
+
+`Snapshot` explicitly loads all `AgentMessages` entries and the pending values
+of `QueuedUserMessages` and `SteeredUserMessages`. Ordinary Attributes used for
+the description are available under the released RPC semantics. Loading is
+independent from locking and transactional execution: this RPC is read-only,
+does not lock the resources, and does not consume either Channel. Its history
+page is projected only from `AgentMessages` and `AgentState` retention metadata.
+
+The RPC returns the invocation Run ID from Dex context. Consecutive reads retain
+Channel FIFO order, values, and stable message IDs. Closed Flows follow the SDK
+terminal result and visibility contracts. A terminal Snapshot contains the
+matching Run ID, typed lifecycle and failure metadata, and an empty durable
+Agent view. This prevents a just-closed Flow's final active RPC projection from
+being rendered as current state.
 
 ## Retry and failure policy
 

@@ -112,6 +112,90 @@ func (s *Server) handleApproveToolRequest(args [0]string, argsEscaped bool, w ht
 	}
 }
 
+// handleDeleteQueuedMessageRequest handles deleteQueuedMessage operation.
+//
+// Delete one exact pending queued user message.
+//
+// POST /products/ai-agent/message-queue/delete
+func (s *Server) handleDeleteQueuedMessageRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: DeleteQueuedMessageOperation,
+			ID:   "deleteQueuedMessage",
+		}
+	)
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeDeleteQueuedMessageRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response DeleteQueuedMessageRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    DeleteQueuedMessageOperation,
+			OperationSummary: "Delete one exact pending queued user message",
+			OperationID:      "deleteQueuedMessage",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *QueueMutationRequest
+			Params   = struct{}
+			Response = DeleteQueuedMessageRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.DeleteQueuedMessage(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.DeleteQueuedMessage(ctx, request)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeDeleteQueuedMessageResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleExecutePlanRequest handles executePlan operation.
 //
 // Execute one exact durable plan revision.
@@ -188,6 +272,98 @@ func (s *Server) handleExecutePlanRequest(args [0]string, argsEscaped bool, w ht
 	}
 
 	if err := encodeExecutePlanResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleGetAgentSnapshotRequest handles getAgentSnapshot operation.
+//
+// Read one atomic durable Agent application view.
+//
+// GET /products/ai-agent/snapshot
+func (s *Server) handleGetAgentSnapshotRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: GetAgentSnapshotOperation,
+			ID:   "getAgentSnapshot",
+		}
+	)
+	params, err := decodeGetAgentSnapshotParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response GetAgentSnapshotRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    GetAgentSnapshotOperation,
+			OperationSummary: "Read one atomic durable Agent application view",
+			OperationID:      "getAgentSnapshot",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "flowId",
+					In:   "query",
+				}: params.FlowId,
+				{
+					Name: "beforeSequence",
+					In:   "query",
+				}: params.BeforeSequence,
+				{
+					Name: "limit",
+					In:   "query",
+				}: params.Limit,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = GetAgentSnapshotParams
+			Response = GetAgentSnapshotRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackGetAgentSnapshotParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.GetAgentSnapshot(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.GetAgentSnapshot(ctx, params)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeGetAgentSnapshotResponse(response, w); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -645,6 +821,90 @@ func (s *Server) handleStartAgentRequest(args [0]string, argsEscaped bool, w htt
 	}
 
 	if err := encodeStartAgentResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleSteerQueuedMessageRequest handles steerQueuedMessage operation.
+//
+// Atomically move one queued user message into steering.
+//
+// POST /products/ai-agent/message-queue/steer
+func (s *Server) handleSteerQueuedMessageRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: SteerQueuedMessageOperation,
+			ID:   "steerQueuedMessage",
+		}
+	)
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeSteerQueuedMessageRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response SteerQueuedMessageRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    SteerQueuedMessageOperation,
+			OperationSummary: "Atomically move one queued user message into steering",
+			OperationID:      "steerQueuedMessage",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *QueueMutationRequest
+			Params   = struct{}
+			Response = SteerQueuedMessageRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.SteerQueuedMessage(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.SteerQueuedMessage(ctx, request)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeSteerQueuedMessageResponse(response, w); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)

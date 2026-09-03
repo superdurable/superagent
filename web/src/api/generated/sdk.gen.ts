@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ApproveToolData, ApproveToolErrors, ApproveToolResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses } from './types.gen';
+import type { ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -64,6 +64,41 @@ export const startAgent = <ThrowOnError extends boolean = true>(options: Options
 export const sendMessage = <ThrowOnError extends boolean = true>(options: Options<SendMessageData, ThrowOnError>): RequestResult<SendMessageResponses, SendMessageErrors, ThrowOnError, 'data'> => (options.client ?? client).post<SendMessageResponses, SendMessageErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',
     url: '/products/ai-agent/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one atomic durable Agent application view
+ */
+export const getAgentSnapshot = <ThrowOnError extends boolean = true>(options: Options<GetAgentSnapshotData, ThrowOnError>): RequestResult<GetAgentSnapshotResponses, GetAgentSnapshotErrors, ThrowOnError, 'data'> => (options.client ?? client).get<GetAgentSnapshotResponses, GetAgentSnapshotErrors, ThrowOnError, 'data'>({
+    responseStyle: 'data',
+    url: '/products/ai-agent/snapshot',
+    ...options
+});
+
+/**
+ * Delete one exact pending queued user message
+ */
+export const deleteQueuedMessage = <ThrowOnError extends boolean = true>(options: Options<DeleteQueuedMessageData, ThrowOnError>): RequestResult<DeleteQueuedMessageResponses, DeleteQueuedMessageErrors, ThrowOnError, 'data'> => (options.client ?? client).post<DeleteQueuedMessageResponses, DeleteQueuedMessageErrors, ThrowOnError, 'data'>({
+    responseStyle: 'data',
+    url: '/products/ai-agent/message-queue/delete',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Atomically move one queued user message into steering
+ */
+export const steerQueuedMessage = <ThrowOnError extends boolean = true>(options: Options<SteerQueuedMessageData, ThrowOnError>): RequestResult<SteerQueuedMessageResponses, SteerQueuedMessageErrors, ThrowOnError, 'data'> => (options.client ?? client).post<SteerQueuedMessageResponses, SteerQueuedMessageErrors, ThrowOnError, 'data'>({
+    responseStyle: 'data',
+    url: '/products/ai-agent/message-queue/steer',
     ...options,
     headers: {
         'Content-Type': 'application/json',

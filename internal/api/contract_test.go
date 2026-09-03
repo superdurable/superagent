@@ -25,44 +25,44 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var phaseOnePaths = []string{
+var phaseTwoPaths = []string{
 	"/healthz",
 	"/products/ai-agent/events",
+	"/products/ai-agent/message-queue/delete",
+	"/products/ai-agent/message-queue/steer",
 	"/products/ai-agent/messages",
 	"/products/ai-agent/plans/execute",
 	"/products/ai-agent/portal",
+	"/products/ai-agent/snapshot",
 	"/products/ai-agent/start",
 	"/products/ai-agent/tool-approvals",
 	"/readyz",
 }
 
-var deferredPaths = []string{
+var legacyReadPaths = []string{
 	"/products/ai-agent/describe",
 	"/products/ai-agent/history",
 	"/products/ai-agent/message-queue",
-	"/products/ai-agent/message-queue/delete",
-	"/products/ai-agent/message-queue/steer",
-	"/products/ai-agent/snapshot",
 	"/products/ai-agent/status",
 }
 
-func TestPhaseOneContractContainsOnlyStablePaths(t *testing.T) {
+func TestPhaseTwoContractContainsOnlyStablePaths(t *testing.T) {
 	document := loadDocument(t)
 	paths := make([]string, 0, len(document.Paths))
 	for path := range document.Paths {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	if !slices.Equal(paths, phaseOnePaths) {
-		t.Fatalf("OpenAPI paths = %q, want %q", paths, phaseOnePaths)
+	if !slices.Equal(paths, phaseTwoPaths) {
+		t.Fatalf("OpenAPI paths = %q, want %q", paths, phaseTwoPaths)
 	}
 }
 
-func TestPhaseOneContractOmitsDeferredReadAndQueueMutationPaths(t *testing.T) {
+func TestPhaseTwoContractOmitsLegacyReadPaths(t *testing.T) {
 	document := loadDocument(t)
-	for _, path := range deferredPaths {
+	for _, path := range legacyReadPaths {
 		if _, found := document.Paths[path]; found {
-			t.Errorf("deferred path %q must not be present in Phase 1", path)
+			t.Errorf("legacy read path %q must not be present in Phase 2", path)
 		}
 	}
 }

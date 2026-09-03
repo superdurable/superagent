@@ -3,10 +3,11 @@
 This React application consumes only the TypeScript client generated from
 `api/openapi.yaml`. Do not hand-write HTTP request or response models.
 
-Phase 1 exposes the launch portal and durable Flow start. After start, the UI
-enters an explicit Snapshot gate. It does not call the legacy history, describe,
-status, or message-queue read endpoints. The complete original frontend remains
-unchanged under `reference/python/ai-agent/` as the Phase 2 parity oracle.
+The application restores a Flow with one generated Snapshot request and applies
+generated event polls for live updates. It does not call the legacy history,
+describe, status, or message-queue read endpoints. The complete original
+frontend remains unchanged under `reference/python/ai-agent/` as the parity
+oracle.
 
 ## Commands
 
@@ -39,10 +40,11 @@ Open `http://127.0.0.1:3000/`. Production `apiOrigin` values must use HTTPS.
 Serve `config.json` with `Cache-Control: no-store`. Configure the static host's
 Content Security Policy to allow connections only to the selected API origin.
 
-## Phase 2
+## Durable and live state
 
-Once the published Dex Snapshot API satisfies every gate in `MIGRATION.md`, the
-conversation UI will be rebuilt against one generated `/snapshot` read plus
-generated `/events` long polling. Snapshot will atomically replace durable view
-state; events will remain low-latency hints. No legacy four-read compatibility
-layer will be introduced.
+One reducer action atomically replaces application history, Agent description,
+queued messages, steered messages, and Run identity from `/snapshot`. Three
+cancellable `/events` polls add assistant text, reasoning summaries, and
+structured activity. Disconnects and command completion reconcile with another
+Snapshot. Queue mutations optimistically update by stable message ID and then
+reconcile; no four-read compatibility layer exists.

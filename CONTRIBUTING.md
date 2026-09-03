@@ -7,10 +7,12 @@ Read `AGENTS.md` before changing the repository.
 For every turn that modifies or reviews Dex Flow, Step, RPC, resource, Stream,
 Timer, retry, or recovery code, read `skills/dex-developer/SKILL.md` and all
 references it routes for that task. Confirm APIs against the installed released
-SDK and a version-matched runnable Dex example.
+SDK and a version-matched runnable example or real-server compile-contract test.
 
-Do not implement Snapshot behavior until every Phase 2 gate in `MIGRATION.md`
-is satisfied. Never infer an API from the design screenshot.
+Snapshot code targets Dex Go SDK `v0.2.12` and the version-matched selective
+state contract recorded in `MIGRATION.md`. Recheck the installed SDK source and
+refresh the vendored skill before changing its resource projection or errors.
+Never infer an API from a design screenshot or unreleased branch.
 
 ## Deployment boundary
 
@@ -63,11 +65,21 @@ static graph separately:
 ```bash
 DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
 DEX_REPO=/absolute/path/to/dex make flow-visualize
+DEX_REPO=/absolute/path/to/dex make generate-flow-definition
+DEX_REPO=/absolute/path/to/dex make check-flow-definition
 ```
 
 The integration suite reads private resources through the Dex Client only. It
 must not add an HTTP read endpoint or exported descriptor getter to make tests
 easier.
+
+The checked-in `flow-definitions/ai-agent.json` is generated from
+`internal/agent/flow.go`. Run both Flow Definition targets after changing the
+Flow graph. To load that JSON in Dex Web, run:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make flow-render
+```
 
 The explicit live provider test is serial and bounded:
 

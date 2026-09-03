@@ -57,14 +57,32 @@ func TestAgentConfigRejectsInvalidValues(t *testing.T) {
 }
 
 func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
-	var status AgentStatus
-	err := json.Unmarshal([]byte(`"unknown"`), &status)
-	var validationErr *EnumValidationError
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("UnmarshalJSON() error = %T %v", err, err)
+	tests := []struct {
+		name     string
+		typeName string
+		target   json.Unmarshaler
+	}{
+		{name: "Agent status", typeName: "AgentStatus", target: new(AgentStatus)},
+		{name: "Flow status", typeName: "FlowStatus", target: new(FlowStatus)},
+		{name: "Flow error type", typeName: "FlowErrorType", target: new(FlowErrorType)},
 	}
-	if validationErr.Type != "AgentStatus" || validationErr.Value != "unknown" {
-		t.Fatalf("validation error = %+v", validationErr)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.target.UnmarshalJSON([]byte(`"unknown"`))
+			var validationErr *EnumValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("UnmarshalJSON() error = %T %v", err, err)
+			}
+			if validationErr.Type != test.typeName || validationErr.Value != "unknown" {
+				t.Fatalf("validation error = %+v", validationErr)
+			}
+		})
+	}
+}
+
+func TestVisibilityStringQuotesApostrophes(t *testing.T) {
+	if got := visibilityString("customer's-flow"); got != `'customer''s-flow'` {
+		t.Fatalf("visibilityString() = %q", got)
 	}
 }
 

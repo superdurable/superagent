@@ -8,6 +8,12 @@ export type FlowId = string;
 
 export type CallId = string;
 
+export type RunId = string;
+
+export type MessageId = string;
+
+export type Sequence = number;
+
 export type ResumeToken = string;
 
 export type ToolName = string;
@@ -47,6 +53,53 @@ export const EventKind = {
 } as const;
 
 export type EventKind = typeof EventKind[keyof typeof EventKind];
+
+export const AgentStatus = {
+    INITIALIZING: 'initializing',
+    WAITING_FOR_MESSAGE: 'waiting_for_message',
+    COMPACTING_CONTEXT: 'compacting_context',
+    CALLING_MODEL: 'calling_model',
+    ROUTING_TOOL: 'routing_tool',
+    WAITING_FOR_TOOL_APPROVAL: 'waiting_for_tool_approval',
+    EXECUTING_TOOL: 'executing_tool',
+    WAITING_FOR_TIMER: 'waiting_for_timer',
+    APPLYING_STEERING: 'applying_steering'
+} as const;
+
+export type AgentStatus = typeof AgentStatus[keyof typeof AgentStatus];
+
+export const MessageRole = {
+    SYSTEM: 'system',
+    USER: 'user',
+    ASSISTANT: 'assistant',
+    TOOL: 'tool'
+} as const;
+
+export type MessageRole = typeof MessageRole[keyof typeof MessageRole];
+
+export const PlanStatus = {
+    DRAFT: 'draft',
+    ACTIVE: 'active',
+    COMPLETED: 'completed'
+} as const;
+
+export type PlanStatus = typeof PlanStatus[keyof typeof PlanStatus];
+
+export const TaskStatus = {
+    PENDING: 'pending',
+    IN_PROGRESS: 'in_progress',
+    COMPLETED: 'completed'
+} as const;
+
+export type TaskStatus = typeof TaskStatus[keyof typeof TaskStatus];
+
+export const QueueAction = { DELETED: 'deleted', STEERED: 'steered' } as const;
+
+export type QueueAction = typeof QueueAction[keyof typeof QueueAction];
+
+export const PollTimeoutReason = { TIMEOUT: 'timeout' } as const;
+
+export type PollTimeoutReason = typeof PollTimeoutReason[keyof typeof PollTimeoutReason];
 
 export const HealthStatus = { OK: 'ok' } as const;
 
@@ -115,8 +168,137 @@ export type ToolApprovalRequest = {
     approved: boolean;
 };
 
+export type QueueMutationRequest = {
+    flowId: FlowId;
+    messageId: MessageId;
+};
+
+export type QueueMutationResponse = {
+    messageId: MessageId;
+    action: QueueAction;
+};
+
+export type AgentSnapshot = {
+    runId: RunId;
+    flowStatus: FlowStatus;
+    errorType: FlowErrorType | null;
+    errorMessage: string | null;
+    history: HistoryPage;
+    description: AgentDescription | null;
+    queued: Array<PendingUserMessage>;
+    steered: Array<PendingUserMessage>;
+};
+
+export type HistoryPage = {
+    messages: Array<SequencedMessage>;
+    nextBeforeSequence: Sequence | null;
+};
+
+export const FlowStatus = {
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    TERMINATED: 'terminated',
+    CANCELED: 'canceled',
+    CONTINUED_AS_NEW: 'continued_as_new'
+} as const;
+
+export type FlowStatus = typeof FlowStatus[keyof typeof FlowStatus];
+
+export const FlowErrorType = {
+    STEP_DECISION: 'step_decision',
+    CLIENT_API: 'client_api',
+    WORKER_METHOD: 'worker_method',
+    INVALID_USER_CODE: 'invalid_user_code',
+    INTERNAL: 'internal',
+    TIMEOUT: 'timeout'
+} as const;
+
+export type FlowErrorType = typeof FlowErrorType[keyof typeof FlowErrorType];
+
+export type SequencedMessage = {
+    sequence: Sequence;
+    message: AgentMessage;
+};
+
+export type AgentMessage = {
+    role: MessageRole;
+    content: string;
+    toolCalls: Array<ToolCall>;
+    toolCallId: CallId | null;
+    toolName: ToolName | null;
+    createdAt: string;
+};
+
+export type ToolCall = {
+    id: CallId;
+    name: ToolName;
+    argumentsJson: string;
+};
+
+export type PendingUserMessage = {
+    messageId: MessageId;
+    value: UserMessage;
+};
+
+export type UserMessage = {
+    content: string;
+    planMode: boolean;
+};
+
+export type AgentDescription = {
+    status: AgentStatus;
+    model: string;
+    systemPrompt: string;
+    firstRetainedSequence: number;
+    lastSequence: number;
+    summarizedThroughSequence: number;
+    pendingApproval: PendingApproval | null;
+    pendingTimer: PendingTimer | null;
+    pendingUserInput: PendingUserInput | null;
+    plan: AgentPlan | null;
+    isPlanExecutionRequested: boolean;
+    pendingQueuedMessageCount: number;
+    pendingSteeredMessageCount: number;
+    availableMcpServers: Array<string>;
+    availableTools: Array<ToolName>;
+};
+
+export type PendingApproval = {
+    callId: CallId;
+    toolName: ToolName;
+    argumentsJson: string;
+};
+
+export type PendingTimer = {
+    callId: CallId;
+    durationSeconds: number;
+    reason: string;
+};
+
+export type PendingUserInput = {
+    callId: CallId;
+    prompt: string;
+    choices: Array<string>;
+};
+
+export type AgentPlan = {
+    revision: number;
+    status: PlanStatus;
+    tasks: Array<PlanTask>;
+};
+
+export type PlanTask = {
+    content: string;
+    status: TaskStatus;
+};
+
 export type Accepted = {
     accepted: true;
+};
+
+export type PollTimeout = {
+    reason: PollTimeoutReason;
 };
 
 export type StreamEvent = ({
@@ -301,6 +483,117 @@ export type SendMessageResponses = {
 
 export type SendMessageResponse = SendMessageResponses[keyof SendMessageResponses];
 
+export type GetAgentSnapshotData = {
+    body?: never;
+    path?: never;
+    query: {
+        flowId: FlowId;
+        beforeSequence?: Sequence;
+        limit?: number;
+    };
+    url: '/products/ai-agent/snapshot';
+};
+
+export type GetAgentSnapshotErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type GetAgentSnapshotError = GetAgentSnapshotErrors[keyof GetAgentSnapshotErrors];
+
+export type GetAgentSnapshotResponses = {
+    /**
+     * One atomic durable application Snapshot.
+     */
+    200: AgentSnapshot;
+};
+
+export type GetAgentSnapshotResponse = GetAgentSnapshotResponses[keyof GetAgentSnapshotResponses];
+
+export type DeleteQueuedMessageData = {
+    body: QueueMutationRequest;
+    path?: never;
+    query?: never;
+    url: '/products/ai-agent/message-queue/delete';
+};
+
+export type DeleteQueuedMessageErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    409: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type DeleteQueuedMessageError = DeleteQueuedMessageErrors[keyof DeleteQueuedMessageErrors];
+
+export type DeleteQueuedMessageResponses = {
+    /**
+     * The queued message was deleted.
+     */
+    200: QueueMutationResponse;
+};
+
+export type DeleteQueuedMessageResponse = DeleteQueuedMessageResponses[keyof DeleteQueuedMessageResponses];
+
+export type SteerQueuedMessageData = {
+    body: QueueMutationRequest;
+    path?: never;
+    query?: never;
+    url: '/products/ai-agent/message-queue/steer';
+};
+
+export type SteerQueuedMessageErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    409: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type SteerQueuedMessageError = SteerQueuedMessageErrors[keyof SteerQueuedMessageErrors];
+
+export type SteerQueuedMessageResponses = {
+    /**
+     * The queued message was moved into steering.
+     */
+    200: QueueMutationResponse;
+};
+
+export type SteerQueuedMessageResponse = SteerQueuedMessageResponses[keyof SteerQueuedMessageResponses];
+
 export type ExecutePlanData = {
     body: ExecutePlanRequest;
     path?: never;
@@ -406,7 +699,7 @@ export type ReadEventErrors = {
     /**
      * No event arrived before the bounded long-poll timeout.
      */
-    504: unknown;
+    504: PollTimeout;
 };
 
 export type ReadEventError = ReadEventErrors[keyof ReadEventErrors];

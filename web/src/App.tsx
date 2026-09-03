@@ -8,6 +8,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   type Dispatch,
   type FormEvent,
 } from "react";
@@ -21,6 +22,7 @@ import {
   type StartAgentRequest,
   type ToolName,
 } from "./api/generated";
+import { Conversation } from "./Conversation";
 
 const defaultSystemPrompt =
   "You are a helpful durable AI agent. Use tools when they help and report tool outcomes accurately.";
@@ -45,7 +47,7 @@ type State =
       error: string | null;
       submitting: boolean;
     }
-  | { kind: "snapshot-gate"; flowId: FlowId; portal: Portal }
+  | { kind: "conversation"; flowId: FlowId; portal: Portal }
   | { kind: "fatal"; message: string };
 
 type Action =
@@ -86,7 +88,7 @@ function reducer(state: State, action: Action): State {
             submitting: false,
           }
         : {
-            kind: "snapshot-gate",
+            kind: "conversation",
             flowId: action.resumedFlowId,
             portal: action.portal,
           };
@@ -106,7 +108,7 @@ function reducer(state: State, action: Action): State {
         : state;
     case "started":
       return state.kind === "portal"
-        ? { kind: "snapshot-gate", flowId: action.flowId, portal: state.portal }
+        ? { kind: "conversation", flowId: action.flowId, portal: state.portal }
         : state;
   }
 }
@@ -152,8 +154,20 @@ function App() {
           danger
         />
       );
-    case "snapshot-gate":
-      return <SnapshotGate state={state} dispatch={dispatch} />;
+    case "conversation":
+      return (
+        <Conversation
+          flowId={state.flowId}
+          onStartAnother={() => {
+            window.history.replaceState({}, "", window.location.pathname);
+            dispatch({
+              type: "loaded",
+              portal: state.portal,
+              resumedFlowId: null,
+            });
+          }}
+        />
+      );
     case "portal":
       return <LaunchPortal state={state} dispatch={dispatch} />;
   }
@@ -168,6 +182,13 @@ function LaunchPortal({
   state: Extract<State, { kind: "portal" }>;
   dispatch: Dispatch<Action>;
 }) {
+  const startController = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      startController.current?.abort();
+    },
+    [],
+  );
   const provider = state.portal.providers.find(
     (candidate) => candidate.id === state.form.provider,
   );
@@ -175,6 +196,7 @@ function LaunchPortal({
     throw new Error("The selected provider is unavailable.");
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (startController.current !== null) return;
     dispatch({ type: "starting" });
     const flowId = crypto.randomUUID();
     const body: StartAgentRequest = {
@@ -199,13 +221,23 @@ function LaunchPortal({
           )
         : [],
     };
-    void startAgent({ body })
+    const controller = new AbortController();
+    startController.current = controller;
+    void startAgent({ body, signal: controller.signal })
       .then((response) => {
+        if (controller.signal.aborted) return;
         window.history.replaceState({}, "", flowURL(response.flowId));
         dispatch({ type: "started", flowId: response.flowId });
       })
       .catch((reason: unknown) => {
-        dispatch({ type: "start-failed", message: errorMessage(reason) });
+        if (!controller.signal.aborted) {
+          dispatch({ type: "start-failed", message: errorMessage(reason) });
+        }
+      })
+      .finally(() => {
+        if (startController.current === controller) {
+          startController.current = null;
+        }
       });
   };
 
@@ -219,7 +251,7 @@ function LaunchPortal({
           <p>Durable AI runtime</p>
           <h1>Start a Superagent</h1>
         </div>
-        <span className="phase-pill">Phase 1</span>
+        <span className="phase-pill">Phase 2</span>
       </header>
       <form className="launch-card" onSubmit={submit}>
         <h2>Model</h2>
@@ -436,48 +468,6 @@ function Choices<T extends string>({
         ))
       )}
     </fieldset>
-  );
-}
-
-function SnapshotGate({
-  state,
-  dispatch,
-}: {
-  state: Extract<State, { kind: "snapshot-gate" }>;
-  dispatch: Dispatch<Action>;
-}) {
-  return (
-    <main className="status-shell">
-      <section className="status-card">
-        <span className="status-icon" aria-hidden="true">
-          ✓
-        </span>
-        <p className="phase-pill">Durable Flow ready</p>
-        <h1>Waiting for Dex Snapshot API</h1>
-        <p>
-          Flow <code>{state.flowId}</code> was started successfully. The
-          conversation view remains intentionally disconnected until the
-          released Dex Snapshot RPC is available.
-        </p>
-        <p className="muted">
-          No legacy history, status, describe, or queue read was issued.
-        </p>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => {
-            window.history.replaceState({}, "", window.location.pathname);
-            dispatch({
-              type: "loaded",
-              portal: state.portal,
-              resumedFlowId: null,
-            });
-          }}
-        >
-          Start another agent
-        </button>
-      </section>
-    </main>
   );
 }
 

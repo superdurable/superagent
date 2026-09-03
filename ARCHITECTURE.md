@@ -63,14 +63,25 @@ table are in `docs/flow-model.md`.
 | structured activity Stream | Best effort | Observability and UI latency |
 | BlobCache | Disposable local acceleration | Never authoritative |
 | provider/MCP session | Per invocation | Recreated after failure |
-| generated browser state | In-memory projection | Replaced from Snapshot in Phase 2 |
+| generated browser state | In-memory projection | Replaced from Snapshot |
 
-Phase 1 exposes command writes and event reads but intentionally does not expose
-an incomplete durable read model. Phase 2 will perform one generated
-`GET /products/ai-agent/snapshot`, atomically replace the React reducer's durable
-view, then apply event deltas. A disconnect, resume-token gap, or stale optimistic
-mutation will trigger another Snapshot. The four legacy reads will never be
-introduced.
+The browser performs one generated `GET /products/ai-agent/snapshot` on load and
+atomically replaces history, description, queued messages, steered messages,
+and Run identity through one reducer action. Three cancellable event polls apply
+assistant, reasoning-summary, and activity deltas. Reasoning entries are keyed
+by the producing model invocation source. Activity, disconnect, command
+completion, an eight-second visible-page fallback, focus, online, visibility
+recovery, or explicit retry reconciles another Snapshot. The four legacy reads
+do not exist.
+
+Resume tokens belong to the live subscription and are not durable UI state.
+Every poll, Snapshot, and command owns cancellation and rejects stale responses.
+Message send displays one local, non-actionable `Submitting` item until Snapshot
+reveals the durable queue or history result. Failure restores its composer text
+and plan mode. Queue edit, delete, and steer optimistically remove one stable
+message ID, then reconcile. The backend resolves a steer value from the loaded
+Channel snapshot; the browser cannot replace the queued content during that
+operation.
 
 ## HTTP contract
 
@@ -79,9 +90,13 @@ router, codecs, and validation. Hey API generates the TypeScript Fetch client,
 models, and enums. Explicit mappers keep generated transport types out of the
 domain package.
 
-Phase 1 serves only portal metadata, Flow start, message commands, plan
-execution, tool approval, events, health, and readiness. The API process does
-not serve React files.
+The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
+queue deletion and steering, typed event polling, health, and readiness. The API
+process does not serve React files. Long-poll expiry has a generated typed body,
+so the browser can distinguish normal polling cadence from a transport failure.
+Snapshot responses carry the generated `Cache-Control: no-store` contract.
+Running responses contain a non-null Agent description. Terminal responses
+contain typed Flow status and optional failure metadata with a null description.
 
 The frontend build produces an independent `web/dist` artifact. It reads a
 strict `config.json` at page load. The file configures the generated Fetch
