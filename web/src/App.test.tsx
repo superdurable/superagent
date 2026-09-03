@@ -16,13 +16,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import {
   AgentStatus,
+  FlowStatus,
   Provider,
   getAgentSnapshot,
   getPortal,
   readEvent,
+  sendMessage,
   startAgent,
   steerQueuedMessage,
   type AgentSnapshot,
+  type AgentDescription,
   type Portal,
 } from "./api/generated";
 import type * as GeneratedAPI from "./api/generated";
@@ -66,26 +69,31 @@ const portal: Portal = {
   builtInTools: ["ask_user", "wait"],
 };
 
+const activeDescription: AgentDescription = {
+  status: AgentStatus.WAITING_FOR_MESSAGE,
+  model: "mock/reliable",
+  systemPrompt: "Be helpful.",
+  firstRetainedSequence: 1,
+  lastSequence: 0,
+  summarizedThroughSequence: 0,
+  pendingApproval: null,
+  pendingTimer: null,
+  pendingUserInput: null,
+  plan: null,
+  isPlanExecutionRequested: false,
+  pendingQueuedMessageCount: 0,
+  pendingSteeredMessageCount: 0,
+  availableMcpServers: ["local-tools"],
+  availableTools: ["local-tools.search"],
+};
+
 const snapshot: AgentSnapshot = {
   runId: "run-1",
+  flowStatus: FlowStatus.RUNNING,
+  errorType: null,
+  errorMessage: null,
   history: { messages: [], nextBeforeSequence: null },
-  description: {
-    status: AgentStatus.WAITING_FOR_MESSAGE,
-    model: "mock/reliable",
-    systemPrompt: "Be helpful.",
-    firstRetainedSequence: 1,
-    lastSequence: 0,
-    summarizedThroughSequence: 0,
-    pendingApproval: null,
-    pendingTimer: null,
-    pendingUserInput: null,
-    plan: null,
-    isPlanExecutionRequested: false,
-    pendingQueuedMessageCount: 0,
-    pendingSteeredMessageCount: 0,
-    availableMcpServers: ["local-tools"],
-    availableTools: ["local-tools.search"],
-  },
+  description: activeDescription,
   queued: [],
   steered: [],
 };
@@ -109,6 +117,7 @@ describe("App", () => {
         }),
     );
     vi.mocked(startAgent).mockResolvedValue({ flowId: "flow-created" });
+    vi.mocked(sendMessage).mockResolvedValue({ accepted: true });
     vi.mocked(steerQueuedMessage).mockResolvedValue({
       messageId: "message-1",
       action: "steered",
@@ -162,7 +171,7 @@ describe("App", () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       ...snapshot,
       description: {
-        ...snapshot.description,
+        ...activeDescription,
         pendingQueuedMessageCount: 1,
       },
       queued: [
@@ -186,5 +195,55 @@ describe("App", () => {
         }),
       );
     });
+  });
+
+  it("reconciles the durable Snapshot when the window regains focus", async () => {
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Superagent" });
+
+    fireEvent.focus(window);
+
+    await waitFor(() => {
+      expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("shows a terminal Flow result without opening live subscriptions", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      runId: "run-terminal",
+      flowStatus: FlowStatus.TERMINATED,
+      errorType: null,
+      errorMessage: "stopped by operator",
+      history: { messages: [], nextBeforeSequence: null },
+      description: null,
+      queued: [],
+      steered: [],
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Agent Terminated" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("stopped by operator")).toBeInTheDocument();
+    expect(readEvent).not.toHaveBeenCalled();
+  });
+
+  it("shows an optimistic queue item while message submission is pending", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message" });
+
+    fireEvent.change(composer, { target: { value: "new work" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Submitting…")).toBeInTheDocument();
+    expect(screen.getByText("new work")).toBeInTheDocument();
+    expect(composer).toHaveValue("");
   });
 });

@@ -107,9 +107,11 @@ does not lock the resources, and does not consume either Channel. Its history
 page is projected only from `AgentMessages` and `AgentState` retention metadata.
 
 The RPC returns the invocation Run ID from Dex context. Consecutive reads retain
-Channel FIFO order, values, and stable message IDs. Closed Flows follow the SDK's
-active-Flow RPC error contract; the HTTP mapper does not simulate a closed-state
-Snapshot.
+Channel FIFO order, values, and stable message IDs. Closed Flows follow the SDK
+terminal result and visibility contracts. A terminal Snapshot contains the
+matching Run ID, typed lifecycle and failure metadata, and an empty durable
+Agent view. This prevents a just-closed Flow's final active RPC projection from
+being rendered as current state.
 
 ## Retry and failure policy
 

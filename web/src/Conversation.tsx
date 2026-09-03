@@ -14,7 +14,6 @@ import {
 
 import {
   AgentStatus,
-  EventKind,
   EventStream,
   PollTimeoutReason,
   approveTool,
@@ -24,7 +23,6 @@ import {
   readEvent,
   sendMessage,
   steerQueuedMessage,
-  type AgentEvent,
   type CallId,
   type FlowId,
   type PendingUserMessage,
@@ -82,7 +80,6 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
           dispatch({
             type: "snapshot-failed",
             message: errorMessage(reason),
-            isTerminal: problemStatus(reason) === 409,
           });
         }
       });
@@ -126,11 +123,22 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
   }, [flowId, historyRequest]);
 
   const subscriptionGeneration =
-    state.kind === "ready" ? state.subscriptionGeneration : -1;
+    state.kind === "ready" && state.lifecycle === "active"
+      ? state.subscriptionGeneration
+      : -1;
   useEffect(() => {
     if (subscriptionGeneration < 0) return;
     const controller = new AbortController();
     let isCurrent = true;
+    let reconciliationTimeout: number | null = null;
+    const scheduleReconciliation = () => {
+      if (reconciliationTimeout !== null) {
+        window.clearTimeout(reconciliationTimeout);
+      }
+      reconciliationTimeout = window.setTimeout(() => {
+        dispatch({ type: "request-snapshot", connection: "live" });
+      }, 200);
+    };
     const poll = async (stream: EventStream): Promise<void> => {
       let resumeToken = resumeTokens.current[stream];
       while (isCurrent && !controller.signal.aborted) {
@@ -143,11 +151,8 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
           resumeTokens.current[stream] = resumeToken;
           const update = liveUpdate(stream, event);
           dispatch({ type: "stream-update", update });
-          if (
-            update.kind === "activity" &&
-            shouldReconcileAfter(update.value)
-          ) {
-            dispatch({ type: "request-snapshot", connection: "live" });
+          if (update.kind === "activity") {
+            scheduleReconciliation();
           }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
@@ -157,14 +162,10 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
           }
           isCurrent = false;
           controller.abort();
-          const status = problemStatus(reason);
+          resetResumeTokens(resumeTokens.current);
           dispatch({
             type: "stream-failed",
-            message:
-              status === 410
-                ? "The Agent Flow is no longer active."
-                : `Live updates disconnected: ${errorMessage(reason)}`,
-            isTerminal: status === 410,
+            message: `Live updates disconnected: ${errorMessage(reason)}`,
           });
         }
       }
@@ -173,11 +174,16 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
     return () => {
       isCurrent = false;
       controller.abort();
+      if (reconciliationTimeout !== null) {
+        window.clearTimeout(reconciliationTimeout);
+      }
     };
   }, [flowId, subscriptionGeneration]);
 
   const snapshotStatus =
-    state.kind === "ready" ? state.snapshot.description.status : null;
+    state.kind === "ready" && state.lifecycle === "active"
+      ? state.snapshot.description.status
+      : null;
   useEffect(() => {
     if (snapshotStatus !== AgentStatus.INITIALIZING) return;
     const timeout = window.setTimeout(() => {
@@ -187,6 +193,29 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
       window.clearTimeout(timeout);
     };
   }, [snapshotStatus, state.snapshotRequest]);
+
+  const isActive = state.kind === "ready" && state.lifecycle === "active";
+  useEffect(() => {
+    if (!isActive) return;
+    const requestReconciliation = () => {
+      dispatch({ type: "request-snapshot", connection: "stale" });
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") requestReconciliation();
+    };
+    window.addEventListener("focus", requestReconciliation);
+    window.addEventListener("online", requestReconciliation);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") requestReconciliation();
+    }, 8_000);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", requestReconciliation);
+      window.removeEventListener("online", requestReconciliation);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [isActive]);
 
   if (state.kind === "loading") {
     return (
@@ -207,23 +236,48 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
       />
     );
   }
+  if (state.lifecycle === "terminal") {
+    return (
+      <ConversationStatus
+        title={`Agent ${statusLabel(state.snapshot.flowStatus)}`}
+        detail={
+          state.snapshot.errorMessage ??
+          `Run ${state.snapshot.runId} is no longer active.`
+        }
+        action={onStartAnother}
+        actionLabel="Start another agent"
+      />
+    );
+  }
 
-  const isBusy =
-    state.pendingCommand !== null || state.connection === "terminal";
+  const isBusy = state.pendingCommand !== null;
   const submitMessage = () => {
     const content = state.composer.trim();
     if (content === "" || isBusy) return;
-    runCommand({ kind: "send" }, (signal) =>
-      sendMessage({
-        body: {
-          flowId,
-          content,
-          planMode:
-            state.snapshot.description.pendingUserInput === null &&
-            state.isPlanMode,
-        },
-        signal,
-      }),
+    const value = {
+      content,
+      planMode:
+        state.snapshot.description.pendingUserInput === null &&
+        state.isPlanMode,
+    };
+    runCommand(
+      {
+        kind: "send",
+        value,
+        submittedAfterSequence: state.snapshot.description.lastSequence,
+        knownMessageIDs: [
+          ...state.snapshot.queued.map((message) => message.messageId),
+          ...state.snapshot.steered.map((message) => message.messageId),
+        ],
+      },
+      (signal) =>
+        sendMessage({
+          body: {
+            flowId,
+            ...value,
+          },
+          signal,
+        }),
     );
   };
   const mutateQueue = (
@@ -281,10 +335,12 @@ function ConversationStatus({
   title,
   detail,
   action,
+  actionLabel = "Retry Snapshot",
 }: {
   title: string;
   detail: string;
   action?: () => void;
+  actionLabel?: string;
 }) {
   return (
     <main className="status-shell">
@@ -293,7 +349,7 @@ function ConversationStatus({
         <p>{detail}</p>
         {action !== undefined && (
           <button type="button" onClick={action}>
-            Retry Snapshot
+            {actionLabel}
           </button>
         )}
       </section>
@@ -351,38 +407,40 @@ function liveUpdate(stream: EventStream, event: StreamEvent): LiveUpdate {
       if (event.kind !== "reasoning_summary") {
         throw new Error("Reasoning Stream returned a mismatched event kind.");
       }
-      return { kind: "reasoning", value: event.value };
+      return {
+        kind: "reasoning",
+        value: event.value,
+        source: event.source,
+        createdAt: event.createdAt,
+      };
     case EventStream.ASSISTANT:
       if (event.kind !== "assistant_text") {
         throw new Error("Assistant Stream returned a mismatched event kind.");
       }
-      return { kind: "assistant", value: event.value };
+      return {
+        kind: "assistant",
+        value: event.value,
+        source: event.source,
+        createdAt: event.createdAt,
+      };
     case EventStream.ACTIVITY:
       if (event.kind !== "activity") {
         throw new Error("Activity Stream returned a mismatched event kind.");
       }
-      return { kind: "activity", value: event.value };
+      return {
+        kind: "activity",
+        value: event.value,
+        resumeToken: event.resumeToken,
+        source: event.source,
+        createdAt: event.createdAt,
+      };
   }
 }
 
-function shouldReconcileAfter(event: AgentEvent): boolean {
-  switch (event.kind) {
-    case EventKind.TOOL_PROGRESS:
-    case EventKind.MODEL_STARTED:
-    case EventKind.MODEL_TOOL_CALL:
-      return false;
-    case EventKind.PLAN_STARTED:
-    case EventKind.PLAN_UPDATED:
-    case EventKind.STEERING_APPLIED:
-    case EventKind.COMPACTION_FAILED:
-    case EventKind.COMPACTED:
-    case EventKind.MODEL_FAILED:
-    case EventKind.MODEL_COMPLETED:
-    case EventKind.USER_INPUT_REQUESTED:
-    case EventKind.TOOL_FAILED:
-    case EventKind.TOOL_COMPLETED:
-      return true;
-  }
+function resetResumeTokens(
+  tokens: Record<EventStream, ResumeToken | undefined>,
+): void {
+  for (const stream of eventStreams) tokens[stream] = undefined;
 }
 
 function isPollTimeout(reason: unknown): boolean {
@@ -398,18 +456,6 @@ function isAbortError(reason: unknown): boolean {
   return reason instanceof DOMException && reason.name === "AbortError";
 }
 
-function problemStatus(reason: unknown): number | null {
-  if (
-    typeof reason === "object" &&
-    reason !== null &&
-    "status" in reason &&
-    typeof reason.status === "number"
-  ) {
-    return reason.status;
-  }
-  return null;
-}
-
 function errorMessage(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
   if (
@@ -421,6 +467,13 @@ function errorMessage(reason: unknown): string {
     return reason.detail;
   }
   return "The request could not be completed.";
+}
+
+function statusLabel(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 async function waitBeforeNextPoll(signal: AbortSignal): Promise<void> {

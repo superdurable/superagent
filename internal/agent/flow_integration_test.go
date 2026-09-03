@@ -64,7 +64,8 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if initialSnapshot.RunID != runID {
 		t.Fatalf("Snapshot run ID = %q, want %q", initialSnapshot.RunID, runID)
 	}
-	if initialSnapshot.Description.Status != AgentStatusWaitingForMessage ||
+	if initialSnapshot.Description == nil ||
+		initialSnapshot.Description.Status != AgentStatusWaitingForMessage ||
 		len(initialSnapshot.History.Messages) != 0 ||
 		len(initialSnapshot.Queued) != 0 ||
 		len(initialSnapshot.Steered) != 0 {
@@ -203,6 +204,40 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.CompactionGeneration > 0
 	})
+}
+
+func TestAgentTerminalSnapshotIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-terminal-" + randomLocalID(t))
+	runID, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.sdk.StopFlow(t.Context(), string(flowID), dex.StopOptions{
+		Type:   dex.TerminateFlow,
+		Reason: "terminal Snapshot integration",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := environment.sdk.WaitForFlow(t.Context(), string(flowID), dex.WaitForFlowOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != dex.FlowTerminated {
+		t.Fatalf("Flow status = %v, want terminated", result.Status)
+	}
+
+	snapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	if snapshot.RunID != runID || snapshot.FlowStatus != FlowStatusTerminated {
+		t.Fatalf("terminal Snapshot identity = %#v", snapshot)
+	}
+	if snapshot.Description != nil || snapshot.ErrorType != nil ||
+		len(snapshot.History.Messages) != 0 || len(snapshot.Queued) != 0 || len(snapshot.Steered) != 0 {
+		t.Fatalf("terminal Snapshot durable view = %#v", snapshot)
+	}
 }
 
 func readSnapshot(

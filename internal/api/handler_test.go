@@ -127,7 +127,8 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	callID := agent.CallID("call-1")
 	toolName := agent.ToolName("lookup")
 	service := &fakeAgentService{snapshot: agent.AgentSnapshot{
-		RunID: "run-1",
+		RunID:      "run-1",
+		FlowStatus: agent.FlowStatusRunning,
 		History: agent.HistoryPage{Messages: []agent.SequencedMessage{{
 			Sequence: 1,
 			Message: agent.AgentMessage{
@@ -139,7 +140,7 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 				CreatedAt:  createdAt,
 			},
 		}}},
-		Description: agent.AgentDescription{
+		Description: &agent.AgentDescription{
 			Status:                     agent.AgentStatusWaitingForToolApproval,
 			Model:                      "openai/gpt-5-mini",
 			SystemPrompt:               "be helpful",
@@ -174,7 +175,8 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 		t.Fatalf("validate response: %v", validationErr)
 	}
 	snapshot := &result.Response
-	if snapshot.RunId != "run-1" || len(snapshot.History.Messages) != 1 || len(snapshot.Queued) != 1 {
+	if snapshot.RunId != "run-1" || snapshot.FlowStatus != transportapi.FlowStatusRunning ||
+		len(snapshot.History.Messages) != 1 || len(snapshot.Queued) != 1 {
 		t.Fatalf("Snapshot = %#v", snapshot)
 	}
 	message := snapshot.History.Messages[0].Message
@@ -183,8 +185,46 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 		message.ToolCalls[0].ArgumentsJson != `{"path":"README.md"}` {
 		t.Fatalf("Snapshot message = %#v", message)
 	}
-	if snapshot.Description.PendingApproval.IsNull() || snapshot.Description.Plan.IsNull() {
+	description, ok := snapshot.Description.Get()
+	if !ok || description.PendingApproval.IsNull() || description.Plan.IsNull() {
 		t.Fatalf("Snapshot description = %#v", snapshot.Description)
+	}
+}
+
+func TestGetAgentSnapshotMapsTerminalFlowResult(t *testing.T) {
+	t.Parallel()
+	errorType := agent.FlowErrorTypeWorkerMethod
+	errorMessage := "worker failed"
+	handler := newTestHandler(&fakeAgentService{snapshot: agent.AgentSnapshot{
+		RunID:        "run-terminal",
+		FlowStatus:   agent.FlowStatusFailed,
+		ErrorType:    &errorType,
+		ErrorMessage: &errorMessage,
+		History:      agent.HistoryPage{Messages: []agent.SequencedMessage{}},
+		Queued:       []agent.PendingUserMessage{},
+		Steered:      []agent.PendingUserMessage{},
+	}}, fakeCredentials{})
+	response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
+		FlowId: "flow-terminal",
+		Limit:  transportapi.NewOptInt(50),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := response.(*transportapi.AgentSnapshotHeaders)
+	if !ok {
+		t.Fatalf("response type = %T", response)
+	}
+	snapshot := result.Response
+	if snapshot.FlowStatus != transportapi.FlowStatusFailed || !snapshot.Description.IsNull() {
+		t.Fatalf("terminal Snapshot = %#v", snapshot)
+	}
+	mappedErrorType, ok := snapshot.ErrorType.Get()
+	if !ok || mappedErrorType != transportapi.FlowErrorTypeWorkerMethod {
+		t.Fatalf("terminal error type = %#v", snapshot.ErrorType)
+	}
+	if mappedMessage, ok := snapshot.ErrorMessage.Get(); !ok || mappedMessage != errorMessage {
+		t.Fatalf("terminal error message = %#v", snapshot.ErrorMessage)
 	}
 }
 
@@ -207,7 +247,7 @@ func TestGetAgentSnapshotPreservesDexFlowLifecycleErrors(t *testing.T) {
 			name: "inactive",
 			err:  &dex.FlowNotActiveError{ServiceError: &dex.ServiceError{}},
 			want: func(response transportapi.GetAgentSnapshotRes) bool {
-				_, ok := response.(*transportapi.GetAgentSnapshotConflict)
+				_, ok := response.(*transportapi.GetAgentSnapshotServiceUnavailable)
 				return ok
 			},
 		},

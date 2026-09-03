@@ -9,6 +9,10 @@ The released Dex Go SDK is the only runtime dependency boundary.
 The Python source under `reference/python/` is an immutable parity oracle copied
 from Dex OSS commit `13db6da5`.
 
+Dex PR 448 remains an open comparison target as of 2026-09-03. Its AI Agent
+changes were reviewed, but they are not copied into the immutable oracle or the
+vendored skill until they merge to Dex `main`.
+
 ## Delivery phases
 
 | Phase | Deliverable | Snapshot scope |
@@ -131,16 +135,17 @@ kinds explicitly. No application code migration was required.
 ## Phase 2 Snapshot contract
 
 The installed SDK and version-matched real-server compile contract are the only
-signature sources. The typed application response contains a run ID,
-application history, Agent description, queued user messages, and steered user
-messages.
+signature sources. The typed application response contains a run ID, Flow
+lifecycle, optional terminal failure, application history, optional Agent
+description, queued user messages, and steered user messages.
 
 - History comes from `AgentMessages`, never Dex execution history.
 - The RPC explicitly selects every required AttributeMap, Channel, and
   description Attribute.
 - The RPC is read-only and never consumes a Channel.
-- Pagination, terminal state, closed Flow, and missing Flow behavior follow the
-  released SDK.
+- Active Snapshots contain the complete durable Agent view. Terminal Snapshots
+  contain lifecycle metadata and an empty durable Agent view.
+- Missing Flow behavior follows the released SDK.
 - Dex resource descriptors remain package-private.
 - Generated transport types map explicitly to the domain snapshot.
 
@@ -166,8 +171,10 @@ The implemented Dex client invocation explicitly loads:
 Normal Attributes used to construct `AgentDescription` follow the published RPC
 context contract. Snapshot loading is independent from locking and transactions:
 the RPC is read-only and neither consumes nor mutates a Channel. It returns the
-Dex invocation Run ID. Missing and inactive Flows retain the SDK's typed error
-behavior.
+Dex invocation Run ID. The client reconciles successful RPC results with Dex
+visibility state because a just-closed Flow may briefly return its final active
+RPC projection. A terminal result uses `WaitForFlow` plus the matching searchable
+run and never presents stale active state as terminal durable data.
 
 OpenAPI `0.2.0` adds Snapshot plus queue delete and steer. ogen and Hey API
 generate both transport surfaces. Steer accepts only a stable queued message ID;
@@ -181,6 +188,12 @@ plan mode, keyboard submission, and a fixed responsive composer. Snapshot
 atomically replaces the durable reducer view. Every Snapshot, event poll, and
 command owns cancellation and stale-response protection. Normal long-poll
 expiry uses a generated typed response rather than transport-error heuristics.
+Reasoning summaries remain separated by model invocation source and retain
+their timestamps and completion state. Message send immediately creates a
+non-actionable `Submitting` queue item. Failure restores the exact composer
+state. A later Snapshot replaces it with the durable message ID. The browser
+also reconciles every eight seconds while visible and on focus, online, and
+visible transitions.
 
 ## Tests
 
@@ -250,3 +263,4 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 2 Snapshot | One RPC returned Run ID, paged `AgentMessages` history, description, FIFO queued and steered messages; repeated reads preserved IDs and did not consume Channels; delete/steer stale IDs returned typed failures; cold Worker replacement passed |
 | 2026-09-03 | Phase 2 UI | Strict TypeScript, type-aware ESLint, 16 Vitest checks, production Webpack, and cross-origin Playwright passed; browser initialization made one Snapshot request and zero legacy reads |
 | 2026-09-03 | Phase 2 graph | `dexcli visualize` with CLI `v0.1.21`: valid graph, five RPCs including Snapshot, and zero blocking diagnostics |
+| 2026-09-03 | Phase 2 parity hardening | Dex server `eba9d9a5` with Go SDK `v0.2.12`: active durability and terminal Snapshot integrations passed; 23 Vitest checks cover terminal state, source-separated reasoning, optimistic send recovery, and focus reconciliation |

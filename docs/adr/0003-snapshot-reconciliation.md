@@ -28,8 +28,10 @@ not an application data source. The HTTP API exposes only
 
 The React reducer replaces the complete durable view with one Snapshot action.
 Assistant, reasoning-summary, and activity Streams add low-latency updates.
-Disconnects, activity boundaries, and command completion trigger a new Snapshot
-for reconciliation. Queue mutations use stable message IDs from Snapshot.
+Disconnects, activity, command completion, visible-page fallback polling, focus,
+online, and visibility recovery trigger a new Snapshot. Reasoning is grouped by
+Stream source. Queue mutations use stable message IDs from Snapshot, while new
+sends use a temporary non-actionable submitting item.
 
 ## Consequences
 
@@ -39,6 +41,8 @@ whole retained application-history map before applying its bounded page because
 the atomic map projection is the released SDK contract; retention and
 compaction bound that cost.
 
-RPCs target active Flows. Missing and terminal Flows use typed SDK-derived HTTP
-errors rather than locally reconstructed terminal Snapshots. Queue mutation
-conflicts cause another Snapshot instead of accepting stale browser state.
+RPCs target active Flows. A just-closed Flow may briefly return its final active
+RPC projection, so the application reconciles it with Dex visibility and
+`WaitForFlow`. Terminal HTTP responses expose only typed lifecycle and failure
+metadata with an empty durable Agent view. Queue mutation conflicts cause
+another Snapshot instead of accepting stale browser state.

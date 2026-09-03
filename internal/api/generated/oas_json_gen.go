@@ -1159,6 +1159,18 @@ func (s *AgentSnapshot) encodeFields(e *jx.Encoder) {
 		s.RunId.Encode(e)
 	}
 	{
+		e.FieldStart("flowStatus")
+		s.FlowStatus.Encode(e)
+	}
+	{
+		e.FieldStart("errorType")
+		s.ErrorType.Encode(e)
+	}
+	{
+		e.FieldStart("errorMessage")
+		s.ErrorMessage.Encode(e)
+	}
+	{
 		e.FieldStart("history")
 		s.History.Encode(e)
 	}
@@ -1184,12 +1196,15 @@ func (s *AgentSnapshot) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfAgentSnapshot = [5]string{
+var jsonFieldsNameOfAgentSnapshot = [8]string{
 	0: "runId",
-	1: "history",
-	2: "description",
-	3: "queued",
-	4: "steered",
+	1: "flowStatus",
+	2: "errorType",
+	3: "errorMessage",
+	4: "history",
+	5: "description",
+	6: "queued",
+	7: "steered",
 }
 
 // Decode decodes AgentSnapshot from json.
@@ -1211,8 +1226,38 @@ func (s *AgentSnapshot) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"runId\"")
 			}
-		case "history":
+		case "flowStatus":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.FlowStatus.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"flowStatus\"")
+			}
+		case "errorType":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.ErrorType.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"errorType\"")
+			}
+		case "errorMessage":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				if err := s.ErrorMessage.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"errorMessage\"")
+			}
+		case "history":
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				if err := s.History.Decode(d); err != nil {
 					return err
@@ -1222,7 +1267,7 @@ func (s *AgentSnapshot) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"history\"")
 			}
 		case "description":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				if err := s.Description.Decode(d); err != nil {
 					return err
@@ -1232,7 +1277,7 @@ func (s *AgentSnapshot) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"description\"")
 			}
 		case "queued":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				s.Queued = make([]PendingUserMessage, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1250,7 +1295,7 @@ func (s *AgentSnapshot) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"queued\"")
 			}
 		case "steered":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				s.Steered = make([]PendingUserMessage, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1277,7 +1322,7 @@ func (s *AgentSnapshot) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00011111,
+		0b11111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -2244,6 +2289,54 @@ func (s *ExecutePlanServiceUnavailable) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes FlowErrorType as json.
+func (s FlowErrorType) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes FlowErrorType from json.
+func (s *FlowErrorType) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode FlowErrorType to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch FlowErrorType(v) {
+	case FlowErrorTypeStepDecision:
+		*s = FlowErrorTypeStepDecision
+	case FlowErrorTypeClientAPI:
+		*s = FlowErrorTypeClientAPI
+	case FlowErrorTypeWorkerMethod:
+		*s = FlowErrorTypeWorkerMethod
+	case FlowErrorTypeInvalidUserCode:
+		*s = FlowErrorTypeInvalidUserCode
+	case FlowErrorTypeInternal:
+		*s = FlowErrorTypeInternal
+	case FlowErrorTypeTimeout:
+		*s = FlowErrorTypeTimeout
+	default:
+		*s = FlowErrorType(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s FlowErrorType) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *FlowErrorType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes FlowID as json.
 func (s FlowID) Encode(e *jx.Encoder) {
 	unwrapped := string(s)
@@ -2284,6 +2377,54 @@ func (s *FlowID) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes FlowStatus as json.
+func (s FlowStatus) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes FlowStatus from json.
+func (s *FlowStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode FlowStatus to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch FlowStatus(v) {
+	case FlowStatusRunning:
+		*s = FlowStatusRunning
+	case FlowStatusCompleted:
+		*s = FlowStatusCompleted
+	case FlowStatusFailed:
+		*s = FlowStatusFailed
+	case FlowStatusTerminated:
+		*s = FlowStatusTerminated
+	case FlowStatusCanceled:
+		*s = FlowStatusCanceled
+	case FlowStatusContinuedAsNew:
+		*s = FlowStatusContinuedAsNew
+	default:
+		*s = FlowStatus(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s FlowStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *FlowStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes GetAgentSnapshotBadRequest as json.
 func (s *GetAgentSnapshotBadRequest) Encode(e *jx.Encoder) {
 	unwrapped := (*Problem)(s)
@@ -2318,44 +2459,6 @@ func (s *GetAgentSnapshotBadRequest) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *GetAgentSnapshotBadRequest) UnmarshalJSON(data []byte) error {
-	d := jx.DecodeBytes(data)
-	return s.Decode(d)
-}
-
-// Encode encodes GetAgentSnapshotConflict as json.
-func (s *GetAgentSnapshotConflict) Encode(e *jx.Encoder) {
-	unwrapped := (*Problem)(s)
-
-	unwrapped.Encode(e)
-}
-
-// Decode decodes GetAgentSnapshotConflict from json.
-func (s *GetAgentSnapshotConflict) Decode(d *jx.Decoder) error {
-	if s == nil {
-		return errors.New("invalid: unable to decode GetAgentSnapshotConflict to nil")
-	}
-	var unwrapped Problem
-	if err := func() error {
-		if err := unwrapped.Decode(d); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		return errors.Wrap(err, "alias")
-	}
-	*s = GetAgentSnapshotConflict(unwrapped)
-	return nil
-}
-
-// MarshalJSON implements stdjson.Marshaler.
-func (s *GetAgentSnapshotConflict) MarshalJSON() ([]byte, error) {
-	e := jx.Encoder{}
-	s.Encode(&e)
-	return e.Bytes(), nil
-}
-
-// UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *GetAgentSnapshotConflict) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -2773,6 +2876,50 @@ func (s *MessageRole) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes AgentDescription as json.
+func (o NilAgentDescription) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes AgentDescription from json.
+func (o *NilAgentDescription) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilAgentDescription to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v AgentDescription
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilAgentDescription) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilAgentDescription) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes AgentPlan as json.
 func (o NilAgentPlan) Encode(e *jx.Encoder) {
 	if o.Null {
@@ -2857,6 +3004,50 @@ func (s NilCallID) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *NilCallID) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes FlowErrorType as json.
+func (o NilFlowErrorType) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes FlowErrorType from json.
+func (o *NilFlowErrorType) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilFlowErrorType to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v FlowErrorType
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilFlowErrorType) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilFlowErrorType) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

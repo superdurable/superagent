@@ -68,15 +68,20 @@ table are in `docs/flow-model.md`.
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
 and Run identity through one reducer action. Three cancellable event polls apply
-assistant, reasoning-summary, and activity deltas. A disconnect, terminal
-response, activity boundary, stale optimistic mutation, or explicit retry
-reconciles against another Snapshot. The four legacy reads do not exist.
+assistant, reasoning-summary, and activity deltas. Reasoning entries are keyed
+by the producing model invocation source. Activity, disconnect, command
+completion, an eight-second visible-page fallback, focus, online, visibility
+recovery, or explicit retry reconciles another Snapshot. The four legacy reads
+do not exist.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Every poll, Snapshot, and command owns cancellation and rejects stale responses.
-Queue edit, delete, and steer optimistically remove one stable message ID, then
-reconcile. The backend resolves a steer value from the loaded Channel snapshot;
-the browser cannot replace the queued content during that operation.
+Message send displays one local, non-actionable `Submitting` item until Snapshot
+reveals the durable queue or history result. Failure restores its composer text
+and plan mode. Queue edit, delete, and steer optimistically remove one stable
+message ID, then reconcile. The backend resolves a steer value from the loaded
+Channel snapshot; the browser cannot replace the queued content during that
+operation.
 
 ## HTTP contract
 
@@ -90,6 +95,8 @@ queue deletion and steering, typed event polling, health, and readiness. The API
 process does not serve React files. Long-poll expiry has a generated typed body,
 so the browser can distinguish normal polling cadence from a transport failure.
 Snapshot responses carry the generated `Cache-Control: no-store` contract.
+Running responses contain a non-null Agent description. Terminal responses
+contain typed Flow status and optional failure metadata with a null description.
 
 The frontend build produces an independent `web/dist` artifact. It reads a
 strict `config.json` at page load. The file configures the generated Fetch

@@ -18,12 +18,12 @@ import {
   pendingQueueMessageID,
   type ConnectionState,
   type QueueCommandAction,
-  type ReadyConversationState,
+  type ActiveConversationState,
 } from "./conversation-state";
 
 interface ConversationViewProps {
   flowId: FlowId;
-  state: ReadyConversationState;
+  state: ActiveConversationState;
   onRetrySnapshot: () => void;
   onLoadOlder: (beforeSequence: number) => void;
   onComposerChange: (value: string) => void;
@@ -53,8 +53,7 @@ export function ConversationView({
 }: ConversationViewProps) {
   const { snapshot } = state;
   const description = snapshot.description;
-  const isTerminal = state.connection === "terminal";
-  const isBusy = state.pendingCommand !== null || isTerminal;
+  const isBusy = state.pendingCommand !== null;
   const pendingMessageID = pendingQueueMessageID(state);
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
@@ -88,15 +87,13 @@ export function ConversationView({
       {state.error !== null && (
         <div className="error conversation-error" role="alert">
           <span>{state.error}</span>
-          {!isTerminal && (
-            <button
-              type="button"
-              className="text-button"
-              onClick={onRetrySnapshot}
-            >
-              Reconcile now
-            </button>
-          )}
+          <button
+            type="button"
+            className="text-button"
+            onClick={onRetrySnapshot}
+          >
+            Reconcile now
+          </button>
         </div>
       )}
 
@@ -144,19 +141,28 @@ export function ConversationView({
                 ))}
               </article>
             ))}
-            {state.reasoningText !== "" && (
-              <details className="reasoning-card" open>
-                <summary>Reasoning summary</summary>
-                <p>{state.reasoningText}</p>
+            {state.reasoning.map((entry) => (
+              <details
+                className="reasoning-card"
+                key={entry.source}
+                open={!entry.isComplete}
+              >
+                <summary>
+                  Reasoning summary · {formatTime(entry.createdAt)} ·{" "}
+                  {entry.isComplete ? "Complete" : "Streaming"}
+                </summary>
+                <p>{entry.value}</p>
               </details>
-            )}
-            {state.assistantText !== "" && (
+            ))}
+            {state.assistant !== null && (
               <article className="message-bubble assistant live-message">
                 <div className="message-meta">
                   <strong>Assistant</strong>
-                  <span>Streaming</span>
+                  <span>
+                    {formatTime(state.assistant.createdAt)} · Streaming
+                  </span>
                 </div>
-                <p>{state.assistantText}</p>
+                <p>{state.assistant.value}</p>
               </article>
             )}
           </section>
@@ -246,14 +252,19 @@ export function ConversationView({
             </section>
           )}
 
-          {(snapshot.queued.length > 0 || snapshot.steered.length > 0) && (
+          {(snapshot.queued.length > 0 ||
+            snapshot.steered.length > 0 ||
+            state.optimisticSubmission !== null) && (
             <section className="side-card queue-card">
               <div className="section-heading compact">
                 <div>
                   <p className="eyebrow">Message queue</p>
                   <h2>
-                    {String(snapshot.queued.length)} queued ·{" "}
-                    {String(snapshot.steered.length)} steering
+                    {String(
+                      snapshot.queued.length +
+                        (state.optimisticSubmission === null ? 0 : 1),
+                    )}{" "}
+                    queued · {String(snapshot.steered.length)} steering
                   </h2>
                 </div>
               </div>
@@ -263,6 +274,15 @@ export function ConversationView({
                   <p>{message.value.content}</p>
                 </div>
               ))}
+              {state.optimisticSubmission !== null && (
+                <div
+                  className="queue-message submitting"
+                  key={state.optimisticSubmission.localID}
+                >
+                  <strong>Submitting…</strong>
+                  <p>{state.optimisticSubmission.value.content}</p>
+                </div>
+              )}
               {snapshot.queued.map((message) => (
                 <div className="queue-message" key={message.messageId}>
                   <strong>{message.value.planMode ? "Plan" : "Queued"}</strong>
@@ -293,10 +313,13 @@ export function ConversationView({
             <section className="side-card activity-card">
               <p className="eyebrow">Live activity</p>
               <ul>
-                {state.activities.slice(0, 8).map((activity, index) => (
-                  <li key={`${activity.kind}:${String(index)}`}>
-                    <strong>{statusLabel(activity.kind)}</strong>
-                    <span>{activity.message}</span>
+                {state.activities.slice(0, 8).map((entry) => (
+                  <li key={entry.resumeToken}>
+                    <strong>{statusLabel(entry.value.kind)}</strong>
+                    <span>{entry.value.message}</span>
+                    <time dateTime={entry.createdAt}>
+                      {formatTime(entry.createdAt)}
+                    </time>
                   </li>
                 ))}
               </ul>
@@ -350,15 +373,13 @@ export function ConversationView({
                 : "Answer Agent question"
             }
             value={state.composer}
-            disabled={isTerminal}
+            disabled={isBusy}
             placeholder={
-              isTerminal
-                ? "This Flow is no longer active."
-                : description.pendingUserInput === null
-                  ? state.isPlanMode
-                    ? "Describe what you want the Agent to plan…"
-                    : "Message the Agent…"
-                  : "Type your answer…"
+              description.pendingUserInput === null
+                ? state.isPlanMode
+                  ? "Describe what you want the Agent to plan…"
+                  : "Message the Agent…"
+                : "Type your answer…"
             }
             rows={3}
             onChange={(event) => {

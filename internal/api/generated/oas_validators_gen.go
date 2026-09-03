@@ -622,6 +622,35 @@ func (s *AgentSnapshot) Validate() error {
 		})
 	}
 	if err := func() error {
+		if err := s.FlowStatus.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "flowStatus",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.ErrorType.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "errorType",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if err := s.History.Validate(); err != nil {
 			return err
 		}
@@ -633,8 +662,15 @@ func (s *AgentSnapshot) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Description.Validate(); err != nil {
-			return err
+		if value, ok := s.Description.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -1036,6 +1072,25 @@ func (s *ExecutePlanServiceUnavailable) Validate() error {
 	return nil
 }
 
+func (s FlowErrorType) Validate() error {
+	switch s {
+	case "step_decision":
+		return nil
+	case "client_api":
+		return nil
+	case "worker_method":
+		return nil
+	case "invalid_user_code":
+		return nil
+	case "internal":
+		return nil
+	case "timeout":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s FlowID) Validate() error {
 	alias := (string)(s)
 	if err := (validate.String{
@@ -1056,15 +1111,26 @@ func (s FlowID) Validate() error {
 	return nil
 }
 
-func (s *GetAgentSnapshotBadRequest) Validate() error {
-	alias := (*Problem)(s)
-	if err := alias.Validate(); err != nil {
-		return err
+func (s FlowStatus) Validate() error {
+	switch s {
+	case "running":
+		return nil
+	case "completed":
+		return nil
+	case "failed":
+		return nil
+	case "terminated":
+		return nil
+	case "canceled":
+		return nil
+	case "continued_as_new":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
 	}
-	return nil
 }
 
-func (s *GetAgentSnapshotConflict) Validate() error {
+func (s *GetAgentSnapshotBadRequest) Validate() error {
 	alias := (*Problem)(s)
 	if err := alias.Validate(); err != nil {
 		return err

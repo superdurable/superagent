@@ -410,26 +410,6 @@ func encodeGetAgentSnapshotResponse(response GetAgentSnapshotRes, w http.Respons
 
 		return nil
 
-	case *GetAgentSnapshotConflict:
-		if err := func() error {
-			if err := response.Validate(); err != nil {
-				return err
-			}
-			return nil
-		}(); err != nil {
-			return errors.Wrap(err, "validate")
-		}
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(409)
-
-		e := new(jx.Encoder)
-		response.Encode(e)
-		if _, err := e.WriteTo(w); err != nil {
-			return errors.Wrap(err, "write")
-		}
-
-		return nil
-
 	case *GetAgentSnapshotServiceUnavailable:
 		if err := func() error {
 			if err := response.Validate(); err != nil {

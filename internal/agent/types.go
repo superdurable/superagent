@@ -151,6 +151,70 @@ func (status *AgentStatus) UnmarshalJSON(data []byte) error {
 	return decodeEnum(data, status, AgentStatus.Validate)
 }
 
+// FlowStatus describes the Dex lifecycle state exposed with an Agent Snapshot.
+type FlowStatus string
+
+const (
+	FlowStatusRunning        FlowStatus = "running"
+	FlowStatusCompleted      FlowStatus = "completed"
+	FlowStatusFailed         FlowStatus = "failed"
+	FlowStatusTerminated     FlowStatus = "terminated"
+	FlowStatusCanceled       FlowStatus = "canceled"
+	FlowStatusContinuedAsNew FlowStatus = "continued_as_new"
+)
+
+// Validate rejects unknown Flow lifecycle states.
+func (status FlowStatus) Validate() error {
+	switch status {
+	case FlowStatusRunning,
+		FlowStatusCompleted,
+		FlowStatusFailed,
+		FlowStatusTerminated,
+		FlowStatusCanceled,
+		FlowStatusContinuedAsNew:
+		return nil
+	default:
+		return newEnumValidationError("FlowStatus", string(status))
+	}
+}
+
+// UnmarshalJSON decodes and validates a Flow lifecycle state.
+func (status *FlowStatus) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, status, FlowStatus.Validate)
+}
+
+// FlowErrorType classifies a terminal Dex Flow failure.
+type FlowErrorType string
+
+const (
+	FlowErrorTypeStepDecision    FlowErrorType = "step_decision"
+	FlowErrorTypeClientAPI       FlowErrorType = "client_api"
+	FlowErrorTypeWorkerMethod    FlowErrorType = "worker_method"
+	FlowErrorTypeInvalidUserCode FlowErrorType = "invalid_user_code"
+	FlowErrorTypeInternal        FlowErrorType = "internal"
+	FlowErrorTypeTimeout         FlowErrorType = "timeout"
+)
+
+// Validate rejects unknown Flow failure categories.
+func (errorType FlowErrorType) Validate() error {
+	switch errorType {
+	case FlowErrorTypeStepDecision,
+		FlowErrorTypeClientAPI,
+		FlowErrorTypeWorkerMethod,
+		FlowErrorTypeInvalidUserCode,
+		FlowErrorTypeInternal,
+		FlowErrorTypeTimeout:
+		return nil
+	default:
+		return newEnumValidationError("FlowErrorType", string(errorType))
+	}
+}
+
+// UnmarshalJSON decodes and validates a Flow failure category.
+func (errorType *FlowErrorType) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, errorType, FlowErrorType.Validate)
+}
+
 // InteractionMode controls which tools one model turn may use.
 type InteractionMode string
 
@@ -614,11 +678,14 @@ type AgentDescription struct {
 
 // AgentSnapshot is one atomic durable application view.
 type AgentSnapshot struct {
-	RunID       RunID                `json:"run_id"`
-	History     HistoryPage          `json:"history"`
-	Description AgentDescription     `json:"description"`
-	Queued      []PendingUserMessage `json:"queued"`
-	Steered     []PendingUserMessage `json:"steered"`
+	RunID        RunID                `json:"run_id"`
+	FlowStatus   FlowStatus           `json:"flow_status"`
+	ErrorType    *FlowErrorType       `json:"error_type,omitempty"`
+	ErrorMessage *string              `json:"error_message,omitempty"`
+	History      HistoryPage          `json:"history"`
+	Description  *AgentDescription    `json:"description,omitempty"`
+	Queued       []PendingUserMessage `json:"queued"`
+	Steered      []PendingUserMessage `json:"steered"`
 }
 
 // NewAgentState returns the initial durable state.

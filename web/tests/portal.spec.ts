@@ -103,6 +103,9 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
           contentType: "application/json",
           json: {
             runId: "browser-run",
+            flowStatus: "running",
+            errorType: null,
+            errorMessage: null,
             history: { messages: [], nextBeforeSequence: null },
             description: {
               status: "waiting_for_message",

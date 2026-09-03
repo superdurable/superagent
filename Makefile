@@ -67,7 +67,7 @@ test-agent:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/agent
 
 test-dex-integration:
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 -run '^TestAgentFlowDurabilityIntegration$$' ./internal/agent
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 -run '^TestAgent.*Integration$$' ./internal/agent
 
 test-api:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/api

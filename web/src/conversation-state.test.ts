@@ -6,7 +6,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { AgentStatus, MessageRole, type AgentSnapshot } from "./api/generated";
+import {
+  AgentStatus,
+  EventKind,
+  FlowErrorType,
+  FlowStatus,
+  MessageRole,
+  type AgentSnapshot,
+} from "./api/generated";
 import {
   conversationReducer,
   initialConversationState,
@@ -77,7 +84,6 @@ describe("conversationReducer", () => {
     const disconnected = conversationReducer(ready, {
       type: "stream-failed",
       message: "disconnected",
-      isTerminal: false,
     });
     const reconciled = conversationReducer(disconnected, {
       type: "snapshot-loaded",
@@ -95,6 +101,156 @@ describe("conversationReducer", () => {
       subscriptionGeneration: 1,
     });
   });
+
+  it("renders a terminal Snapshot without inventing active Agent state", () => {
+    const state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: {
+        runId: "run-terminal",
+        flowStatus: FlowStatus.FAILED,
+        errorType: FlowErrorType.WORKER_METHOD,
+        errorMessage: "worker stopped",
+        history: { messages: [], nextBeforeSequence: null },
+        description: null,
+        queued: [],
+        steered: [],
+      },
+    });
+
+    expect(state).toMatchObject({
+      kind: "ready",
+      lifecycle: "terminal",
+      connection: "terminal",
+      snapshot: { runId: "run-terminal", description: null },
+      error: "worker stopped",
+    });
+  });
+
+  it("keeps reasoning summaries separate by model invocation source", () => {
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshot("run-1", "queued-1", "hello"),
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "reasoning",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:01Z",
+        value: "first ",
+      },
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "reasoning",
+        source: "model-call-2",
+        createdAt: "2026-09-03T00:00:02Z",
+        value: "second",
+      },
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "activity",
+        resumeToken: "activity-1",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:03Z",
+        value: {
+          kind: EventKind.MODEL_COMPLETED,
+          message: "complete",
+          callId: null,
+          toolName: null,
+        },
+      },
+    });
+
+    expect(state).toMatchObject({
+      kind: "ready",
+      reasoning: [
+        { source: "model-call-1", value: "first ", isComplete: true },
+        { source: "model-call-2", value: "second", isComplete: false },
+      ],
+      activities: [{ source: "model-call-1" }],
+    });
+  });
+
+  it("shows a submitting queue item and restores the composer on failure", () => {
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshot("run-1", "queued-1", "existing"),
+    });
+    if (state.kind !== "ready" || state.lifecycle !== "active") {
+      throw new Error("expected active state");
+    }
+    state = conversationReducer(state, {
+      type: "composer-changed",
+      value: "new work",
+    });
+    state = conversationReducer(state, {
+      type: "plan-mode-changed",
+      value: true,
+    });
+    state = conversationReducer(state, {
+      type: "command-started",
+      id: 7,
+      command: {
+        kind: "send",
+        value: { content: "new work", planMode: true },
+        submittedAfterSequence: 1,
+        knownMessageIDs: ["queued-1"],
+      },
+    });
+
+    expect(state).toMatchObject({
+      composer: "",
+      isPlanMode: false,
+      optimisticSubmission: {
+        localID: "submitting-7",
+        value: { content: "new work", planMode: true },
+      },
+    });
+
+    state = conversationReducer(state, {
+      type: "command-failed",
+      id: 7,
+      message: "unavailable",
+    });
+    expect(state).toMatchObject({
+      composer: "new work",
+      isPlanMode: true,
+      optimisticSubmission: null,
+      error: "unavailable",
+    });
+  });
+
+  it("replaces a submitting queue item with the stable Snapshot message", () => {
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshot("run-1", "queued-1", "existing"),
+    });
+    state = conversationReducer(state, {
+      type: "command-started",
+      id: 8,
+      command: {
+        kind: "send",
+        value: { content: "new work", planMode: false },
+        submittedAfterSequence: 1,
+        knownMessageIDs: ["queued-1"],
+      },
+    });
+    state = conversationReducer(state, { type: "command-succeeded", id: 8 });
+    const reconciled = snapshot("run-1", "queued-2", "new work");
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: reconciled,
+    });
+
+    expect(state).toMatchObject({
+      optimisticSubmission: null,
+      snapshot: { queued: [{ messageId: "queued-2" }] },
+    });
+  });
 });
 
 function snapshot(
@@ -104,6 +260,9 @@ function snapshot(
 ): AgentSnapshot {
   return {
     runId,
+    flowStatus: FlowStatus.RUNNING,
+    errorType: null,
+    errorMessage: null,
     history: {
       messages: [
         {

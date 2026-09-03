@@ -396,17 +396,62 @@ func transportSnapshot(snapshot agent.AgentSnapshot) (transportapi.AgentSnapshot
 	if err != nil {
 		return transportapi.AgentSnapshot{}, err
 	}
-	description, err := transportAgentDescription(snapshot.Description)
+	flowStatus, err := transportFlowStatus(snapshot.FlowStatus)
 	if err != nil {
 		return transportapi.AgentSnapshot{}, err
 	}
+	description, err := transportOptionalAgentDescription(snapshot.Description)
+	if err != nil {
+		return transportapi.AgentSnapshot{}, err
+	}
+	errorType, err := transportOptionalFlowErrorType(snapshot.ErrorType)
+	if err != nil {
+		return transportapi.AgentSnapshot{}, err
+	}
+	errorMessage := transportapi.NilString{}
+	if snapshot.ErrorMessage == nil {
+		errorMessage.SetToNull()
+	} else {
+		errorMessage.SetTo(*snapshot.ErrorMessage)
+	}
 	return transportapi.AgentSnapshot{
-		RunId:       transportapi.RunID(snapshot.RunID),
-		History:     history,
-		Description: description,
-		Queued:      transportPendingUserMessages(snapshot.Queued),
-		Steered:     transportPendingUserMessages(snapshot.Steered),
+		RunId:        transportapi.RunID(snapshot.RunID),
+		FlowStatus:   flowStatus,
+		ErrorType:    errorType,
+		ErrorMessage: errorMessage,
+		History:      history,
+		Description:  description,
+		Queued:       transportPendingUserMessages(snapshot.Queued),
+		Steered:      transportPendingUserMessages(snapshot.Steered),
 	}, nil
+}
+
+func transportOptionalAgentDescription(description *agent.AgentDescription) (transportapi.NilAgentDescription, error) {
+	result := transportapi.NilAgentDescription{}
+	if description == nil {
+		result.SetToNull()
+		return result, nil
+	}
+	mapped, err := transportAgentDescription(*description)
+	if err != nil {
+		return transportapi.NilAgentDescription{}, err
+	}
+	result.SetTo(mapped)
+	return result, nil
+}
+
+func transportOptionalFlowErrorType(errorType *agent.FlowErrorType) (transportapi.NilFlowErrorType, error) {
+	result := transportapi.NilFlowErrorType{}
+	if errorType == nil {
+		result.SetToNull()
+		return result, nil
+	}
+	mapped, err := transportFlowErrorType(*errorType)
+	if err != nil {
+		return transportapi.NilFlowErrorType{}, err
+	}
+	result.SetTo(mapped)
+	return result, nil
 }
 
 func transportHistoryPage(page agent.HistoryPage) (transportapi.HistoryPage, error) {
@@ -590,6 +635,44 @@ func transportOptionalAgentPlan(plan *agent.AgentPlan) (transportapi.NilAgentPla
 		Tasks:    tasks,
 	})
 	return result, nil
+}
+
+func transportFlowStatus(status agent.FlowStatus) (transportapi.FlowStatus, error) {
+	switch status {
+	case agent.FlowStatusRunning:
+		return transportapi.FlowStatusRunning, nil
+	case agent.FlowStatusCompleted:
+		return transportapi.FlowStatusCompleted, nil
+	case agent.FlowStatusFailed:
+		return transportapi.FlowStatusFailed, nil
+	case agent.FlowStatusTerminated:
+		return transportapi.FlowStatusTerminated, nil
+	case agent.FlowStatusCanceled:
+		return transportapi.FlowStatusCanceled, nil
+	case agent.FlowStatusContinuedAsNew:
+		return transportapi.FlowStatusContinuedAsNew, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "FlowStatus", Value: string(status)}
+	}
+}
+
+func transportFlowErrorType(errorType agent.FlowErrorType) (transportapi.FlowErrorType, error) {
+	switch errorType {
+	case agent.FlowErrorTypeStepDecision:
+		return transportapi.FlowErrorTypeStepDecision, nil
+	case agent.FlowErrorTypeClientAPI:
+		return transportapi.FlowErrorTypeClientAPI, nil
+	case agent.FlowErrorTypeWorkerMethod:
+		return transportapi.FlowErrorTypeWorkerMethod, nil
+	case agent.FlowErrorTypeInvalidUserCode:
+		return transportapi.FlowErrorTypeInvalidUserCode, nil
+	case agent.FlowErrorTypeInternal:
+		return transportapi.FlowErrorTypeInternal, nil
+	case agent.FlowErrorTypeTimeout:
+		return transportapi.FlowErrorTypeTimeout, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "FlowErrorType", Value: string(errorType)}
+	}
 }
 
 func transportAgentStatus(status agent.AgentStatus) (transportapi.AgentStatus, error) {
@@ -854,9 +937,6 @@ func (handler *Handler) snapshotError(ctx context.Context, flowID agent.FlowID, 
 	case failureNotFound:
 		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
 		return (*transportapi.GetAgentSnapshotNotFound)(&problem)
-	case failureConflict:
-		problem := newProblem(409, "Conflict", "the Agent Flow is no longer active")
-		return (*transportapi.GetAgentSnapshotConflict)(&problem)
 	default:
 		problem := newProblem(503, "Service Unavailable", "the Agent Snapshot is unavailable")
 		return (*transportapi.GetAgentSnapshotServiceUnavailable)(&problem)

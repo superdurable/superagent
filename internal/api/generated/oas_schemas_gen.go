@@ -460,16 +460,34 @@ func (s *AgentPlan) SetTasks(val []PlanTask) {
 
 // Ref: #/components/schemas/AgentSnapshot
 type AgentSnapshot struct {
-	RunId       RunID                `json:"runId"`
-	History     HistoryPage          `json:"history"`
-	Description AgentDescription     `json:"description"`
-	Queued      []PendingUserMessage `json:"queued"`
-	Steered     []PendingUserMessage `json:"steered"`
+	RunId        RunID                `json:"runId"`
+	FlowStatus   FlowStatus           `json:"flowStatus"`
+	ErrorType    NilFlowErrorType     `json:"errorType"`
+	ErrorMessage NilString            `json:"errorMessage"`
+	History      HistoryPage          `json:"history"`
+	Description  NilAgentDescription  `json:"description"`
+	Queued       []PendingUserMessage `json:"queued"`
+	Steered      []PendingUserMessage `json:"steered"`
 }
 
 // GetRunId returns the value of RunId.
 func (s *AgentSnapshot) GetRunId() RunID {
 	return s.RunId
+}
+
+// GetFlowStatus returns the value of FlowStatus.
+func (s *AgentSnapshot) GetFlowStatus() FlowStatus {
+	return s.FlowStatus
+}
+
+// GetErrorType returns the value of ErrorType.
+func (s *AgentSnapshot) GetErrorType() NilFlowErrorType {
+	return s.ErrorType
+}
+
+// GetErrorMessage returns the value of ErrorMessage.
+func (s *AgentSnapshot) GetErrorMessage() NilString {
+	return s.ErrorMessage
 }
 
 // GetHistory returns the value of History.
@@ -478,7 +496,7 @@ func (s *AgentSnapshot) GetHistory() HistoryPage {
 }
 
 // GetDescription returns the value of Description.
-func (s *AgentSnapshot) GetDescription() AgentDescription {
+func (s *AgentSnapshot) GetDescription() NilAgentDescription {
 	return s.Description
 }
 
@@ -497,13 +515,28 @@ func (s *AgentSnapshot) SetRunId(val RunID) {
 	s.RunId = val
 }
 
+// SetFlowStatus sets the value of FlowStatus.
+func (s *AgentSnapshot) SetFlowStatus(val FlowStatus) {
+	s.FlowStatus = val
+}
+
+// SetErrorType sets the value of ErrorType.
+func (s *AgentSnapshot) SetErrorType(val NilFlowErrorType) {
+	s.ErrorType = val
+}
+
+// SetErrorMessage sets the value of ErrorMessage.
+func (s *AgentSnapshot) SetErrorMessage(val NilString) {
+	s.ErrorMessage = val
+}
+
 // SetHistory sets the value of History.
 func (s *AgentSnapshot) SetHistory(val HistoryPage) {
 	s.History = val
 }
 
 // SetDescription sets the value of Description.
-func (s *AgentSnapshot) SetDescription(val AgentDescription) {
+func (s *AgentSnapshot) SetDescription(val NilAgentDescription) {
 	s.Description = val
 }
 
@@ -974,15 +1007,151 @@ type ExecutePlanServiceUnavailable Problem
 
 func (*ExecutePlanServiceUnavailable) executePlanRes() {}
 
+// Ref: #/components/schemas/FlowErrorType
+type FlowErrorType string
+
+const (
+	FlowErrorTypeStepDecision    FlowErrorType = "step_decision"
+	FlowErrorTypeClientAPI       FlowErrorType = "client_api"
+	FlowErrorTypeWorkerMethod    FlowErrorType = "worker_method"
+	FlowErrorTypeInvalidUserCode FlowErrorType = "invalid_user_code"
+	FlowErrorTypeInternal        FlowErrorType = "internal"
+	FlowErrorTypeTimeout         FlowErrorType = "timeout"
+)
+
+// AllValues returns all FlowErrorType values.
+func (FlowErrorType) AllValues() []FlowErrorType {
+	return []FlowErrorType{
+		FlowErrorTypeStepDecision,
+		FlowErrorTypeClientAPI,
+		FlowErrorTypeWorkerMethod,
+		FlowErrorTypeInvalidUserCode,
+		FlowErrorTypeInternal,
+		FlowErrorTypeTimeout,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s FlowErrorType) MarshalText() ([]byte, error) {
+	switch s {
+	case FlowErrorTypeStepDecision:
+		return []byte(s), nil
+	case FlowErrorTypeClientAPI:
+		return []byte(s), nil
+	case FlowErrorTypeWorkerMethod:
+		return []byte(s), nil
+	case FlowErrorTypeInvalidUserCode:
+		return []byte(s), nil
+	case FlowErrorTypeInternal:
+		return []byte(s), nil
+	case FlowErrorTypeTimeout:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *FlowErrorType) UnmarshalText(data []byte) error {
+	switch FlowErrorType(data) {
+	case FlowErrorTypeStepDecision:
+		*s = FlowErrorTypeStepDecision
+		return nil
+	case FlowErrorTypeClientAPI:
+		*s = FlowErrorTypeClientAPI
+		return nil
+	case FlowErrorTypeWorkerMethod:
+		*s = FlowErrorTypeWorkerMethod
+		return nil
+	case FlowErrorTypeInvalidUserCode:
+		*s = FlowErrorTypeInvalidUserCode
+		return nil
+	case FlowErrorTypeInternal:
+		*s = FlowErrorTypeInternal
+		return nil
+	case FlowErrorTypeTimeout:
+		*s = FlowErrorTypeTimeout
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 type FlowID string
+
+// Ref: #/components/schemas/FlowStatus
+type FlowStatus string
+
+const (
+	FlowStatusRunning        FlowStatus = "running"
+	FlowStatusCompleted      FlowStatus = "completed"
+	FlowStatusFailed         FlowStatus = "failed"
+	FlowStatusTerminated     FlowStatus = "terminated"
+	FlowStatusCanceled       FlowStatus = "canceled"
+	FlowStatusContinuedAsNew FlowStatus = "continued_as_new"
+)
+
+// AllValues returns all FlowStatus values.
+func (FlowStatus) AllValues() []FlowStatus {
+	return []FlowStatus{
+		FlowStatusRunning,
+		FlowStatusCompleted,
+		FlowStatusFailed,
+		FlowStatusTerminated,
+		FlowStatusCanceled,
+		FlowStatusContinuedAsNew,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s FlowStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case FlowStatusRunning:
+		return []byte(s), nil
+	case FlowStatusCompleted:
+		return []byte(s), nil
+	case FlowStatusFailed:
+		return []byte(s), nil
+	case FlowStatusTerminated:
+		return []byte(s), nil
+	case FlowStatusCanceled:
+		return []byte(s), nil
+	case FlowStatusContinuedAsNew:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *FlowStatus) UnmarshalText(data []byte) error {
+	switch FlowStatus(data) {
+	case FlowStatusRunning:
+		*s = FlowStatusRunning
+		return nil
+	case FlowStatusCompleted:
+		*s = FlowStatusCompleted
+		return nil
+	case FlowStatusFailed:
+		*s = FlowStatusFailed
+		return nil
+	case FlowStatusTerminated:
+		*s = FlowStatusTerminated
+		return nil
+	case FlowStatusCanceled:
+		*s = FlowStatusCanceled
+		return nil
+	case FlowStatusContinuedAsNew:
+		*s = FlowStatusContinuedAsNew
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
 
 type GetAgentSnapshotBadRequest Problem
 
 func (*GetAgentSnapshotBadRequest) getAgentSnapshotRes() {}
-
-type GetAgentSnapshotConflict Problem
-
-func (*GetAgentSnapshotConflict) getAgentSnapshotRes() {}
 
 type GetAgentSnapshotNotFound Problem
 
@@ -1162,6 +1331,51 @@ func (s *MessageRole) UnmarshalText(data []byte) error {
 	}
 }
 
+// NewNilAgentDescription returns new NilAgentDescription with value set to v.
+func NewNilAgentDescription(v AgentDescription) NilAgentDescription {
+	return NilAgentDescription{
+		Value: v,
+	}
+}
+
+// NilAgentDescription is nullable AgentDescription.
+type NilAgentDescription struct {
+	Value AgentDescription
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilAgentDescription) SetTo(v AgentDescription) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilAgentDescription) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilAgentDescription) SetToNull() {
+	o.Null = true
+	var v AgentDescription
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilAgentDescription) Get() (v AgentDescription, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilAgentDescription) Or(d AgentDescription) AgentDescription {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilAgentPlan returns new NilAgentPlan with value set to v.
 func NewNilAgentPlan(v AgentPlan) NilAgentPlan {
 	return NilAgentPlan{
@@ -1246,6 +1460,51 @@ func (o NilCallID) Get() (v CallID, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o NilCallID) Or(d CallID) CallID {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilFlowErrorType returns new NilFlowErrorType with value set to v.
+func NewNilFlowErrorType(v FlowErrorType) NilFlowErrorType {
+	return NilFlowErrorType{
+		Value: v,
+	}
+}
+
+// NilFlowErrorType is nullable FlowErrorType.
+type NilFlowErrorType struct {
+	Value FlowErrorType
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilFlowErrorType) SetTo(v FlowErrorType) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilFlowErrorType) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilFlowErrorType) SetToNull() {
+	o.Null = true
+	var v FlowErrorType
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilFlowErrorType) Get() (v FlowErrorType, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilFlowErrorType) Or(d FlowErrorType) FlowErrorType {
 	if v, ok := o.Get(); ok {
 		return v
 	}

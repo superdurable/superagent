@@ -4,19 +4,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  AgentEvent,
-  AgentSnapshot,
-  MessageId,
-  PendingUserMessage,
+import {
+  EventKind,
+  type AgentDescription,
+  type AgentEvent,
+  type AgentSnapshot,
+  type MessageId,
+  type PendingUserMessage,
+  type ResumeToken,
+  type Sequence,
+  type UserMessage,
 } from "./api/generated";
 
-export type ConnectionState = "live" | "reconnecting" | "stale" | "terminal";
-
+export type ActiveConnectionState = "live" | "reconnecting" | "stale";
+export type ConnectionState = ActiveConnectionState | "terminal";
 export type QueueCommandAction = "delete" | "steer" | "edit";
 
+export interface SendCommand {
+  kind: "send";
+  value: UserMessage;
+  submittedAfterSequence: Sequence;
+  knownMessageIDs: readonly MessageId[];
+}
+
 export type Command =
-  | { kind: "send" }
+  | SendCommand
   | { kind: "approve" }
   | { kind: "execute-plan" }
   | {
@@ -25,31 +37,72 @@ export type Command =
       message: PendingUserMessage;
     };
 
+interface LiveText {
+  source: string;
+  createdAt: string;
+  value: string;
+}
+
+export interface ReasoningEntry extends LiveText {
+  isComplete: boolean;
+}
+
+export interface ActivityEntry {
+  resumeToken: ResumeToken;
+  source: string;
+  createdAt: string;
+  value: AgentEvent;
+}
+
 export type LiveUpdate =
-  | { kind: "assistant"; value: string }
-  | { kind: "reasoning"; value: string }
-  | { kind: "activity"; value: AgentEvent };
+  | ({ kind: "assistant" } & LiveText)
+  | ({ kind: "reasoning" } & LiveText)
+  | ({ kind: "activity" } & ActivityEntry);
 
 interface HistoryRequest {
   id: number;
-  beforeSequence: number;
+  beforeSequence: Sequence;
 }
 
-export interface ReadyConversationState {
+interface OptimisticSubmission {
+  localID: string;
+  value: UserMessage;
+  submittedAfterSequence: Sequence;
+  knownMessageIDs: readonly MessageId[];
+}
+
+type ActiveSnapshot = AgentSnapshot & { description: AgentDescription };
+type TerminalSnapshot = AgentSnapshot & { description: null };
+
+interface ReadyConversationBase {
   kind: "ready";
-  snapshot: AgentSnapshot;
-  connection: ConnectionState;
   snapshotRequest: number;
   subscriptionGeneration: number;
   historyRequest: HistoryRequest | null;
   pendingCommand: { id: number; command: Command } | null;
+  optimisticSubmission: OptimisticSubmission | null;
   composer: string;
   isPlanMode: boolean;
-  assistantText: string;
-  reasoningText: string;
-  activities: AgentEvent[];
+  assistant: LiveText | null;
+  reasoning: ReasoningEntry[];
+  activities: ActivityEntry[];
   error: string | null;
 }
+
+export interface ActiveConversationState extends ReadyConversationBase {
+  lifecycle: "active";
+  snapshot: ActiveSnapshot;
+  connection: ActiveConnectionState;
+}
+
+export interface TerminalConversationState extends ReadyConversationBase {
+  lifecycle: "terminal";
+  snapshot: TerminalSnapshot;
+  connection: "terminal";
+}
+
+export type ReadyConversationState =
+  ActiveConversationState | TerminalConversationState;
 
 export type ConversationState =
   | { kind: "loading"; snapshotRequest: number }
@@ -58,20 +111,13 @@ export type ConversationState =
 
 export type ConversationAction =
   | { type: "snapshot-loaded"; snapshot: AgentSnapshot }
-  | { type: "snapshot-failed"; message: string; isTerminal: boolean }
-  | {
-      type: "request-snapshot";
-      connection: "live" | "reconnecting" | "stale";
-    }
-  | { type: "older-requested"; id: number; beforeSequence: number }
-  | {
-      type: "older-loaded";
-      id: number;
-      snapshot: AgentSnapshot;
-    }
+  | { type: "snapshot-failed"; message: string }
+  | { type: "request-snapshot"; connection: ActiveConnectionState }
+  | { type: "older-requested"; id: number; beforeSequence: Sequence }
+  | { type: "older-loaded"; id: number; snapshot: AgentSnapshot }
   | { type: "older-failed"; id: number; message: string }
   | { type: "stream-update"; update: LiveUpdate }
-  | { type: "stream-failed"; message: string; isTerminal: boolean }
+  | { type: "stream-failed"; message: string }
   | { type: "composer-changed"; value: string }
   | { type: "plan-mode-changed"; value: boolean }
   | { type: "command-started"; id: number; command: Command }
@@ -88,19 +134,7 @@ export function conversationReducer(
 ): ConversationState {
   switch (action.type) {
     case "snapshot-loaded":
-      if (state.kind !== "ready") return readyState(action.snapshot);
-      return {
-        ...state,
-        snapshot: action.snapshot,
-        connection: "live",
-        subscriptionGeneration:
-          state.connection === "reconnecting"
-            ? state.subscriptionGeneration + 1
-            : state.subscriptionGeneration,
-        assistantText: "",
-        reasoningText: "",
-        error: null,
-      };
+      return reconcileSnapshot(state, action.snapshot);
     case "snapshot-failed":
       if (state.kind !== "ready") {
         return {
@@ -109,13 +143,11 @@ export function conversationReducer(
           message: action.message,
         };
       }
-      return {
-        ...state,
-        connection: action.isTerminal ? "terminal" : "stale",
-        error: action.message,
-      };
+      if (state.lifecycle === "terminal") return state;
+      return { ...state, connection: "stale", error: action.message };
     case "request-snapshot":
       if (state.kind === "ready") {
+        if (state.lifecycle === "terminal") return state;
         return {
           ...state,
           connection: action.connection,
@@ -124,7 +156,7 @@ export function conversationReducer(
       }
       return { kind: "loading", snapshotRequest: state.snapshotRequest + 1 };
     case "older-requested":
-      return state.kind === "ready"
+      return state.kind === "ready" && state.lifecycle === "active"
         ? {
             ...state,
             historyRequest: {
@@ -134,105 +166,182 @@ export function conversationReducer(
           }
         : state;
     case "older-loaded":
-      if (state.kind !== "ready" || state.historyRequest?.id !== action.id) {
-        return state;
-      }
-      return {
-        ...state,
-        snapshot: {
-          ...action.snapshot,
-          history: {
-            messages: [
-              ...action.snapshot.history.messages,
-              ...state.snapshot.history.messages,
-            ],
-            nextBeforeSequence: action.snapshot.history.nextBeforeSequence,
-          },
-        },
-        historyRequest: null,
-        error: null,
-      };
+      return mergeOlderHistory(state, action.id, action.snapshot);
     case "older-failed":
-      if (state.kind !== "ready" || state.historyRequest?.id !== action.id) {
+      if (
+        state.kind !== "ready" ||
+        state.lifecycle === "terminal" ||
+        state.historyRequest?.id !== action.id
+      ) {
         return state;
       }
       return { ...state, historyRequest: null, error: action.message };
     case "stream-update":
-      if (state.kind !== "ready") return state;
-      return applyLiveUpdate(state, action.update);
+      return state.kind === "ready" && state.lifecycle === "active"
+        ? applyLiveUpdate(state, action.update)
+        : state;
     case "stream-failed":
-      if (state.kind !== "ready") return state;
-      return {
-        ...state,
-        connection: action.isTerminal ? "terminal" : "reconnecting",
-        snapshotRequest: action.isTerminal
-          ? state.snapshotRequest
-          : state.snapshotRequest + 1,
-        error: action.message,
-      };
-    case "composer-changed":
-      return state.kind === "ready"
-        ? { ...state, composer: action.value }
-        : state;
-    case "plan-mode-changed":
-      return state.kind === "ready"
-        ? { ...state, isPlanMode: action.value }
-        : state;
-    case "command-started":
-      if (state.kind !== "ready" || state.pendingCommand !== null) return state;
-      return beginCommand(state, action.id, action.command);
-    case "command-succeeded":
-      if (state.kind !== "ready" || state.pendingCommand?.id !== action.id) {
+      if (state.kind !== "ready" || state.lifecycle === "terminal") {
         return state;
       }
       return {
         ...state,
-        composer:
-          state.pendingCommand.command.kind === "send" ? "" : state.composer,
-        isPlanMode:
-          state.pendingCommand.command.kind === "send"
-            ? false
-            : state.isPlanMode,
+        connection: "reconnecting",
+        snapshotRequest: state.snapshotRequest + 1,
+        error: action.message,
+      };
+    case "composer-changed":
+      return state.kind === "ready" && state.lifecycle === "active"
+        ? { ...state, composer: action.value }
+        : state;
+    case "plan-mode-changed":
+      return state.kind === "ready" && state.lifecycle === "active"
+        ? { ...state, isPlanMode: action.value }
+        : state;
+    case "command-started":
+      if (
+        state.kind !== "ready" ||
+        state.lifecycle === "terminal" ||
+        state.pendingCommand !== null
+      ) {
+        return state;
+      }
+      return beginCommand(state, action.id, action.command);
+    case "command-succeeded":
+      if (
+        state.kind !== "ready" ||
+        state.lifecycle === "terminal" ||
+        state.pendingCommand?.id !== action.id
+      ) {
+        return state;
+      }
+      return {
+        ...state,
         pendingCommand: null,
         snapshotRequest: state.snapshotRequest + 1,
         error: null,
       };
     case "command-failed":
-      if (state.kind !== "ready" || state.pendingCommand?.id !== action.id) {
-        return state;
-      }
-      return {
-        ...state,
-        pendingCommand: null,
-        snapshotRequest: state.snapshotRequest + 1,
-        error: action.message,
-      };
+      return failCommand(state, action.id, action.message);
   }
 }
 
-function readyState(snapshot: AgentSnapshot): ReadyConversationState {
+function reconcileSnapshot(
+  state: ConversationState,
+  snapshot: AgentSnapshot,
+): ReadyConversationState {
+  if (snapshot.description === null) {
+    return terminalState({ ...snapshot, description: null }, state);
+  }
+  const activeSnapshot = { ...snapshot, description: snapshot.description };
+  const previous =
+    state.kind === "ready" && state.lifecycle === "active" ? state : null;
+  const hasDurableProgress =
+    previous !== null &&
+    snapshot.description.lastSequence >
+      previous.snapshot.description.lastSequence;
   return {
     kind: "ready",
-    snapshot,
+    lifecycle: "active",
+    snapshot: activeSnapshot,
     connection: "live",
-    snapshotRequest: 0,
-    subscriptionGeneration: 0,
+    snapshotRequest: state.snapshotRequest,
+    subscriptionGeneration:
+      previous?.connection === "reconnecting"
+        ? previous.subscriptionGeneration + 1
+        : (previous?.subscriptionGeneration ?? 0),
+    historyRequest: null,
+    pendingCommand: previous?.pendingCommand ?? null,
+    optimisticSubmission: reconcileOptimisticSubmission(
+      previous?.optimisticSubmission ?? null,
+      activeSnapshot,
+    ),
+    composer: previous?.composer ?? "",
+    isPlanMode: previous?.isPlanMode ?? false,
+    assistant: hasDurableProgress ? null : (previous?.assistant ?? null),
+    reasoning: hasDurableProgress
+      ? completeReasoning(previous.reasoning)
+      : (previous?.reasoning ?? []),
+    activities: previous?.activities ?? [],
+    error: null,
+  };
+}
+
+function terminalState(
+  snapshot: AgentSnapshot & { description: null },
+  previous: ConversationState,
+): TerminalConversationState {
+  const priorReady = previous.kind === "ready" ? previous : null;
+  return {
+    kind: "ready",
+    lifecycle: "terminal",
+    snapshot,
+    connection: "terminal",
+    snapshotRequest: previous.snapshotRequest,
+    subscriptionGeneration: priorReady?.subscriptionGeneration ?? 0,
     historyRequest: null,
     pendingCommand: null,
-    composer: "",
-    isPlanMode: false,
-    assistantText: "",
-    reasoningText: "",
-    activities: [],
+    optimisticSubmission: null,
+    composer: priorReady?.composer ?? "",
+    isPlanMode: priorReady?.isPlanMode ?? false,
+    assistant: null,
+    reasoning: completeReasoning(priorReady?.reasoning ?? []),
+    activities: priorReady?.activities ?? [],
+    error: snapshot.errorMessage,
+  };
+}
+
+function mergeOlderHistory(
+  state: ConversationState,
+  requestID: number,
+  snapshot: AgentSnapshot,
+): ConversationState {
+  if (
+    state.kind !== "ready" ||
+    state.lifecycle === "terminal" ||
+    state.historyRequest?.id !== requestID ||
+    snapshot.description === null
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    snapshot: {
+      ...snapshot,
+      description: snapshot.description,
+      history: {
+        messages: [
+          ...snapshot.history.messages,
+          ...state.snapshot.history.messages,
+        ],
+        nextBeforeSequence: snapshot.history.nextBeforeSequence,
+      },
+    },
+    historyRequest: null,
     error: null,
   };
 }
 
 function beginCommand(
-  state: ReadyConversationState,
+  state: ActiveConversationState,
   id: number,
   command: Command,
-): ReadyConversationState {
+): ActiveConversationState {
+  if (command.kind === "send") {
+    return {
+      ...state,
+      composer: "",
+      isPlanMode: false,
+      optimisticSubmission: {
+        localID: `submitting-${String(id)}`,
+        value: command.value,
+        submittedAfterSequence: command.submittedAfterSequence,
+        knownMessageIDs: command.knownMessageIDs,
+      },
+      pendingCommand: { id, command },
+      error: null,
+    };
+  }
   if (command.kind !== "queue") {
     return { ...state, pendingCommand: { id, command }, error: null };
   }
@@ -262,27 +371,122 @@ function beginCommand(
   };
 }
 
+function failCommand(
+  state: ConversationState,
+  id: number,
+  message: string,
+): ConversationState {
+  if (
+    state.kind !== "ready" ||
+    state.lifecycle === "terminal" ||
+    state.pendingCommand?.id !== id
+  ) {
+    return state;
+  }
+  const command = state.pendingCommand.command;
+  return {
+    ...state,
+    composer: command.kind === "send" ? command.value.content : state.composer,
+    isPlanMode:
+      command.kind === "send" ? command.value.planMode : state.isPlanMode,
+    optimisticSubmission:
+      command.kind === "send" ? null : state.optimisticSubmission,
+    pendingCommand: null,
+    snapshotRequest: state.snapshotRequest + 1,
+    error: message,
+  };
+}
+
+function reconcileOptimisticSubmission(
+  submission: OptimisticSubmission | null,
+  snapshot: AgentSnapshot & { description: AgentDescription },
+): OptimisticSubmission | null {
+  if (submission === null) return null;
+  const knownIDs = new Set(submission.knownMessageIDs);
+  const isNowQueued = [...snapshot.queued, ...snapshot.steered].some(
+    (message) =>
+      !knownIDs.has(message.messageId) &&
+      sameUserMessage(message.value, submission.value),
+  );
+  const isNowDurable = snapshot.history.messages.some(
+    ({ sequence, message }) =>
+      sequence > submission.submittedAfterSequence &&
+      message.role === "user" &&
+      message.content === submission.value.content,
+  );
+  return isNowQueued || isNowDurable ? null : submission;
+}
+
+function sameUserMessage(left: UserMessage, right: UserMessage): boolean {
+  return left.content === right.content && left.planMode === right.planMode;
+}
+
 function applyLiveUpdate(
-  state: ReadyConversationState,
+  state: ActiveConversationState,
   update: LiveUpdate,
-): ReadyConversationState {
+): ActiveConversationState {
   switch (update.kind) {
     case "assistant":
       return {
         ...state,
-        assistantText: state.assistantText + update.value,
+        assistant: appendLiveText(state.assistant, update),
       };
     case "reasoning":
       return {
         ...state,
-        reasoningText: state.reasoningText + update.value,
+        reasoning: appendReasoning(state.reasoning, update),
       };
     case "activity":
       return {
         ...state,
-        activities: [update.value, ...state.activities].slice(0, 100),
+        assistant:
+          isModelFinished(update.value.kind) &&
+          state.assistant?.source === update.source
+            ? null
+            : state.assistant,
+        reasoning: isModelFinished(update.value.kind)
+          ? completeReasoningSource(state.reasoning, update.source)
+          : state.reasoning,
+        activities: [update, ...state.activities].slice(0, 100),
       };
   }
+}
+
+function appendLiveText(current: LiveText | null, update: LiveText): LiveText {
+  if (current?.source !== update.source) return update;
+  return { ...current, value: current.value + update.value };
+}
+
+function appendReasoning(
+  entries: ReasoningEntry[],
+  update: LiveText,
+): ReasoningEntry[] {
+  const index = entries.findIndex((entry) => entry.source === update.source);
+  if (index < 0) {
+    return [...entries, { ...update, isComplete: false }].slice(-20);
+  }
+  return entries.map((entry, entryIndex) =>
+    entryIndex === index
+      ? { ...entry, value: entry.value + update.value, isComplete: false }
+      : entry,
+  );
+}
+
+function completeReasoning(entries: ReasoningEntry[]): ReasoningEntry[] {
+  return entries.map((entry) => ({ ...entry, isComplete: true }));
+}
+
+function completeReasoningSource(
+  entries: ReasoningEntry[],
+  source: string,
+): ReasoningEntry[] {
+  return entries.map((entry) =>
+    entry.source === source ? { ...entry, isComplete: true } : entry,
+  );
+}
+
+function isModelFinished(kind: AgentEvent["kind"]): boolean {
+  return kind === EventKind.MODEL_COMPLETED || kind === EventKind.MODEL_FAILED;
 }
 
 export function pendingQueueMessageID(

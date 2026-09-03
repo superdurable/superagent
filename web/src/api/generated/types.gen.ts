@@ -180,8 +180,11 @@ export type QueueMutationResponse = {
 
 export type AgentSnapshot = {
     runId: RunId;
+    flowStatus: FlowStatus;
+    errorType: FlowErrorType | null;
+    errorMessage: string | null;
     history: HistoryPage;
-    description: AgentDescription;
+    description: AgentDescription | null;
     queued: Array<PendingUserMessage>;
     steered: Array<PendingUserMessage>;
 };
@@ -190,6 +193,28 @@ export type HistoryPage = {
     messages: Array<SequencedMessage>;
     nextBeforeSequence: Sequence | null;
 };
+
+export const FlowStatus = {
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    TERMINATED: 'terminated',
+    CANCELED: 'canceled',
+    CONTINUED_AS_NEW: 'continued_as_new'
+} as const;
+
+export type FlowStatus = typeof FlowStatus[keyof typeof FlowStatus];
+
+export const FlowErrorType = {
+    STEP_DECISION: 'step_decision',
+    CLIENT_API: 'client_api',
+    WORKER_METHOD: 'worker_method',
+    INVALID_USER_CODE: 'invalid_user_code',
+    INTERNAL: 'internal',
+    TIMEOUT: 'timeout'
+} as const;
+
+export type FlowErrorType = typeof FlowErrorType[keyof typeof FlowErrorType];
 
 export type SequencedMessage = {
     sequence: Sequence;
@@ -478,10 +503,6 @@ export type GetAgentSnapshotErrors = {
      * The request could not be completed.
      */
     404: Problem;
-    /**
-     * The request could not be completed.
-     */
-    409: Problem;
     /**
      * The request could not be completed.
      */

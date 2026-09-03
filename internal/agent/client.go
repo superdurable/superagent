@@ -132,17 +132,154 @@ func (client *Client) Snapshot(
 		return AgentSnapshot{}, errors.New("before sequence must be positive")
 	}
 	var snapshot AgentSnapshot
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, request, &snapshot, dex.InvokeOptions{
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, request, &snapshot, dex.InvokeOptions{
 		Timeout:           client.commandTimeout,
 		LoadAttributeMaps: []dex.AttributeDef{agentMessagesAttribute},
 		LoadChannels: []dex.ChannelDef{
 			queuedUserMessagesChannel,
 			steeredUserMessagesChannel,
 		},
-	}); err != nil {
+	})
+	if err == nil {
+		// Keep active Snapshots available during visibility projection outages.
+		latest, lookupErr := client.latestAgentRun(ctx, flowID)
+		if lookupErr == nil && latest != nil {
+			status, statusErr := flowStatusFromDex(latest.Status)
+			if statusErr != nil {
+				return AgentSnapshot{}, statusErr
+			}
+			if status != FlowStatusRunning {
+				return client.terminalSnapshot(ctx, flowID)
+			}
+		}
+		return snapshot, nil
+	}
+	var inactive *dex.FlowNotActiveError
+	if !errors.As(err, &inactive) {
 		return AgentSnapshot{}, err
 	}
-	return snapshot, nil
+	terminal, terminalErr := client.terminalSnapshot(ctx, flowID)
+	if terminalErr != nil {
+		return AgentSnapshot{}, errors.Join(err, terminalErr)
+	}
+	return terminal, nil
+}
+
+func (client *Client) terminalSnapshot(ctx context.Context, flowID FlowID) (AgentSnapshot, error) {
+	result, err := client.sdk.WaitForFlow(ctx, string(flowID), dex.WaitForFlowOptions{})
+	if err != nil {
+		return AgentSnapshot{}, fmt.Errorf("read terminal Flow result: %w", err)
+	}
+	status, err := flowStatusFromDex(result.Status)
+	if err != nil {
+		return AgentSnapshot{}, err
+	}
+	if status == FlowStatusRunning {
+		return AgentSnapshot{}, errors.New("inactive Agent resolved to a non-terminal Flow")
+	}
+	runID, err := client.currentRunID(ctx, flowID)
+	if err != nil {
+		return AgentSnapshot{}, err
+	}
+	errorType, err := flowErrorTypeFromDex(result.ErrorType)
+	if err != nil {
+		return AgentSnapshot{}, err
+	}
+	var errorMessage *string
+	if result.ErrorMessage != "" {
+		message := result.ErrorMessage
+		errorMessage = &message
+	}
+	return AgentSnapshot{
+		RunID:        runID,
+		FlowStatus:   status,
+		ErrorType:    errorType,
+		ErrorMessage: errorMessage,
+		History:      HistoryPage{Messages: []SequencedMessage{}},
+		Queued:       []PendingUserMessage{},
+		Steered:      []PendingUserMessage{},
+	}, nil
+}
+
+func (client *Client) currentRunID(ctx context.Context, flowID FlowID) (RunID, error) {
+	current, err := client.latestAgentRun(ctx, flowID)
+	if err != nil {
+		return "", err
+	}
+	if current == nil {
+		return "", fmt.Errorf("agent Flow %q has no searchable run", flowID)
+	}
+	return RunID(current.RunID), nil
+}
+
+func (client *Client) latestAgentRun(ctx context.Context, flowID FlowID) (*dex.SearchFlowEntry, error) {
+	query := "WorkflowId=" + visibilityString(string(flowID))
+	page, err := client.sdk.SearchFlows(ctx, query, 100, "")
+	if err != nil {
+		return nil, fmt.Errorf("find Agent Flow run: %w", err)
+	}
+	var current *dex.SearchFlowEntry
+	for index := range page.Flows {
+		candidate := &page.Flows[index]
+		if candidate.FlowID != string(flowID) || candidate.FlowType != flowTypeAIAgent {
+			continue
+		}
+		if current == nil || candidate.StartedAt.After(current.StartedAt) {
+			current = candidate
+		}
+	}
+	if current == nil {
+		return nil, nil
+	}
+	return current, nil
+}
+
+func visibilityString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func flowStatusFromDex(status dex.FlowStatus) (FlowStatus, error) {
+	switch status {
+	case dex.FlowRunning:
+		return FlowStatusRunning, nil
+	case dex.FlowCompleted:
+		return FlowStatusCompleted, nil
+	case dex.FlowFailed:
+		return FlowStatusFailed, nil
+	case dex.FlowTerminated:
+		return FlowStatusTerminated, nil
+	case dex.FlowCanceled:
+		return FlowStatusCanceled, nil
+	case dex.FlowContinuedAsNew:
+		return FlowStatusContinuedAsNew, nil
+	case dex.FlowServerSideTimeoutInternalOnly:
+		return "", errors.New("dex returned its internal-only Flow timeout status")
+	default:
+		return "", fmt.Errorf("unknown Dex Flow status %d", status)
+	}
+}
+
+func flowErrorTypeFromDex(errorType dex.FlowErrorType) (*FlowErrorType, error) {
+	var mapped FlowErrorType
+	switch errorType {
+	case 0:
+		return nil, nil
+	case dex.FlowErrorStepDecision:
+		mapped = FlowErrorTypeStepDecision
+	case dex.FlowErrorClientAPI:
+		mapped = FlowErrorTypeClientAPI
+	case dex.FlowErrorWorkerMethod:
+		mapped = FlowErrorTypeWorkerMethod
+	case dex.FlowErrorInvalidUserCode:
+		mapped = FlowErrorTypeInvalidUserCode
+	case dex.FlowErrorInternal:
+		mapped = FlowErrorTypeInternal
+	case dex.FlowErrorTimeout:
+		mapped = FlowErrorTypeTimeout
+	default:
+		return nil, fmt.Errorf("unknown Dex Flow error type %d", errorType)
+	}
+	return &mapped, nil
 }
 
 // DeleteQueuedMessage removes one exact pending user message.
