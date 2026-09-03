@@ -177,6 +177,8 @@ history means the `AgentMessages` AttributeMap, never Dex execution history.
   constraints. Prefer clearer code over narration.
 - Keep a new contiguous comment under 20 words unless the user requests detailed
   prose. Configuration and return-value documentation are exempt.
+- Keep documentation direct. Put one idea in each sentence. Split behavior,
+  constraints, and rationale into separate sentences.
 - Preserve existing comments verbatim during refactors. Update only stale facts
   while retaining their meaning.
 - Before creating a binary, add its exact path to `.gitignore` and

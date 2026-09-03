@@ -14,6 +14,8 @@ semantically synchronized.
 - Do not add compatibility shims before launch.
 - Use constructor injection, typed domain values, explicit boundary mappers,
   owned goroutines, and handled errors.
+- Keep documentation direct. Put one idea in each sentence. Split behavior,
+  constraints, and rationale into separate sentences.
 - Domain packages prohibit `any`, dynamic maps, and raw string states.
 - Never export Dex resource getters solely to expose descriptors.
 - Keep provider, MCP, Dex, application, transport, and UI boundaries separate.
