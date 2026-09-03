@@ -29,6 +29,7 @@ import (
 const (
 	defaultCommandTimeout = 20 * time.Second
 	defaultEventPoll      = 20 * time.Second
+	defaultSnapshotLimit  = 50
 )
 
 // Client is the typed application boundary around Dex Agent operations.
@@ -95,14 +96,69 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
+	if strings.TrimSpace(string(request.MessageID)) == "" {
+		return errors.New("message ID must not be empty")
+	}
 	var accepted bool
 	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, &accepted, dex.InvokeOptions{
 		Timeout:         client.commandTimeout,
 		IsTransactional: true,
+		LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
 	}); err != nil {
 		return err
 	}
-	return ensureAccepted(accepted, CommandSteer)
+	if !accepted {
+		return &PendingMessageNotFoundError{MessageID: request.MessageID}
+	}
+	return nil
+}
+
+// Snapshot reads one atomic durable application view.
+func (client *Client) Snapshot(
+	ctx context.Context,
+	flowID FlowID,
+	request SnapshotRequest,
+) (AgentSnapshot, error) {
+	if err := validateFlowID(flowID); err != nil {
+		return AgentSnapshot{}, err
+	}
+	if request.Limit == 0 {
+		request.Limit = defaultSnapshotLimit
+	}
+	if request.Limit < minimumSnapshotPageSize || request.Limit > maximumSnapshotPageSize {
+		return AgentSnapshot{}, fmt.Errorf("snapshot limit must be between %d and %d", minimumSnapshotPageSize, maximumSnapshotPageSize)
+	}
+	if request.BeforeSequence != nil && *request.BeforeSequence < 1 {
+		return AgentSnapshot{}, errors.New("before sequence must be positive")
+	}
+	var snapshot AgentSnapshot
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, request, &snapshot, dex.InvokeOptions{
+		Timeout:           client.commandTimeout,
+		LoadAttributeMaps: []dex.AttributeDef{agentMessagesAttribute},
+		LoadChannels: []dex.ChannelDef{
+			queuedUserMessagesChannel,
+			steeredUserMessagesChannel,
+		},
+	}); err != nil {
+		return AgentSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// DeleteQueuedMessage removes one exact pending user message.
+func (client *Client) DeleteQueuedMessage(ctx context.Context, flowID FlowID, messageID MessageID) error {
+	if err := validateFlowID(flowID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(messageID)) == "" {
+		return errors.New("message ID must not be empty")
+	}
+	return client.sdk.DeleteChannelMessage(
+		ctx,
+		string(flowID),
+		queuedUserMessagesChannel,
+		string(messageID),
+	)
 }
 
 // ApproveTool invokes the durable ApproveTool command.

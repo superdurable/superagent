@@ -117,6 +117,7 @@ type ToolName string
 type AgentStatus string
 
 const (
+	AgentStatusInitializing           AgentStatus = "initializing"
 	AgentStatusWaitingForMessage      AgentStatus = "waiting_for_message"
 	AgentStatusCompactingContext      AgentStatus = "compacting_context"
 	AgentStatusCallingModel           AgentStatus = "calling_model"
@@ -130,7 +131,8 @@ const (
 // Validate rejects unknown Agent statuses.
 func (status AgentStatus) Validate() error {
 	switch status {
-	case AgentStatusWaitingForMessage,
+	case AgentStatusInitializing,
+		AgentStatusWaitingForMessage,
 		AgentStatusCompactingContext,
 		AgentStatusCallingModel,
 		AgentStatusRoutingTool,
@@ -567,6 +569,58 @@ type AgentState struct {
 	PendingPlanExecutionRevision *PlanRevision   `json:"pending_plan_execution_revision,omitempty"`
 }
 
+// SnapshotRequest selects one bounded application-history page.
+type SnapshotRequest struct {
+	BeforeSequence *Sequence `json:"before_sequence,omitempty"`
+	Limit          int       `json:"limit"`
+}
+
+// SequencedMessage pairs one application message with its durable ordering key.
+type SequencedMessage struct {
+	Sequence Sequence     `json:"sequence"`
+	Message  AgentMessage `json:"message"`
+}
+
+// HistoryPage is one ascending page of retained application history.
+type HistoryPage struct {
+	Messages           []SequencedMessage `json:"messages"`
+	NextBeforeSequence *Sequence          `json:"next_before_sequence,omitempty"`
+}
+
+// PendingUserMessage preserves one Dex Channel message ID and value.
+type PendingUserMessage struct {
+	MessageID MessageID   `json:"message_id"`
+	Value     UserMessage `json:"value"`
+}
+
+// AgentDescription is the durable application state needed to render a conversation.
+type AgentDescription struct {
+	Status                     AgentStatus       `json:"status"`
+	Model                      Model             `json:"model"`
+	SystemPrompt               string            `json:"system_prompt"`
+	FirstRetainedSequence      Sequence          `json:"first_retained_sequence"`
+	LastSequence               Sequence          `json:"last_sequence"`
+	SummarizedThroughSequence  Sequence          `json:"summarized_through_sequence"`
+	PendingApproval            *PendingApproval  `json:"pending_approval,omitempty"`
+	PendingTimer               *PendingTimer     `json:"pending_timer,omitempty"`
+	PendingUserInput           *PendingUserInput `json:"pending_user_input,omitempty"`
+	Plan                       *AgentPlan        `json:"plan,omitempty"`
+	IsPlanExecutionRequested   bool              `json:"is_plan_execution_requested"`
+	PendingQueuedMessageCount  int               `json:"pending_queued_message_count"`
+	PendingSteeredMessageCount int               `json:"pending_steered_message_count"`
+	AvailableMCPServers        []string          `json:"available_mcp_servers"`
+	AvailableTools             []ToolName        `json:"available_tools"`
+}
+
+// AgentSnapshot is one atomic durable application view.
+type AgentSnapshot struct {
+	RunID       RunID                `json:"run_id"`
+	History     HistoryPage          `json:"history"`
+	Description AgentDescription     `json:"description"`
+	Queued      []PendingUserMessage `json:"queued"`
+	Steered     []PendingUserMessage `json:"steered"`
+}
+
 // NewAgentState returns the initial durable state.
 func NewAgentState() AgentState {
 	return AgentState{
@@ -593,8 +647,7 @@ type UserMessage struct {
 
 // SteerMessageRequest atomically moves one queued message into steering.
 type SteerMessageRequest struct {
-	MessageID MessageID   `json:"message_id"`
-	Message   UserMessage `json:"message"`
+	MessageID MessageID `json:"message_id"`
 }
 
 // PlanTask is one ordered task in the durable plan.
@@ -679,6 +732,16 @@ const (
 // CommandRejectedError reports a valid command that does not match current durable state.
 type CommandRejectedError struct {
 	Command Command
+}
+
+// PendingMessageNotFoundError reports a queue ID that is no longer pending.
+type PendingMessageNotFoundError struct {
+	MessageID MessageID
+}
+
+// Error describes the stale queue identity.
+func (err *PendingMessageNotFoundError) Error() string {
+	return fmt.Sprintf("queued message %q is no longer pending", err.MessageID)
 }
 
 // Error describes the rejected command without exposing durable state internals.

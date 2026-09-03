@@ -16,11 +16,10 @@
 openapi: 3.0.3
 info:
   title: Superagent API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
-    Phase 1 command and live-event contract for the durable AI Agent. Durable
-    reads intentionally remain unavailable until the released Dex Snapshot API
-    is adopted in Phase 2.
+    Phase 2 command, atomic Snapshot, queue mutation, and live-event contract
+    for the durable AI Agent.
 servers:
   - url: /
 paths:
@@ -101,6 +100,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/snapshot:
+    get:
+      operationId: getAgentSnapshot
+      summary: Read one atomic durable Agent application view
+      parameters:
+        - name: flowId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FlowId"
+        - name: beforeSequence
+          in: query
+          required: false
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Sequence"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: One atomic durable application Snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSnapshot"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/message-queue/delete:
+    post:
+      operationId: deleteQueuedMessage
+      summary: Delete one exact pending queued user message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueMutationRequest"
+      responses:
+        "200":
+          description: The queued message was deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueMutationResponse"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/message-queue/steer:
+    post:
+      operationId: steerQueuedMessage
+      summary: Atomically move one queued user message into steering
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueMutationRequest"
+      responses:
+        "200":
+          description: The queued message was moved into steering.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueMutationResponse"
         "400":
           $ref: "#/components/responses/Problem"
         "404":
@@ -219,6 +307,20 @@ components:
       minLength: 1
       maxLength: 255
       x-ogen-name: CallID
+    RunId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      x-ogen-name: RunID
+    MessageId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      x-ogen-name: MessageID
+    Sequence:
+      type: integer
+      format: int64
+      minimum: 1
     ResumeToken:
       type: string
       maxLength: 4096
@@ -257,6 +359,42 @@ components:
         - tool_progress
         - tool_failed
         - tool_completed
+    AgentStatus:
+      type: string
+      enum:
+        - initializing
+        - waiting_for_message
+        - compacting_context
+        - calling_model
+        - routing_tool
+        - waiting_for_tool_approval
+        - executing_tool
+        - waiting_for_timer
+        - applying_steering
+    MessageRole:
+      type: string
+      enum:
+        - system
+        - user
+        - assistant
+        - tool
+    PlanStatus:
+      type: string
+      enum:
+        - draft
+        - active
+        - completed
+    TaskStatus:
+      type: string
+      enum:
+        - pending
+        - in_progress
+        - completed
+    QueueAction:
+      type: string
+      enum:
+        - deleted
+        - steered
     HealthStatus:
       type: string
       enum:
@@ -460,6 +598,298 @@ components:
           $ref: "#/components/schemas/CallId"
         approved:
           type: boolean
+    QueueMutationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+        - messageId
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+        messageId:
+          $ref: "#/components/schemas/MessageId"
+    QueueMutationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - messageId
+        - action
+      properties:
+        messageId:
+          $ref: "#/components/schemas/MessageId"
+        action:
+          $ref: "#/components/schemas/QueueAction"
+    AgentSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - runId
+        - history
+        - description
+        - queued
+        - steered
+      properties:
+        runId:
+          $ref: "#/components/schemas/RunId"
+        history:
+          $ref: "#/components/schemas/HistoryPage"
+        description:
+          $ref: "#/components/schemas/AgentDescription"
+        queued:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingUserMessage"
+        steered:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingUserMessage"
+    HistoryPage:
+      type: object
+      additionalProperties: false
+      required:
+        - messages
+        - nextBeforeSequence
+      properties:
+        messages:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/SequencedMessage"
+        nextBeforeSequence:
+          allOf:
+            - $ref: "#/components/schemas/Sequence"
+          nullable: true
+    SequencedMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - sequence
+        - message
+      properties:
+        sequence:
+          $ref: "#/components/schemas/Sequence"
+        message:
+          $ref: "#/components/schemas/AgentMessage"
+    AgentMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - content
+        - toolCalls
+        - toolCallId
+        - toolName
+        - createdAt
+      properties:
+        role:
+          $ref: "#/components/schemas/MessageRole"
+        content:
+          type: string
+        toolCalls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCall"
+        toolCallId:
+          allOf:
+            - $ref: "#/components/schemas/CallId"
+          nullable: true
+        toolName:
+          allOf:
+            - $ref: "#/components/schemas/ToolName"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    ToolCall:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - argumentsJson
+      properties:
+        id:
+          $ref: "#/components/schemas/CallId"
+        name:
+          $ref: "#/components/schemas/ToolName"
+        argumentsJson:
+          type: string
+          minLength: 2
+    PendingUserMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - messageId
+        - value
+      properties:
+        messageId:
+          $ref: "#/components/schemas/MessageId"
+        value:
+          $ref: "#/components/schemas/UserMessage"
+    UserMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - content
+        - planMode
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000000
+        planMode:
+          type: boolean
+    AgentDescription:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - model
+        - systemPrompt
+        - firstRetainedSequence
+        - lastSequence
+        - summarizedThroughSequence
+        - pendingApproval
+        - pendingTimer
+        - pendingUserInput
+        - plan
+        - isPlanExecutionRequested
+        - pendingQueuedMessageCount
+        - pendingSteeredMessageCount
+        - availableMcpServers
+        - availableTools
+      properties:
+        status:
+          $ref: "#/components/schemas/AgentStatus"
+        model:
+          type: string
+        systemPrompt:
+          type: string
+        firstRetainedSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        lastSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        summarizedThroughSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        pendingApproval:
+          allOf:
+            - $ref: "#/components/schemas/PendingApproval"
+          nullable: true
+        pendingTimer:
+          allOf:
+            - $ref: "#/components/schemas/PendingTimer"
+          nullable: true
+        pendingUserInput:
+          allOf:
+            - $ref: "#/components/schemas/PendingUserInput"
+          nullable: true
+        plan:
+          allOf:
+            - $ref: "#/components/schemas/AgentPlan"
+          nullable: true
+        isPlanExecutionRequested:
+          type: boolean
+        pendingQueuedMessageCount:
+          type: integer
+          minimum: 0
+        pendingSteeredMessageCount:
+          type: integer
+          minimum: 0
+        availableMcpServers:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        availableTools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolName"
+    PendingApproval:
+      type: object
+      additionalProperties: false
+      required:
+        - callId
+        - toolName
+        - argumentsJson
+      properties:
+        callId:
+          $ref: "#/components/schemas/CallId"
+        toolName:
+          $ref: "#/components/schemas/ToolName"
+        argumentsJson:
+          type: string
+          minLength: 2
+    PendingTimer:
+      type: object
+      additionalProperties: false
+      required:
+        - callId
+        - durationSeconds
+        - reason
+      properties:
+        callId:
+          $ref: "#/components/schemas/CallId"
+        durationSeconds:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    PendingUserInput:
+      type: object
+      additionalProperties: false
+      required:
+        - callId
+        - prompt
+        - choices
+      properties:
+        callId:
+          $ref: "#/components/schemas/CallId"
+        prompt:
+          type: string
+          minLength: 1
+        choices:
+          type: array
+          items:
+            type: string
+            minLength: 1
+    AgentPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - status
+        - tasks
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          $ref: "#/components/schemas/PlanStatus"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanTask"
+    PlanTask:
+      type: object
+      additionalProperties: false
+      required:
+        - content
+        - status
+      properties:
+        content:
+          type: string
+          minLength: 1
+        status:
+          $ref: "#/components/schemas/TaskStatus"
     Accepted:
       type: object
       additionalProperties: false

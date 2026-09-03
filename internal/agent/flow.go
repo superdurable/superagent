@@ -107,16 +107,64 @@ func (*Flow) SendMessage(ctx dex.Context, input UserMessage) (*dex.RPCResult[boo
 
 // SteerMessage atomically moves a queued message into the Steer queue.
 func (*Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCResult[bool], error) {
-	if strings.TrimSpace(string(input.MessageID)) == "" || strings.TrimSpace(input.Message.Content) == "" {
+	if strings.TrimSpace(string(input.MessageID)) == "" {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	message, found, err := queuedUserMessagesChannel.FindPendingMessage(ctx, string(input.MessageID))
+	if err != nil {
+		return nil, err
+	}
+	if !found {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := queuedUserMessagesChannel.Delete(ctx, string(input.MessageID)); err != nil {
 		return nil, err
 	}
-	if err := steeredUserMessagesChannel.Publish(ctx, input.Message); err != nil {
+	if err := steeredUserMessagesChannel.Publish(ctx, message.Value); err != nil {
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
+}
+
+// Snapshot returns one atomic durable application view without consuming Channels.
+func (flow *Flow) Snapshot(ctx dex.Context, input SnapshotRequest) (*dex.RPCResult[AgentSnapshot], error) {
+	if input.Limit < minimumSnapshotPageSize || input.Limit > maximumSnapshotPageSize {
+		return nil, fmt.Errorf("snapshot limit must be between %d and %d", minimumSnapshotPageSize, maximumSnapshotPageSize)
+	}
+	queued, err := queuedUserMessagesChannel.PendingMessages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	steered, err := steeredUserMessagesChannel.PendingMessages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if isAttributeNotFound(err) {
+		return &dex.RPCResult[AgentSnapshot]{Output: flow.initializingSnapshot(ctx, queued, steered)}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	history, err := flow.historyPage(ctx, state, input)
+	if err != nil {
+		return nil, err
+	}
+	description, err := flow.describe(ctx, config, state, len(queued), len(steered))
+	if err != nil {
+		return nil, err
+	}
+	return &dex.RPCResult[AgentSnapshot]{Output: AgentSnapshot{
+		RunID:       RunID(ctx.RunID()),
+		History:     history,
+		Description: description,
+		Queued:      pendingUserMessages(queued),
+		Steered:     pendingUserMessages(steered),
+	}}, nil
 }
 
 // ApproveTool publishes an approval only for the current exact call ID.
@@ -168,6 +216,113 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
+}
+
+func (flow *Flow) historyPage(ctx dex.Context, state AgentState, request SnapshotRequest) (HistoryPage, error) {
+	end := state.LastSequence + 1
+	if request.BeforeSequence != nil && *request.BeforeSequence < end {
+		end = *request.BeforeSequence
+	}
+	end = max(end, state.FirstRetainedSequence)
+	start := max(state.FirstRetainedSequence, end-Sequence(request.Limit))
+	messages := make([]SequencedMessage, 0, int(end-start))
+	for sequence := start; sequence < end; sequence++ {
+		message, err := agentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
+	}
+	var nextBeforeSequence *Sequence
+	if start > state.FirstRetainedSequence {
+		next := start
+		nextBeforeSequence = &next
+	}
+	return HistoryPage{Messages: messages, NextBeforeSequence: nextBeforeSequence}, nil
+}
+
+func (flow *Flow) describe(
+	ctx dex.Context,
+	config AgentConfig,
+	state AgentState,
+	queuedMessageCount int,
+	steeredMessageCount int,
+) (AgentDescription, error) {
+	pendingApproval, err := getPendingApproval(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
+	pendingTimer, err := getPendingTimer(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
+	pendingUserInput, err := getPendingUserInput(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
+	plan, err := getAgentPlan(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
+	definitions := flow.toolDefinitions(config)
+	availableTools := make([]ToolName, 0, len(definitions)+1)
+	availableTools = append(availableTools, ToolNameWriteTodos)
+	for _, definition := range definitions {
+		availableTools = append(availableTools, definition.Name)
+	}
+	return AgentDescription{
+		Status:                     state.Status,
+		Model:                      config.Model,
+		SystemPrompt:               config.SystemPrompt,
+		FirstRetainedSequence:      state.FirstRetainedSequence,
+		LastSequence:               state.LastSequence,
+		SummarizedThroughSequence:  state.SummarizedThroughSequence,
+		PendingApproval:            pendingApproval,
+		PendingTimer:               pendingTimer,
+		PendingUserInput:           pendingUserInput,
+		Plan:                       plan,
+		IsPlanExecutionRequested:   state.PendingPlanExecutionRevision != nil,
+		PendingQueuedMessageCount:  queuedMessageCount,
+		PendingSteeredMessageCount: steeredMessageCount,
+		AvailableMCPServers:        flow.tools.ServerNames(),
+		AvailableTools:             availableTools,
+	}, nil
+}
+
+func (flow *Flow) initializingSnapshot(
+	ctx dex.Context,
+	queued []dex.ChannelMessage[UserMessage],
+	steered []dex.ChannelMessage[UserMessage],
+) AgentSnapshot {
+	return AgentSnapshot{
+		RunID:   RunID(ctx.RunID()),
+		History: HistoryPage{Messages: []SequencedMessage{}},
+		Description: AgentDescription{
+			Status:                     AgentStatusInitializing,
+			FirstRetainedSequence:      1,
+			PendingQueuedMessageCount:  len(queued),
+			PendingSteeredMessageCount: len(steered),
+			AvailableMCPServers:        flow.tools.ServerNames(),
+			AvailableTools: []ToolName{
+				ToolNameWriteTodos,
+				ToolNameDurableWait,
+				ToolNameRequestUserInput,
+			},
+		},
+		Queued:  pendingUserMessages(queued),
+		Steered: pendingUserMessages(steered),
+	}
+}
+
+func pendingUserMessages(messages []dex.ChannelMessage[UserMessage]) []PendingUserMessage {
+	result := make([]PendingUserMessage, 0, len(messages))
+	for _, message := range messages {
+		result = append(result, PendingUserMessage{
+			MessageID: MessageID(message.MessageID),
+			Value:     message.Value,
+		})
+	}
+	return result
 }
 
 func (flow *Flow) validateConfig(config AgentConfig) error {
@@ -818,6 +973,8 @@ const (
 	stepTypeDurableWait    stepType = "DurableWait"
 
 	maximumSteeringMessageCount = 2_147_483_647
+	minimumSnapshotPageSize     = 1
+	maximumSnapshotPageSize     = 200
 )
 
 type continuation string

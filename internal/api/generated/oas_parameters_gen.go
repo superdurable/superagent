@@ -5,11 +5,239 @@ package api
 import (
 	"net/http"
 
+	"github.com/go-faster/errors"
 	"github.com/ogen-go/ogen/conv"
 	"github.com/ogen-go/ogen/middleware"
 	"github.com/ogen-go/ogen/ogenerrors"
 	"github.com/ogen-go/ogen/uri"
+	"github.com/ogen-go/ogen/validate"
 )
+
+// GetAgentSnapshotParams is parameters of getAgentSnapshot operation.
+type GetAgentSnapshotParams struct {
+	FlowId         FlowID
+	BeforeSequence OptSequence `json:",omitempty,omitzero"`
+	Limit          OptInt      `json:",omitempty,omitzero"`
+}
+
+func unpackGetAgentSnapshotParams(packed middleware.Parameters) (params GetAgentSnapshotParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "flowId",
+			In:   "query",
+		}
+		params.FlowId = packed[key].(FlowID)
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "beforeSequence",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.BeforeSequence = v.(OptSequence)
+		}
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "limit",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.Limit = v.(OptInt)
+		}
+	}
+	return params
+}
+
+func decodeGetAgentSnapshotParams(args [0]string, argsEscaped bool, r *http.Request) (params GetAgentSnapshotParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Decode query: flowId.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "flowId",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotFlowIdVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotFlowIdVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.FlowId = FlowID(paramsDotFlowIdVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.FlowId.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "flowId",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	// Decode query: beforeSequence.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "beforeSequence",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotBeforeSequenceVal Sequence
+				if err := func() error {
+					var paramsDotBeforeSequenceValVal int64
+					if err := func() error {
+						val, err := d.DecodeValue()
+						if err != nil {
+							return err
+						}
+
+						c, err := conv.ToInt64(val)
+						if err != nil {
+							return err
+						}
+
+						paramsDotBeforeSequenceValVal = c
+						return nil
+					}(); err != nil {
+						return err
+					}
+					paramsDotBeforeSequenceVal = Sequence(paramsDotBeforeSequenceValVal)
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.BeforeSequence.SetTo(paramsDotBeforeSequenceVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := func() error {
+				if value, ok := params.BeforeSequence.Get(); ok {
+					if err := func() error {
+						if err := value.Validate(); err != nil {
+							return err
+						}
+						return nil
+					}(); err != nil {
+						return err
+					}
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "beforeSequence",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	// Set default value for query: limit.
+	{
+		val := int(50)
+		params.Limit.SetTo(val)
+	}
+	// Decode query: limit.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "limit",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotLimitVal int
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToInt(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotLimitVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Limit.SetTo(paramsDotLimitVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := func() error {
+				if value, ok := params.Limit.Get(); ok {
+					if err := func() error {
+						if err := (validate.Int{
+							MinSet:        true,
+							Min:           1,
+							MaxSet:        true,
+							Max:           200,
+							MinExclusive:  false,
+							MaxExclusive:  false,
+							MultipleOfSet: false,
+							MultipleOf:    0,
+							Pattern:       nil,
+						}).Validate(int64(value)); err != nil {
+							return errors.Wrap(err, "int")
+						}
+						return nil
+					}(); err != nil {
+						return err
+					}
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "limit",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
 
 // ReadEventParams is parameters of readEvent operation.
 type ReadEventParams struct {

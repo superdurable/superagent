@@ -14,12 +14,24 @@ type Handler interface {
 	//
 	// POST /products/ai-agent/tool-approvals
 	ApproveTool(ctx context.Context, req *ToolApprovalRequest) (ApproveToolRes, error)
+	// DeleteQueuedMessage implements deleteQueuedMessage operation.
+	//
+	// Delete one exact pending queued user message.
+	//
+	// POST /products/ai-agent/message-queue/delete
+	DeleteQueuedMessage(ctx context.Context, req *QueueMutationRequest) (DeleteQueuedMessageRes, error)
 	// ExecutePlan implements executePlan operation.
 	//
 	// Execute one exact durable plan revision.
 	//
 	// POST /products/ai-agent/plans/execute
 	ExecutePlan(ctx context.Context, req *ExecutePlanRequest) (ExecutePlanRes, error)
+	// GetAgentSnapshot implements getAgentSnapshot operation.
+	//
+	// Read one atomic durable Agent application view.
+	//
+	// GET /products/ai-agent/snapshot
+	GetAgentSnapshot(ctx context.Context, params GetAgentSnapshotParams) (GetAgentSnapshotRes, error)
 	// GetHealth implements getHealth operation.
 	//
 	// Report process liveness.
@@ -58,6 +70,12 @@ type Handler interface {
 	//
 	// POST /products/ai-agent/start
 	StartAgent(ctx context.Context, req *StartAgentRequest) (StartAgentRes, error)
+	// SteerQueuedMessage implements steerQueuedMessage operation.
+	//
+	// Atomically move one queued user message into steering.
+	//
+	// POST /products/ai-agent/message-queue/steer
+	SteerQueuedMessage(ctx context.Context, req *QueueMutationRequest) (SteerQueuedMessageRes, error)
 }
 
 // Server implements http server based on OpenAPI v3 specification and
