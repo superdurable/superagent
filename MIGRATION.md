@@ -264,3 +264,4 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 2 UI | Strict TypeScript, type-aware ESLint, 16 Vitest checks, production Webpack, and cross-origin Playwright passed; browser initialization made one Snapshot request and zero legacy reads |
 | 2026-09-03 | Phase 2 graph | `dexcli visualize` with CLI `v0.1.21`: valid graph, five RPCs including Snapshot, and zero blocking diagnostics |
 | 2026-09-03 | Phase 2 parity hardening | Dex server `eba9d9a5` with Go SDK `v0.2.12`: active durability and terminal Snapshot integrations passed; 23 Vitest checks cover terminal state, source-separated reasoning, optimistic send recovery, and focus reconciliation |
+| 2026-09-03 | Go Flow Definition | Generated `flow-definitions/ai-agent.json` from `internal/agent/flow.go`; drift check passed and Dex Web loaded `AIAgentFlow` as valid with zero diagnostics |

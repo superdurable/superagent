@@ -2,6 +2,7 @@
 /.env.*
 !/.env.example
 /.cache/
+/.cache/dexcli
 /bin/superagent
 /coverage/
 /web/coverage/

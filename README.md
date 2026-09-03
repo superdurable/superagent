@@ -120,6 +120,39 @@ DEX_REPO=/absolute/path/to/dex make flow-visualize
 requires a running server. The explicit live target is the only test that reads
 `OPENAI_API_KEY` from the ignored root `.env`.
 
+## Flow rendering
+
+Generate the checked-in Go `AIAgentFlow` definition with a version-matched Dex
+checkout:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make generate-flow-definition
+DEX_REPO=/absolute/path/to/dex make check-flow-definition
+```
+
+Render the Go source directly in a temporary Flow Rendering page:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make flow-visualize
+```
+
+Render the generated JSON together with any future definitions in
+`flow-definitions/`:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make flow-render
+```
+
+`flow-render` starts a local Dex development environment. Open the printed Dex
+Web address and select **Flow Rendering**. Definitions are loaded at startup, so
+restart the command after regenerating them.
+
+With a compatible released `dexcli`, the equivalent direct command is:
+
+```bash
+dexcli dev --flow-rendering-dir ./flow-definitions
+```
+
 Read `AGENTS.md` before changing the repository. Every Dex Flow, Step, RPC,
 Channel, Stream, Timer, retry, or recovery change must also follow the vendored
 `skills/dex-developer` skill and its routed references.

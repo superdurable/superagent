@@ -1,10 +1,14 @@
-.PHONY: audit-web build-api build-web check check-agent-rules check-generated copyright-check flow-visualize \
-	format-check fuzz generate generate-go generate-web governance-check lint lint-go lint-web \
+.PHONY: audit-web build-api build-dexcli build-web check check-agent-rules check-flow-definition \
+	check-generated copyright-check flow-render flow-visualize format-check fuzz generate \
+	generate-flow-definition generate-go generate-web governance-check lint lint-go lint-web \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
 	test-race test-web vet vulnerability-check
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./cmd/... ./internal/...
+DEXCLI_BINARY := $(CURDIR)/.cache/dexcli
+FLOW_DEFINITION := $(CURDIR)/flow-definitions/ai-agent.json
+FLOW_DEFINITION_PREFIX := $(CURDIR)/flow-definitions/ai-agent
 DEX_REPO ?=
 STATICCHECK_VERSION := v0.7.0
 GOLANGCI_LINT_VERSION := v2.12.2
@@ -39,10 +43,31 @@ copyright-check:
 
 governance-check: check-agent-rules copyright-check
 
-flow-visualize:
+build-dexcli:
 	@test -n "$(DEX_REPO)" || (echo "DEX_REPO must point to a Dex OSS checkout" >&2; exit 2)
-	@cd "$(DEX_REPO)/cli" && GOCACHE="$(GO_BUILD_CACHE)" GOWORK=off go run ./cmd/dexcli visualize \
-		"$(CURDIR)/internal/agent/flow.go" --language go --json --out "$(CURDIR)/.cache/flow-visualization"
+	@mkdir -p "$(CURDIR)/.cache"
+	@cd "$(DEX_REPO)/cli" && GOCACHE="$(GO_BUILD_CACHE)" GOWORK=off go build -trimpath \
+		-o "$(DEXCLI_BINARY)" ./cmd/dexcli
+
+generate-flow-definition: build-dexcli
+	@mkdir -p "$(CURDIR)/flow-definitions"
+	@cd "$(CURDIR)" && "$(DEXCLI_BINARY)" visualize internal/agent/flow.go \
+		--language go --json --out "$(FLOW_DEFINITION_PREFIX)"
+
+check-flow-definition: build-dexcli
+	@set -eu; \
+		flow_definition_tmp="$$(mktemp -d)"; \
+		trap 'rm -rf "$${flow_definition_tmp}"' EXIT; \
+		cd "$(CURDIR)"; \
+		"$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
+			--out "$${flow_definition_tmp}/ai-agent"; \
+		diff -u "$(FLOW_DEFINITION)" "$${flow_definition_tmp}/ai-agent.json"
+
+flow-visualize: build-dexcli
+	@cd "$(CURDIR)" && "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go
+
+flow-render: generate-flow-definition
+	@"$(DEXCLI_BINARY)" dev --flow-rendering-dir "$(CURDIR)/flow-definitions"
 
 vet:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go vet $(GO_PACKAGES)

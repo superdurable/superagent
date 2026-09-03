@@ -65,11 +65,21 @@ static graph separately:
 ```bash
 DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
 DEX_REPO=/absolute/path/to/dex make flow-visualize
+DEX_REPO=/absolute/path/to/dex make generate-flow-definition
+DEX_REPO=/absolute/path/to/dex make check-flow-definition
 ```
 
 The integration suite reads private resources through the Dex Client only. It
 must not add an HTTP read endpoint or exported descriptor getter to make tests
 easier.
+
+The checked-in `flow-definitions/ai-agent.json` is generated from
+`internal/agent/flow.go`. Run both Flow Definition targets after changing the
+Flow graph. To load that JSON in Dex Web, run:
+
+```bash
+DEX_REPO=/absolute/path/to/dex make flow-render
+```
 
 The explicit live provider test is serial and bounded:
 

@@ -1,5 +1,6 @@
 .git
 .cache
+.cache/dexcli
 .env
 .env.*
 bin/superagent
