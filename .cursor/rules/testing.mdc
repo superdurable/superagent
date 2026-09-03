@@ -1,0 +1,14 @@
+---
+description: Test execution, reliability, and live-provider boundaries
+globs: "{Makefile,**/*_test.go,web/**/*.{test,spec}.{ts,tsx}}"
+alwaysApply: false
+---
+
+# Testing rules
+
+- Run repository suites through Make targets and tee long output under `/tmp`.
+- Never skip, gate, weaken, or delete a failing assertion to make tests pass.
+- Async tests use unique Flow IDs and deadline polling, not sleeps.
+- Test Worker replacement at durable waits and side-effect boundaries.
+- Default tests are deterministic. Only the explicit live OpenAI target loads
+  the ignored root `.env`, runs serially, and keeps credentials out of output.

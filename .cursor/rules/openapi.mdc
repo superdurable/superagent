@@ -1,0 +1,14 @@
+---
+description: OpenAPI-first frontend and backend contract
+globs: "{api,internal/httpapi,web/src/api}/**/*"
+alwaysApply: false
+---
+
+# OpenAPI rules
+
+`api/openapi.yaml` is the only HTTP contract source. Generate Go transport code
+with ogen and the TypeScript Fetch client with Hey API. Commit generated files
+and enforce zero drift. Handwritten code uses explicit domain mappers.
+
+Phase 1 must not contain the four legacy read paths, Snapshot, or queue mutation
+HTTP paths. Tests must enforce their absence.

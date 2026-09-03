@@ -1,0 +1,16 @@
+---
+description: Strict TypeScript and React state/effect conventions
+globs: "web/**/*.{ts,tsx,js,jsx,css,html}"
+alwaysApply: false
+---
+
+# TypeScript and React rules
+
+- Enable practical strict flags. Handwritten code contains no `any`, unsafe
+  casts, or duplicated OpenAPI models.
+- Use reducers and discriminated unions for session state.
+- Every request and subscription owns cancellation, cleanup, and stale-response
+  protection.
+- Keep components focused and preserve accessibility, keyboard, responsive,
+  reconnecting, stale, terminal, and failure states.
+- Do not suppress type-aware, Hooks, or accessibility lint failures.

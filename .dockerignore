@@ -1,0 +1,10 @@
+.git
+.cache
+.env
+.env.*
+bin/superagent
+coverage
+reference/python
+web/coverage
+web/dist
+web/node_modules

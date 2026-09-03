@@ -1,0 +1,17 @@
+---
+description: Go implementation and API conventions
+globs: "**/*.go"
+alwaysApply: false
+---
+
+# Go rules
+
+- Use typed IDs and validated string-backed enums.
+- Define interfaces where consumed and avoid single-implementation abstractions.
+- Use constructor injection and section-scoped config pointers.
+- Order files from types and constructors through entry points, handlers,
+  mutation, conversion, and small accessors.
+- Keep a struct's methods together in one primary file.
+- Use descriptive names and predicate names for booleans.
+- Handle every error and close every response body.
+- Do not create generic utility packages or manually edit generated code.
