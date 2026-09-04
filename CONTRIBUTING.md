@@ -1,4 +1,4 @@
-# Contributing to Superagent
+# Contributing to SuperAgent
 
 Read `AGENTS.md` before changing the repository.
 

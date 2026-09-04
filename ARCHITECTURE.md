@@ -1,4 +1,4 @@
-# Superagent architecture
+# SuperAgent architecture
 
 ## System boundary
 
@@ -71,6 +71,10 @@ and Run identity through one reducer action. Three cancellable event polls apply
 assistant, reasoning-summary, and activity deltas. Reasoning entries are keyed
 by the producing model invocation source. Completion activity marks later text
 from the same source as finalizing instead of starting a second live response.
+Model activity carries the target durable message sequence. The browser places
+each reasoning summary before that assistant message. If sequence metadata is
+unavailable, one completed model activity window may identify exactly one
+assistant message; ambiguous summaries remain with the current live output.
 Busy Agent states reconcile frequently until the durable Step commit becomes
 visible. The visible-page fallback reconciles every eight seconds without
 marking a healthy connection stale. Disconnect, command completion, focus,

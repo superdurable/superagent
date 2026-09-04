@@ -145,7 +145,7 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
 
   await page.goto(applicationOrigin);
   await expect(
-    page.getByRole("heading", { name: "Start a Superagent" }),
+    page.getByRole("heading", { name: "Start a SuperAgent" }),
   ).toBeVisible();
   for (const card of await page.locator(".provider-grid label").all()) {
     const hasHorizontalOverflow = await card.evaluate(
@@ -154,7 +154,7 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
     expect(hasHorizontalOverflow).toBe(false);
   }
   await page.getByRole("button", { name: "Start agent" }).click();
-  await expect(page.getByRole("heading", { name: "Superagent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
   await expect(page.getByText("browser-flow")).toBeVisible();
   await expect(page.getByText("browser-run")).toBeVisible();
 

@@ -337,6 +337,10 @@ export type AgentEvent = {
     message: string;
     callId: CallId | null;
     toolName: ToolName | null;
+    /**
+     * Durable assistant message produced by this model invocation, or null for unrelated activity.
+     */
+    messageSequence: Sequence | null;
 };
 
 export type Problem = {

@@ -1,4 +1,4 @@
-# Superagent web application
+# SuperAgent web application
 
 This React application consumes only the TypeScript client generated from
 `api/openapi.yaml`. Do not hand-write HTTP request or response models.
@@ -28,7 +28,7 @@ before rendering. The file configures the generated Fetch client from
 `apiOrigin`. Deployments can replace that JSON file without rebuilding the
 bundle.
 
-For local development, start Superagent with the frontend origin allowlisted:
+For local development, start SuperAgent with the frontend origin allowlisted:
 
 ```bash
 SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent

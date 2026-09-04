@@ -145,14 +145,14 @@ function App() {
     case "loading":
       return (
         <Status
-          title="Loading Superagent"
+          title="Loading SuperAgent"
           detail="Checking the durable runtime…"
         />
       );
     case "fatal":
       return (
         <Status
-          title="Superagent is unavailable"
+          title="SuperAgent is unavailable"
           detail={state.message}
           danger
         />
@@ -253,7 +253,7 @@ function LaunchPortal({
         </span>
         <div>
           <p>Durable AI runtime</p>
-          <h1>Start a Superagent</h1>
+          <h1>Start a SuperAgent</h1>
         </div>
         <span className="runtime-pill">Dex durable</span>
       </header>
@@ -305,7 +305,7 @@ function LaunchPortal({
           provider.credentialEnvironmentVariable !== null && (
             <p className="notice">
               Set <code>{provider.credentialEnvironmentVariable}</code> and
-              restart Superagent.
+              restart SuperAgent.
             </p>
           )}
 

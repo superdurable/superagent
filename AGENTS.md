@@ -1,11 +1,11 @@
-# Superagent Engineering Rules
+# SuperAgent Engineering Rules
 
 These rules apply to the entire repository. `AGENTS.md`, `CLAUDE.md`, and the
 equivalent files under `.cursor/rules/` must remain semantically synchronized.
 
 ## Product boundary
 
-Superagent is a production application built on the published Dex Go SDK. It is
+SuperAgent is a production application built on the published Dex Go SDK. It is
 not a Dex SDK example and must not depend on Dex internals.
 
 - Use only released Dex server and Go SDK behavior. Never invent an API from a
@@ -151,7 +151,7 @@ execution history.
 ## Providers, MCP, and secrets
 
 - Keep provider SDK types behind a typed provider boundary.
-- Disable hidden provider retries and automatic tool execution. Superagent owns
+- Disable hidden provider retries and automatic tool execution. SuperAgent owns
   retry, approval, idempotency, and cancellation policy.
 - MCP server configuration is trusted Worker configuration, never model output.
 - Tool calls use stable call IDs. Unknown or malformed outcomes return typed

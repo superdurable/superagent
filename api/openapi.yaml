@@ -15,7 +15,7 @@
 
 openapi: 3.0.3
 info:
-  title: Superagent API
+  title: SuperAgent API
   version: 0.2.0
   description: >-
     Phase 2 command, atomic Snapshot, queue mutation, and live-event contract
@@ -1045,6 +1045,7 @@ components:
         - message
         - callId
         - toolName
+        - messageSequence
       properties:
         kind:
           $ref: "#/components/schemas/EventKind"
@@ -1057,6 +1058,11 @@ components:
         toolName:
           allOf:
             - $ref: "#/components/schemas/ToolName"
+          nullable: true
+        messageSequence:
+          description: Durable assistant message produced by this model invocation, or null for unrelated activity.
+          allOf:
+            - $ref: "#/components/schemas/Sequence"
           nullable: true
     Problem:
       type: object

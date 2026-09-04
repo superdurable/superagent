@@ -81,10 +81,12 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	t.Parallel()
 	callID := agent.CallID("call-1")
 	toolName := agent.ToolName("lookup")
+	messageSequence := agent.Sequence(2)
 	service := &fakeAgentService{event: agent.StreamEvent{
 		Kind: agent.StreamEventKindActivity,
 		Activity: agent.AgentEvent{
 			Kind: agent.EventKindToolCompleted, Message: "done", CallID: &callID, ToolName: &toolName,
+			MessageSequence: &messageSequence,
 		},
 		ResumeToken: "resume-1", CreatedAt: time.Unix(1, 0).UTC(), Source: "turn-1",
 	}}
@@ -100,7 +102,9 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 	activity, _ := event.GetActivityStreamEvent()
-	if activity.Value.Kind != transportapi.EventKindToolCompleted || activity.Value.CallId.Or("") != "call-1" {
+	if activity.Value.Kind != transportapi.EventKindToolCompleted ||
+		activity.Value.CallId.Or("") != "call-1" ||
+		activity.Value.MessageSequence.Or(0) != 2 {
 		t.Fatalf("activity = %#v", activity)
 	}
 }

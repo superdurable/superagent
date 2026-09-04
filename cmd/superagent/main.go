@@ -44,7 +44,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := app.Run(ctx, applicationConfig, logger); err != nil && !errors.Is(err, context.Canceled) {
-		logger.ErrorContext(ctx, "Superagent stopped", slog.String("error", err.Error()))
+		logger.ErrorContext(ctx, "SuperAgent stopped", slog.String("error", err.Error()))
 		return 1
 	}
 	return 0

@@ -143,7 +143,7 @@ func (handler *Handler) StartAgent(ctx context.Context, request *transportapi.St
 	}
 	flowID := agent.FlowID(request.FlowId)
 	if provider != agent.ProviderMock && !handler.credentials.HasAPIKey(flowID, provider) {
-		return startProblem(problemBadRequest(fmt.Errorf("provider %q is not configured; set %s and restart Superagent", provider, providerEnvironmentVariable(provider)))), nil
+		return startProblem(problemBadRequest(fmt.Errorf("provider %q is not configured; set %s and restart SuperAgent", provider, providerEnvironmentVariable(provider)))), nil
 	}
 	config := agent.NewAgentConfig()
 	config.Model = model
@@ -785,7 +785,19 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 	} else {
 		toolName.SetTo(transportapi.ToolName(*event.ToolName))
 	}
-	return transportapi.AgentEvent{Kind: kind, Message: event.Message, CallId: callID, ToolName: toolName}, nil
+	messageSequence := transportapi.NilSequence{}
+	if event.MessageSequence == nil {
+		messageSequence.SetToNull()
+	} else {
+		messageSequence.SetTo(transportapi.Sequence(*event.MessageSequence))
+	}
+	return transportapi.AgentEvent{
+		Kind:            kind,
+		Message:         event.Message,
+		CallId:          callID,
+		ToolName:        toolName,
+		MessageSequence: messageSequence,
+	}, nil
 }
 
 func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {

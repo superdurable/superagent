@@ -100,6 +100,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	}
 	assertTextStream(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
+	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
 
 	environment.replaceWorker(t)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
@@ -823,6 +824,19 @@ func assertTextStream(t *testing.T, client *Client, flowID FlowID, stream EventS
 	}
 	if event.Text != expected || event.ResumeToken == "" || event.CreatedAt.IsZero() || event.Source == "" {
 		t.Fatalf("%s event = %#v", stream, event)
+	}
+}
+
+func assertModelActivity(t *testing.T, client *Client, flowID FlowID, expectedSequence Sequence) {
+	t.Helper()
+	event, err := client.ReadEvent(context.Background(), flowID, EventStreamActivity, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Activity.Kind != EventKindModelStarted ||
+		event.Activity.MessageSequence == nil ||
+		*event.Activity.MessageSequence != expectedSequence {
+		t.Fatalf("model activity = %#v", event)
 	}
 }
 
