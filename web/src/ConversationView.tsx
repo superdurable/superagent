@@ -96,7 +96,7 @@ export function ConversationView({
       <header className="conversation-header">
         <div>
           <p className="eyebrow">Durable AI runtime</p>
-          <h1>Superagent</h1>
+          <h1>SuperAgent</h1>
           <p className="flow-identity">
             Flow <code>{flowId}</code> · Run <code>{snapshot.runId}</code>
           </p>

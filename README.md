@@ -1,162 +1,168 @@
-# Superagent
+# SuperAgent
 
-Superagent is a standalone, production-oriented AI agent built on Dex durable
-execution. It runs on the released Dex Go SDK `v0.2.12`, retains the complete
-React application, and uses OpenAPI-generated server and browser contracts.
+SuperAgent is a production-grade AI agent built on [Dex](https://github.com/superdurable/dex)
+durable execution and the released Dex Go SDK. It combines a Go API and Worker
+with an independently deployable React application. OpenAPI generates both
+transport boundaries from one contract.
 
-The Python-to-Go cutover is complete. The immutable upstream comparison and
-test mapping are recorded in `docs/python-go-parity.md`; migration evidence is
-tracked in `MIGRATION.md`, and package boundaries are described in
-`ARCHITECTURE.md`.
+## Capabilities
 
-## Product scope
+- Durable conversations with typed application history
+- Streaming assistant text and provider-authored reasoning summaries
+- Plans, tool approvals, user input, steering, and durable timers
+- OpenAI, Anthropic, Gemini, Groq, and deterministic mock providers
+- MCP over stdio and Streamable HTTP
+- Context compaction and Worker replacement recovery
+- Atomic Snapshot restoration with best-effort live event reconciliation
+- Separately deployable backend and frontend artifacts
 
-The application includes typed Agent state and commands, plans, approvals, user input,
-durable timers, steering, compaction, buffered streams, provider adapters, MCP
-stdio and Streamable HTTP transports, a separately deployable React application,
-and graceful process shutdown. One atomic Snapshot read restores application
-history, Agent description, and queued and steered messages. Generated event
-polling supplies low-latency deltas between durable reconciliations.
+The browser restores durable state through one
+`GET /products/ai-agent/snapshot` request. It applies Stream updates for low
+latency and reconciles from Snapshot after reconnects, mutations, and detected
+gaps. The retired history, queue-read, describe, and status routes do not exist.
 
-The legacy history, queue-read, describe, and status routes do not exist. Queue
-delete and steer accept only stable message IDs returned by Snapshot.
+## Architecture
+
+```text
+React application ── generated Fetch client ──> Go OpenAPI API
+                                                     │
+                                                     ├── Dex Client
+                                                     └── Dex Worker
+                                                              │
+                                                              ├── model providers
+                                                              └── MCP servers
+```
+
+The Go process never embeds or serves frontend assets. `web/dist` reads its API
+origin from `config.json`, so frontend deployments can change independently of
+the backend.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
+reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph
+and resource model.
 
 ## Prerequisites
 
-- Go matching `go.mod`
-- Node.js and npm compatible with `web/package-lock.json`
-- A reachable Dex server for running the application or integration suite
-- A writable local directory for Dex BlobCache data
+- Go matching [`go.mod`](go.mod)
+- Node.js and npm compatible with [`web/package-lock.json`](web/package-lock.json)
+- A reachable Dex server
+- A writable directory for disposable Dex BlobCache data
 
-## Build
+## Quick start
+
+Install frontend dependencies and build both deployable artifacts:
 
 ```bash
 npm --prefix web ci
-make generate
-make check-generated
 make build-api
 make build-web
 ```
 
-Generated ogen and Hey API files are committed. `api/openapi.yaml` is their
-only source; do not hand-edit generated transport types or routes.
-
-## Run
-
-Start a Dex server, then run the API and Worker process:
+Start a compatible Dex server. Then run the API and Worker:
 
 ```bash
 SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent
 ```
 
-Serve the independent frontend from another terminal:
+Serve the frontend from a separate terminal:
 
 ```bash
 python3 -m http.server 3000 --directory web/dist
 ```
 
-The default addresses are:
+Open `http://127.0.0.1:3000/`. The local defaults are:
 
-- Frontend: `http://127.0.0.1:3000/`
-- API: `http://127.0.0.1:8080/`
-- Dex FlowService: `127.0.0.1:8801`
-- Dex Worker: `127.0.0.1:8803`
+| Component       | Address                  |
+| --------------- | ------------------------ |
+| Frontend        | `http://127.0.0.1:3000/` |
+| API             | `http://127.0.0.1:8080/` |
+| Dex FlowService | `127.0.0.1:8801`         |
+| Dex Worker      | `127.0.0.1:8803`         |
 
-Loopback development origins are suitable for the browser-generated Flow IDs.
-Serve production deployments over HTTPS so browser secure-context APIs remain
+Use HTTPS for production deployments so browser secure-context APIs remain
 available.
 
 ## Configuration
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `SUPERAGENT_HTTP_ADDRESS` | OpenAPI bind address | `127.0.0.1:8080` |
-| `SUPERAGENT_HTTP_ALLOWED_ORIGINS` | Exact comma-separated browser origins permitted by CORS | none |
-| `DEX_FLOW_SERVICE_ADDRESS` | Dex FlowService address | `127.0.0.1:8801` |
-| `DEX_WORKER_BIND_ADDRESS` | Local Worker bind address | `127.0.0.1:8803` |
-| `DEX_WORKER_TARGET` | Worker address advertised to Dex | Worker bind address |
-| `DEX_BLOB_CACHE_DIR` | Disposable local BlobCache directory | `/tmp/superagent-blob-cache` |
-| `DEX_BLOB_CACHE_MAX_BYTES` | BlobCache byte limit | `536870912` |
-| `DEX_AGENT_MCP_CONFIG` | Trusted MCP YAML path | disabled |
-| `OPENAI_API_KEY` | Process-level OpenAI credential | unset |
-| `ANTHROPIC_API_KEY` | Process-level Anthropic credential | unset |
-| `GEMINI_API_KEY` | Process-level Gemini credential | unset |
-| `GROQ_API_KEY` | Process-level Groq credential | unset |
+| Variable                          | Purpose                            | Default                      |
+| --------------------------------- | ---------------------------------- | ---------------------------- |
+| `SUPERAGENT_HTTP_ADDRESS`         | OpenAPI bind address               | `127.0.0.1:8080`             |
+| `SUPERAGENT_HTTP_ALLOWED_ORIGINS` | Exact comma-separated CORS origins | none                         |
+| `DEX_FLOW_SERVICE_ADDRESS`        | Dex FlowService address            | `127.0.0.1:8801`             |
+| `DEX_WORKER_BIND_ADDRESS`         | Local Worker bind address          | `127.0.0.1:8803`             |
+| `DEX_WORKER_TARGET`               | Worker address advertised to Dex   | Worker bind address          |
+| `DEX_BLOB_CACHE_DIR`              | Disposable BlobCache directory     | `/tmp/superagent-blob-cache` |
+| `DEX_BLOB_CACHE_MAX_BYTES`        | BlobCache size limit in bytes      | `536870912`                  |
+| `DEX_AGENT_MCP_CONFIG`            | Trusted MCP YAML path              | disabled                     |
+| `OPENAI_API_KEY`                  | OpenAI credential                  | unset                        |
+| `ANTHROPIC_API_KEY`               | Anthropic credential               | unset                        |
+| `GEMINI_API_KEY`                  | Gemini credential                  | unset                        |
+| `GROQ_API_KEY`                    | Groq credential                    | unset                        |
 
-Each provider also accepts a trusted HTTPS origin override named
-`<PROVIDER>_BASE_URL`. Secrets stay in Worker memory and are never persisted in
-Dex attributes or logged. Copy `web/mcp-servers.example.yaml` when configuring
-MCP; environment mappings name secret sources rather than embedding values.
+Each provider accepts a trusted HTTPS origin override named
+`<PROVIDER>_BASE_URL`. Provider credentials stay in Worker memory and are never
+persisted in Dex state or logged. Copy
+[`web/mcp-servers.example.yaml`](web/mcp-servers.example.yaml) to configure
+trusted MCP servers.
 
-## Independent deployment
+For a cross-origin frontend deployment, add its exact origin to
+`SUPERAGENT_HTTP_ALLOWED_ORIGINS`. Wildcards and credentialed cross-origin
+requests are intentionally unsupported. Serve `config.json` with
+`Cache-Control: no-store` and cache fingerprinted frontend releases instead.
 
-The Go artifact and `web/dist` are independent release units. The backend never
-contains or serves frontend files. A frontend release cannot restart or change
-the Worker process.
+## Development
 
-The frontend reads `config.json` beside `index.html` on every page load. Set its
-`apiOrigin` to the public backend origin. This file can change during deployment
-without rebuilding the JavaScript bundle. Production origins must use HTTPS.
+OpenAPI is the only HTTP contract source. Regenerate and verify both clients:
 
-When frontend and backend have different browser origins, add the frontend
-origin to `SUPERAGENT_HTTP_ALLOWED_ORIGINS`. The backend uses exact origins. It
-does not accept wildcards or credentialed cross-origin requests. A same-origin
-reverse proxy does not require a CORS entry.
+```bash
+make generate
+make check-generated
+```
 
-Configure the static host to send `config.json` with `Cache-Control: no-store`.
-Cache fingerprinted releases or versioned directories instead of caching that
-runtime file. The static host also owns the frontend Content Security Policy.
-
-## Verification
+Run the complete credential-free quality gate:
 
 ```bash
 make check
-make check-cutover
-DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
-make test-openai-live
-make flow-visualize
 ```
 
-`make check` is deterministic and credential-free. The Dex integration target
-requires a running server. The explicit live target is the only test that reads
-`OPENAI_API_KEY` from the ignored root `.env`.
+Run real-server and provider verification explicitly:
 
-GitHub Actions publishes the backend binary and static frontend as separate
-workflow artifacts. Neither artifact contains the retired Python oracle.
+```bash
+DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
+make test-openai-live
+```
 
-## Flow rendering
+Only `make test-openai-live` reads `OPENAI_API_KEY` from the ignored root
+`.env`. Default tests use deterministic fakes or local protocol fixtures.
 
-Generate the checked-in Go `AIAgentFlow` definition with the checksum-verified
-released Dex CLI:
+## Flow visualization
+
+Generate and verify the checked-in Go Flow Definition Graph:
 
 ```bash
 make generate-flow-definition
 make check-flow-definition
 ```
 
-Render the Go source directly in a temporary Flow Rendering page:
+Render the Go source directly, or serve all generated definitions:
 
 ```bash
 make flow-visualize
-```
-
-Render the generated JSON together with any future definitions in
-`flow-definitions/`:
-
-```bash
 make flow-render
 ```
 
-`flow-render` starts a local Dex development environment. Open the printed Dex
-Web address and select **Flow Rendering**. Definitions are loaded at startup, so
-restart the command after regenerating them.
+`make flow-render` starts a local Dex development environment. Select
+**Flow Rendering** in the printed Dex Web address. Restart it after regenerating
+definitions.
 
-With a compatible released `dexcli`, the equivalent direct command is:
+## Project documentation
 
-```bash
-dexcli dev --flow-rendering-dir ./flow-definitions
-```
+- [CONTRIBUTING.md](CONTRIBUTING.md): setup, generation, and verification rules
+- [ARCHITECTURE.md](ARCHITECTURE.md): package and deployment boundaries
+- [docs/flow-model.md](docs/flow-model.md): Flow resources and transitions
+- [MIGRATION.md](MIGRATION.md): completed migration evidence
+- [docs/python-go-parity.md](docs/python-go-parity.md): immutable Python parity baseline
 
-Read `AGENTS.md` before changing the repository. Every Dex Flow, Step, RPC,
-Channel, Stream, Timer, retry, or recovery change must also follow the vendored
-`skills/dex-developer` skill and its routed references.
+Read [`AGENTS.md`](AGENTS.md) before making changes. Work involving Dex Flows,
+Steps, RPCs, Channels, Streams, Timers, retries, or recovery must also follow
+the vendored [`skills/dex-developer`](skills/dex-developer/SKILL.md) guidance.

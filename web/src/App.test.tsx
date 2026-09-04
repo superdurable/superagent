@@ -129,8 +129,8 @@ describe("App", () => {
   it("loads the generated portal contract", async () => {
     render(<App />);
 
-    expect(screen.getByText("Loading Superagent")).toBeInTheDocument();
-    expect(await screen.findByText("Start a Superagent")).toBeInTheDocument();
+    expect(screen.getByText("Loading SuperAgent")).toBeInTheDocument();
+    expect(await screen.findByText("Start a SuperAgent")).toBeInTheDocument();
     expect(getPortal).toHaveBeenCalledTimes(1);
     expect(startAgent).not.toHaveBeenCalled();
   });
@@ -174,7 +174,7 @@ describe("App", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Superagent" }),
+      await screen.findByRole("heading", { name: "SuperAgent" }),
     ).toBeInTheDocument();
     expect(screen.getByText("flow-existing")).toBeInTheDocument();
     expect(screen.getByText("run-1")).toBeInTheDocument();
@@ -194,7 +194,7 @@ describe("App", () => {
       expect(startAgent).toHaveBeenCalledTimes(1);
     });
     expect(
-      await screen.findByRole("heading", { name: "Superagent" }),
+      await screen.findByRole("heading", { name: "SuperAgent" }),
     ).toBeInTheDocument();
     expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
     expect(window.location.search).toBe("?flowId=flow-created");
@@ -233,7 +233,7 @@ describe("App", () => {
   it("reconciles the durable Snapshot when the window regains focus", async () => {
     window.history.replaceState({}, "", "/?flowId=flow-existing");
     render(<App />);
-    await screen.findByRole("heading", { name: "Superagent" });
+    await screen.findByRole("heading", { name: "SuperAgent" });
 
     fireEvent.focus(window);
 

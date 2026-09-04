@@ -1,4 +1,4 @@
-# Superagent architecture
+# SuperAgent architecture
 
 ## System boundary
 

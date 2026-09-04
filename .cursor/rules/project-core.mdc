@@ -1,15 +1,15 @@
 ---
-description: Core Superagent architecture and code-quality constraints
+description: Core SuperAgent architecture and code-quality constraints
 alwaysApply: true
 ---
 
-# Superagent project rules
+# SuperAgent project rules
 
 `AGENTS.md` is the canonical complete rule set and must be read before changing
 this repository. Keep `AGENTS.md`, `CLAUDE.md`, and these Cursor rules
 semantically synchronized.
 
-- Superagent is a production application on the released Dex Go SDK, not an SDK
+- SuperAgent is a production application on the released Dex Go SDK, not an SDK
   example. Do not depend on Dex internals or unreleased APIs.
 - Do not restore copied Python examples. Compare against the immutable Dex
   commit recorded in `docs/python-go-parity.md`.

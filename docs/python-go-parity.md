@@ -17,7 +17,7 @@ The final parity review uses Dex merge commit
 | `c8bda2031ff54ed60a56ac9a6d92fadc8806bb6d` | `tests/unit/test_ai_agent.py` |
 | `7e95612b7911136d748ca75416318ef0b85e6302` | `tests/integ/test_ai_agent.py` |
 
-The full paths remain available from that immutable Git commit. Superagent does
+The full paths remain available from that immutable Git commit. SuperAgent does
 not vendor the files after cutover.
 
 ## Behavioral parity
@@ -40,7 +40,7 @@ not vendor the files after cutover.
 
 ## Intentional production differences
 
-Superagent does not preserve example-only implementation choices:
+SuperAgent does not preserve example-only implementation choices:
 
 - Go uses validated domain enums and distinct identifier types instead of raw
   Python strings.

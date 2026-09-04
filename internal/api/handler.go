@@ -143,7 +143,7 @@ func (handler *Handler) StartAgent(ctx context.Context, request *transportapi.St
 	}
 	flowID := agent.FlowID(request.FlowId)
 	if provider != agent.ProviderMock && !handler.credentials.HasAPIKey(flowID, provider) {
-		return startProblem(problemBadRequest(fmt.Errorf("provider %q is not configured; set %s and restart Superagent", provider, providerEnvironmentVariable(provider)))), nil
+		return startProblem(problemBadRequest(fmt.Errorf("provider %q is not configured; set %s and restart SuperAgent", provider, providerEnvironmentVariable(provider)))), nil
 	}
 	config := agent.NewAgentConfig()
 	config.Model = model

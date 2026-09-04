@@ -9,4 +9,4 @@ AttributeMap, and ID-only queue steering rules from Dex PR 448.
 Source: `/Users/qlong/Documents/superdurable/dex/skills/dex-developer`
 
 Refresh this copy only from a reviewed Dex commit. Record the new commit here
-and review every changed reference before changing Superagent Dex code.
+and review every changed reference before changing SuperAgent Dex code.

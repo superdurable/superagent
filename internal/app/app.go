@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app owns the Superagent process dependency graph and lifecycle.
+// Package app owns the SuperAgent process dependency graph and lifecycle.
 package app
 
 import (

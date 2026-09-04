@@ -112,7 +112,7 @@ The Phase 2 entry gates were reviewed against Dex commit `2f961961` on
   projection.
 - Dex PR 445 rejects `/` in AttributeMap and ChannelMap instance keys.
 
-Superagent uses decimal sequence values as `AgentMessages` instance keys. The
+SuperAgent uses decimal sequence values as `AgentMessages` instance keys. The
 slash restriction does not require a data migration.
 
 The initial vendored `dex-developer` skill was byte-identical at `13db6da5` and
@@ -120,14 +120,14 @@ The initial vendored `dex-developer` skill was byte-identical at `13db6da5` and
 
 ### Dex Go SDK v0.2.12
 
-Superagent subsequently upgraded to Dex Go SDK `v0.2.12` at commit `ce1d734e`.
+SuperAgent subsequently upgraded to Dex Go SDK `v0.2.12` at commit `ce1d734e`.
 The release preserves the selective RPC projection contract. It replaces the
 general `StateNotLoadedError` with two precise errors:
 
 - `AttributeMapNotLoadedError` for an omitted AttributeMap projection;
 - `ChannelMessagesNotLoadedError` for omitted pending Channel messages.
 
-Superagent does not branch on these errors. Snapshot selects both resource
+SuperAgent does not branch on these errors. Snapshot selects both resource
 kinds explicitly. No application code migration was required.
 
 ## Phase 2 Snapshot contract

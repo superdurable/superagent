@@ -34,7 +34,7 @@ async function bootstrap(): Promise<void> {
     root.render(
       <React.StrictMode>
         <main className="shell status danger" role="alert">
-          <h1>Superagent configuration failed</h1>
+          <h1>SuperAgent configuration failed</h1>
           <p>{errorMessage(reason)}</p>
         </main>
       </React.StrictMode>,
