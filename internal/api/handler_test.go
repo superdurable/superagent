@@ -430,6 +430,16 @@ func (fakeToolCatalog) Definitions([]string, []agent.ToolName) []agent.ToolDefin
 	return []agent.ToolDefinition{fakeToolDefinition()}
 }
 
+type emptyToolCatalog struct{}
+
+func (emptyToolCatalog) ServerNames() []string { return []string{} }
+
+func (emptyToolCatalog) RegisteredTools() []agent.RegisteredTool { return []agent.RegisteredTool{} }
+
+func (emptyToolCatalog) Definitions([]string, []agent.ToolName) []agent.ToolDefinition {
+	return []agent.ToolDefinition{}
+}
+
 func fakeToolDefinition() agent.ToolDefinition {
 	return agent.ToolDefinition{Name: "lookup", Description: "Look up a file", InputSchema: agent.MustJSONObject(`{"type":"object"}`)}
 }
