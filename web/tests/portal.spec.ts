@@ -13,6 +13,7 @@ const apiOrigin = "https://api.example.test";
 const assetDirectory = new URL("../dist/", import.meta.url);
 
 test("starts a Flow against a separately deployed API", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   const applicationRequests: string[] = [];
   const apiRequests: string[] = [];
   let startBody: unknown;
@@ -146,10 +147,30 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Start a Superagent" }),
   ).toBeVisible();
+  for (const card of await page.locator(".provider-grid label").all()) {
+    const hasHorizontalOverflow = await card.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+  }
   await page.getByRole("button", { name: "Start agent" }).click();
   await expect(page.getByRole("heading", { name: "Superagent" })).toBeVisible();
   await expect(page.getByText("browser-flow")).toBeVisible();
   await expect(page.getByText("browser-run")).toBeVisible();
+
+  const historyBox = await page
+    .getByRole("region", { name: "Conversation history" })
+    .boundingBox();
+  const composerBox = await page
+    .getByRole("region", { name: "Message composer" })
+    .boundingBox();
+  expect(historyBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  if (historyBox !== null && composerBox !== null) {
+    expect(historyBox.x).toBe(composerBox.x);
+    expect(historyBox.width).toBe(composerBox.width);
+    expect(historyBox.y + historyBox.height).toBeLessThanOrEqual(composerBox.y);
+  }
 
   expect(startBody).toMatchObject({
     provider: "mock",

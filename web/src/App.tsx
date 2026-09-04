@@ -13,8 +13,8 @@ import {
   type FormEvent,
 } from "react";
 
-import type { Provider } from "./api/generated";
 import {
+  Provider,
   getPortal,
   startAgent,
   type FlowId,
@@ -60,6 +60,9 @@ type Action =
 
 function initialForm(portal: Portal): LaunchForm {
   const provider =
+    portal.providers.find(
+      (candidate) => candidate.configured && candidate.id !== Provider.MOCK,
+    ) ??
     portal.providers.find((candidate) => candidate.configured) ??
     portal.providers[0];
   if (provider === undefined)
@@ -70,7 +73,7 @@ function initialForm(portal: Portal): LaunchForm {
     systemPrompt: defaultSystemPrompt,
     maxContextTokens: 32_000,
     messageRetentionLimit: 2_000,
-    mcpEnabled: true,
+    mcpEnabled: portal.mcpServers.length > 0,
     enabledMcpServers: [...portal.mcpServers],
     enabledTools: portal.tools.map((tool) => tool.name),
   };
@@ -158,6 +161,7 @@ function App() {
       return (
         <Conversation
           flowId={state.flowId}
+          builtInTools={state.portal.builtInTools}
           onStartAnother={() => {
             window.history.replaceState({}, "", window.location.pathname);
             dispatch({
@@ -251,13 +255,14 @@ function LaunchPortal({
           <p>Durable AI runtime</p>
           <h1>Start a Superagent</h1>
         </div>
-        <span className="phase-pill">Phase 2</span>
+        <span className="runtime-pill">Dex durable</span>
       </header>
       <form className="launch-card" onSubmit={submit}>
         <h2>Model</h2>
         <div className="provider-grid">
           {state.portal.providers.map((item) => (
             <label
+              aria-label={`${item.label}: ${item.configured ? item.defaultModel : "Not configured"}`}
               className={item.id === state.form.provider ? "selected" : ""}
               htmlFor={`provider-${item.id}`}
               key={item.id}
@@ -275,10 +280,12 @@ function LaunchPortal({
                   });
                 }}
               />
-              {item.label}
-              <small>
-                {item.configured ? item.defaultModel : "Not configured"}
-              </small>
+              <span className="provider-copy">
+                <strong>{item.label}</strong>
+                <small>
+                  {item.configured ? item.defaultModel : "Not configured"}
+                </small>
+              </span>
             </label>
           ))}
         </div>
@@ -344,41 +351,49 @@ function LaunchPortal({
         </div>
 
         <h2>MCP tools</h2>
-        <label className="switch">
-          <input
-            type="checkbox"
-            checked={state.form.mcpEnabled}
-            disabled={state.submitting}
-            onChange={(event) => {
-              dispatch({
-                type: "edit",
-                update: { mcpEnabled: event.target.checked },
-              });
-            }}
-          />{" "}
-          Enable trusted MCP servers
-        </label>
-        {state.form.mcpEnabled && (
-          <div className="field-row">
-            <Choices
-              title="Servers"
-              choices={state.portal.mcpServers}
-              selected={state.form.enabledMcpServers}
-              disabled={state.submitting}
-              onChange={(enabledMcpServers) => {
-                dispatch({ type: "edit", update: { enabledMcpServers } });
-              }}
-            />
-            <Choices
-              title="Tools"
-              choices={state.portal.tools.map((tool) => tool.name)}
-              selected={state.form.enabledTools}
-              disabled={state.submitting}
-              onChange={(enabledTools) => {
-                dispatch({ type: "edit", update: { enabledTools } });
-              }}
-            />
-          </div>
+        {state.portal.mcpServers.length === 0 ? (
+          <p className="empty-config">
+            No trusted MCP servers are configured for this Worker.
+          </p>
+        ) : (
+          <>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={state.form.mcpEnabled}
+                disabled={state.submitting}
+                onChange={(event) => {
+                  dispatch({
+                    type: "edit",
+                    update: { mcpEnabled: event.target.checked },
+                  });
+                }}
+              />{" "}
+              Enable trusted MCP servers
+            </label>
+            {state.form.mcpEnabled && (
+              <div className="field-row">
+                <Choices
+                  title="Servers"
+                  choices={state.portal.mcpServers}
+                  selected={state.form.enabledMcpServers}
+                  disabled={state.submitting}
+                  onChange={(enabledMcpServers) => {
+                    dispatch({ type: "edit", update: { enabledMcpServers } });
+                  }}
+                />
+                <Choices
+                  title="Tools"
+                  choices={state.portal.tools.map((tool) => tool.name)}
+                  selected={state.form.enabledTools}
+                  disabled={state.submitting}
+                  onChange={(enabledTools) => {
+                    dispatch({ type: "edit", update: { enabledTools } });
+                  }}
+                />
+              </div>
+            )}
+          </>
         )}
         <p className="muted">
           Durable built-ins: {state.portal.builtInTools.join(", ")}

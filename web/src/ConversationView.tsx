@@ -4,15 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { KeyboardEvent } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type KeyboardEvent,
+  type SyntheticEvent,
+} from "react";
 
 import {
+  MessageRole,
   PlanStatus,
   TaskStatus,
   type CallId,
   type FlowId,
-  type MessageRole,
   type PendingUserMessage,
+  type ToolName,
 } from "./api/generated";
 import {
   pendingQueueMessageID,
@@ -21,8 +30,11 @@ import {
   type ActiveConversationState,
 } from "./conversation-state";
 
+const MarkdownContent = lazy(() => import("./MarkdownContent"));
+
 interface ConversationViewProps {
   flowId: FlowId;
+  builtInTools: readonly ToolName[];
   state: ActiveConversationState;
   onRetrySnapshot: () => void;
   onLoadOlder: (beforeSequence: number) => void;
@@ -40,6 +52,7 @@ interface ConversationViewProps {
 
 export function ConversationView({
   flowId,
+  builtInTools,
   state,
   onRetrySnapshot,
   onLoadOlder,
@@ -51,10 +64,17 @@ export function ConversationView({
   onMutateQueue,
   onStartAnother,
 }: ConversationViewProps) {
+  const { shellRef, composerRef } = useComposerClearance();
   const { snapshot } = state;
   const description = snapshot.description;
   const isBusy = state.pendingCommand !== null;
   const pendingMessageID = pendingQueueMessageID(state);
+  const builtInToolNames = new Set(builtInTools);
+  const liveContentVersion =
+    state.activities.length +
+    (state.assistant?.value.length ?? 0) +
+    state.reasoning.reduce((total, entry) => total + entry.value.length, 0);
+  useAutoScroll(description.lastSequence, liveContentVersion);
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Enter" &&
@@ -66,7 +86,7 @@ export function ConversationView({
   };
 
   return (
-    <main className="conversation-shell">
+    <main className="conversation-shell" ref={shellRef}>
       <header className="conversation-header">
         <div>
           <p className="eyebrow">Durable AI runtime</p>
@@ -121,37 +141,60 @@ export function ConversationView({
                 <p>Your messages and durable Agent replies will appear here.</p>
               </div>
             )}
-            {snapshot.history.messages.map(({ sequence, message }) => (
-              <article
-                className={`message-bubble ${message.role}`}
-                key={sequence}
-              >
-                <div className="message-meta">
-                  <strong>{messageRoleLabel(message.role)}</strong>
-                  <time dateTime={message.createdAt}>
-                    {formatTime(message.createdAt)}
-                  </time>
-                </div>
-                {message.content !== "" && <p>{message.content}</p>}
-                {message.toolCalls.map((call) => (
-                  <details key={call.id} className="tool-call">
-                    <summary>Tool request · {call.name}</summary>
-                    <pre>{call.argumentsJson}</pre>
-                  </details>
-                ))}
-              </article>
-            ))}
+            {snapshot.history.messages.map(({ sequence, message }) => {
+              const visibleToolCalls = message.toolCalls.filter(
+                (call) => !builtInToolNames.has(call.name),
+              );
+              if (
+                (message.role === MessageRole.TOOL &&
+                  message.toolName !== null &&
+                  builtInToolNames.has(message.toolName)) ||
+                (message.content === "" && visibleToolCalls.length === 0)
+              ) {
+                return null;
+              }
+              return (
+                <article
+                  className={`message-bubble ${message.role}`}
+                  key={sequence}
+                >
+                  <div className="message-meta">
+                    <strong>{messageRoleLabel(message.role)}</strong>
+                    <time dateTime={message.createdAt}>
+                      {formatTime(message.createdAt)}
+                    </time>
+                  </div>
+                  {message.content !== "" &&
+                    (message.role === MessageRole.ASSISTANT ? (
+                      <RichText value={message.content} />
+                    ) : (
+                      <p>{message.content}</p>
+                    ))}
+                  {visibleToolCalls.map((call) => (
+                    <details
+                      key={call.id}
+                      className="tool-call"
+                      onToggle={revealOpenedDetails}
+                    >
+                      <summary>Tool request · {call.name}</summary>
+                      <pre>{call.argumentsJson}</pre>
+                    </details>
+                  ))}
+                </article>
+              );
+            })}
             {state.reasoning.map((entry) => (
               <details
                 className="reasoning-card"
                 key={entry.source}
                 open={!entry.isComplete}
+                onToggle={revealOpenedDetails}
               >
                 <summary>
                   Reasoning summary · {formatTime(entry.createdAt)} ·{" "}
                   {entry.isComplete ? "Complete" : "Streaming"}
                 </summary>
-                <p>{entry.value}</p>
+                <RichText value={entry.value} />
               </details>
             ))}
             {state.assistant !== null && (
@@ -162,7 +205,7 @@ export function ConversationView({
                     {formatTime(state.assistant.createdAt)} · Streaming
                   </span>
                 </div>
-                <p>{state.assistant.value}</p>
+                <RichText value={state.assistant.value} />
               </article>
             )}
           </section>
@@ -328,7 +371,11 @@ export function ConversationView({
         </aside>
       </section>
 
-      <section className="composer-card" aria-label="Message composer">
+      <section
+        className="composer-card"
+        aria-label="Message composer"
+        ref={composerRef}
+      >
         {description.pendingUserInput !== null && (
           <div className="pending-input">
             <p className="eyebrow">Agent needs your input</p>
@@ -413,6 +460,88 @@ export function ConversationView({
         </div>
       </section>
     </main>
+  );
+}
+
+function useComposerClearance(): {
+  shellRef: React.RefObject<HTMLElement>;
+  composerRef: React.RefObject<HTMLElement>;
+} {
+  const shellRef = useRef<HTMLElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    const composer = composerRef.current;
+    if (shell === null || composer === null) return;
+    const update = () => {
+      shell.style.setProperty(
+        "--composer-height",
+        `${String(Math.ceil(composer.getBoundingClientRect().height))}px`,
+      );
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        shell.style.removeProperty("--composer-height");
+      };
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(composer);
+    return () => {
+      observer.disconnect();
+      shell.style.removeProperty("--composer-height");
+    };
+  }, []);
+  return { shellRef, composerRef };
+}
+
+function useAutoScroll(lastSequence: number, liveContentVersion: number) {
+  const shouldStickToBottom = useRef(true);
+  const scrollToBottom = () => {
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: "auto",
+    });
+  };
+  useEffect(() => {
+    const update = () => {
+      const distance =
+        document.documentElement.scrollHeight -
+        window.scrollY -
+        window.innerHeight;
+      shouldStickToBottom.current = distance <= 160;
+    };
+    const keepBottomVisible = () => {
+      if (!shouldStickToBottom.current) return;
+      window.requestAnimationFrame(scrollToBottom);
+    };
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", keepBottomVisible);
+    update();
+    return () => {
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", keepBottomVisible);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!shouldStickToBottom.current) return;
+    scrollToBottom();
+  }, [lastSequence, liveContentVersion]);
+}
+
+function revealOpenedDetails(event: SyntheticEvent<HTMLDetailsElement>) {
+  const details = event.currentTarget;
+  if (!details.open) return;
+  window.requestAnimationFrame(() => {
+    details.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function RichText({ value }: { value: string }) {
+  return (
+    <Suspense fallback={<p className="markdown-fallback">{value}</p>}>
+      <MarkdownContent value={value} />
+    </Suspense>
   );
 }
 

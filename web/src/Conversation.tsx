@@ -28,6 +28,7 @@ import {
   type PendingUserMessage,
   type ResumeToken,
   type StreamEvent,
+  type ToolName,
 } from "./api/generated";
 import {
   conversationReducer,
@@ -48,10 +49,15 @@ const eventStreams = [
 
 interface ConversationProps {
   flowId: FlowId;
+  builtInTools: readonly ToolName[];
   onStartAnother: () => void;
 }
 
-export function Conversation({ flowId, onStartAnother }: ConversationProps) {
+export function Conversation({
+  flowId,
+  builtInTools,
+  onStartAnother,
+}: ConversationProps) {
   const [state, dispatch] = useReducer(
     conversationReducer,
     undefined,
@@ -297,6 +303,7 @@ export function Conversation({ flowId, onStartAnother }: ConversationProps) {
   return (
     <ConversationView
       flowId={flowId}
+      builtInTools={builtInTools}
       state={state}
       onRetrySnapshot={() => {
         dispatch({ type: "request-snapshot", connection: "stale" });

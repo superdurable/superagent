@@ -71,7 +71,7 @@ fieldset {
   font-size: 24px;
   font-weight: 800;
 }
-.phase-pill {
+.runtime-pill {
   margin-left: auto;
   padding: 6px 10px;
   border-radius: 999px;
@@ -126,7 +126,9 @@ button:focus-visible {
   gap: 10px;
 }
 .provider-grid label {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 9px;
   padding: 13px;
   border: 1px solid #dfe3e9;
@@ -141,12 +143,18 @@ button:focus-visible {
   cursor: not-allowed;
   opacity: 0.55;
 }
-.provider-grid span {
+.provider-copy {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+.provider-copy strong {
+  font-weight: 700;
+  line-height: 1.25;
 }
 .provider-grid small {
   color: #667085;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
 .field-row {
@@ -193,6 +201,15 @@ legend {
   color: #667085;
   font-size: 13px;
 }
+.empty-config {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px dashed #d7dce5;
+  border-radius: 10px;
+  color: #667085;
+  background: #fafbfc;
+  font-size: 13px;
+}
 
 button {
   padding: 11px 16px;
@@ -220,10 +237,6 @@ button.secondary {
   width: min(640px, 100%);
   text-align: center;
 }
-.status-card .phase-pill {
-  display: inline-block;
-  margin: 12px 0 0;
-}
 .status-card code {
   overflow-wrap: anywhere;
 }
@@ -242,9 +255,11 @@ button.secondary {
 }
 
 .conversation-shell {
+  --composer-height: 180px;
+
   width: min(1220px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 32px 0 220px;
+  padding: 32px 0 calc(var(--composer-height) + 48px);
 }
 .conversation-header,
 .section-heading,
@@ -260,6 +275,9 @@ button.secondary {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 20px;
+}
+.conversation-header > div:first-child {
+  min-width: 0;
 }
 .conversation-header h1,
 .conversation-header p,
@@ -288,6 +306,7 @@ button.secondary {
 }
 .status-stack {
   display: grid;
+  flex: 0 0 auto;
   justify-items: end;
   gap: 4px;
   text-align: right;
@@ -398,11 +417,55 @@ button.secondary {
 .reasoning-card p {
   white-space: pre-wrap;
 }
+.markdown-content {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.markdown-fallback {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+.markdown-content p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content blockquote {
+  margin: 0.55em 0;
+}
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 1.4em;
+}
+.markdown-content code {
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  background: #eef0f4;
+  font-size: 0.92em;
+}
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+}
+.markdown-content blockquote {
+  padding-left: 12px;
+  border-left: 3px solid #ccd2ff;
+  color: #4b5565;
+}
+.markdown-content a {
+  color: #4353c7;
+}
 .tool-call,
 .reasoning-card {
   margin-top: 10px;
   color: #4b5565;
   font-size: 12px;
+  scroll-margin-bottom: calc(var(--composer-height) + 32px);
 }
 pre {
   max-width: 100%;
@@ -544,8 +607,11 @@ pre {
   left: 16px;
   z-index: 10;
   width: min(1188px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
   margin: 0 auto;
   padding: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .pending-input {
   margin-bottom: 10px;
@@ -555,6 +621,13 @@ pre {
 }
 .pending-input .choice-row {
   margin-top: 9px;
+  max-height: min(220px, 30dvh);
+  padding: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.pending-input .choice-row button {
+  text-align: left;
 }
 .plan-mode {
   display: inline-flex;
@@ -596,6 +669,9 @@ pre {
   .brand h1 {
     font-size: 25px;
   }
+  .runtime-pill {
+    display: none;
+  }
   .launch-card {
     padding: 20px;
   }
@@ -606,16 +682,22 @@ pre {
   .conversation-shell {
     width: min(100% - 20px, 840px);
     padding-top: 18px;
-    padding-bottom: 270px;
+    padding-bottom: calc(var(--composer-height) + 28px);
   }
   .conversation-header {
-    align-items: flex-start;
+    display: grid;
+    gap: 12px;
   }
   .conversation-header h1 {
     font-size: 25px;
   }
   .status-stack {
-    max-width: 42%;
+    display: flex;
+    max-width: none;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    text-align: left;
   }
   .conversation-grid {
     grid-template-columns: 1fr;
@@ -626,19 +708,35 @@ pre {
   .message-bubble {
     width: 94%;
   }
+  .messages-card {
+    min-height: 320px;
+    padding: 14px;
+  }
   .composer-card {
     right: 10px;
     bottom: 10px;
     left: 10px;
     width: calc(100% - 20px);
+    padding: 10px;
   }
-  .composer-row {
-    grid-template-columns: 1fr;
+  .composer-row textarea {
+    min-height: 60px;
   }
   .composer-row > button {
-    width: 100%;
+    min-width: 100px;
   }
   .composer-footer {
     align-items: flex-end;
+  }
+  .composer-footer small {
+    max-width: 68%;
+    font-size: 10px;
+  }
+  .pending-input .choice-row {
+    max-height: min(120px, 18dvh);
+  }
+  .pending-input .choice-row button {
+    width: 100%;
+    padding: 8px 10px;
   }
 }
