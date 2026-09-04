@@ -161,6 +161,7 @@ describe("conversationReducer", () => {
           message: "complete",
           callId: null,
           toolName: null,
+          messageSequence: null,
         },
       },
     });
@@ -201,6 +202,7 @@ describe("conversationReducer", () => {
           message: "complete",
           callId: null,
           toolName: null,
+          messageSequence: null,
         },
       },
     });

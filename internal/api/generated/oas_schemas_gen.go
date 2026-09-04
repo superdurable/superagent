@@ -309,6 +309,8 @@ type AgentEvent struct {
 	Message  string      `json:"message"`
 	CallId   NilCallID   `json:"callId"`
 	ToolName NilToolName `json:"toolName"`
+	// Durable assistant message produced by this model invocation, or null for unrelated activity.
+	MessageSequence NilSequence `json:"messageSequence"`
 }
 
 // GetKind returns the value of Kind.
@@ -331,6 +333,11 @@ func (s *AgentEvent) GetToolName() NilToolName {
 	return s.ToolName
 }
 
+// GetMessageSequence returns the value of MessageSequence.
+func (s *AgentEvent) GetMessageSequence() NilSequence {
+	return s.MessageSequence
+}
+
 // SetKind sets the value of Kind.
 func (s *AgentEvent) SetKind(val EventKind) {
 	s.Kind = val
@@ -349,6 +356,11 @@ func (s *AgentEvent) SetCallId(val NilCallID) {
 // SetToolName sets the value of ToolName.
 func (s *AgentEvent) SetToolName(val NilToolName) {
 	s.ToolName = val
+}
+
+// SetMessageSequence sets the value of MessageSequence.
+func (s *AgentEvent) SetMessageSequence(val NilSequence) {
+	s.MessageSequence = val
 }
 
 // Ref: #/components/schemas/AgentMessage

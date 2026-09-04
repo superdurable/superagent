@@ -1254,6 +1254,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		assistantWriter:   assistantWriter,
 		reasoningWriter:   reasoningWriter,
 		activityWriteFunc: step.flow.writeActivity,
+		messageSequence:   state.NextSequence,
 	}
 	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + "."}); activityErr != nil {
 		return nil, activityErr
@@ -1273,7 +1274,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		FlowID:         FlowID(ctx.FlowID()),
 	})
 	if err != nil {
-		if eventErr := step.flow.writeActivity(ctx, AgentEvent{Kind: EventKindModelFailed, Message: "Model request failed."}); eventErr != nil {
+		if eventErr := progress.writeActivity(AgentEvent{Kind: EventKindModelFailed, Message: "Model request failed."}); eventErr != nil {
 			return nil, errors.Join(err, eventErr)
 		}
 		return nil, err
@@ -1281,13 +1282,17 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	if strings.TrimSpace(reply.Content) == "" && len(reply.ToolCalls) == 0 {
 		return nil, errors.New("the model returned no content or tool calls")
 	}
-	if _, appendErr := step.flow.appendMessage(ctx, AgentMessage{
+	messageSequence, appendErr := step.flow.appendMessage(ctx, AgentMessage{
 		Role:                 MessageRoleAssistant,
 		Content:              reply.Content,
 		ToolCalls:            reply.ToolCalls,
 		ProviderContextItems: reply.ProviderContextItems,
-	}); appendErr != nil {
+	})
+	if appendErr != nil {
 		return nil, appendErr
+	}
+	if messageSequence != progress.messageSequence {
+		return nil, fmt.Errorf("assistant message sequence changed from %d to %d", progress.messageSequence, messageSequence)
 	}
 	eventMessage := "Model response completed."
 	if len(reply.ToolCalls) > 0 {
@@ -1297,7 +1302,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		eventMessage = "Model requested: " + strings.Join(names, ", ")
 	}
-	if activityErr := step.flow.writeActivity(ctx, AgentEvent{Kind: EventKindModelCompleted, Message: eventMessage}); activityErr != nil {
+	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelCompleted, Message: eventMessage}); activityErr != nil {
 		return nil, activityErr
 	}
 	state, err = agentStateAttribute.Get(ctx)
@@ -1795,6 +1800,7 @@ type modelProgress struct {
 	assistantWriter   *dex.BufferedTextStream
 	reasoningWriter   *dex.BufferedTextStream
 	activityWriteFunc func(dex.Context, AgentEvent) error
+	messageSequence   Sequence
 }
 
 func (progress modelProgress) writeAssistant(chunk string) error {
@@ -1818,6 +1824,7 @@ func (progress modelProgress) writeActivity(event AgentEvent) error {
 	}); err != nil {
 		return err
 	}
+	event.MessageSequence = &progress.messageSequence
 	return progress.activityWriteFunc(progress.ctx, event)
 }
 
