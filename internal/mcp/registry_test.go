@@ -84,6 +84,9 @@ func TestDefinitionsIncludeBrokersOnlyWhenServersExist(t *testing.T) {
 	if got := empty.Definitions(nil, nil); len(got) != 0 {
 		t.Fatalf("empty definitions = %+v", got)
 	}
+	if got := empty.ServerNames(); got == nil {
+		t.Fatal("empty server names must be an initialized slice")
+	}
 	configured, err := NewRegistry([]ServerConfig{{Name: "one", Transport: TransportStdio, Command: "server"}}, slog.Default())
 	if err != nil {
 		t.Fatal(err)

@@ -213,7 +213,7 @@ func (registry *Registry) Close() {
 func (registry *Registry) ServerNames() []string {
 	registry.mutex.RLock()
 	defer registry.mutex.RUnlock()
-	return append([]string(nil), registry.serverNames...)
+	return append(make([]string, 0, len(registry.serverNames)), registry.serverNames...)
 }
 
 // RegisteredTools returns immutable discovered tool projections in stable order.
