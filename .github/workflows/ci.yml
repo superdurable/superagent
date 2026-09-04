@@ -68,9 +68,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Set up Temporal CLI
-        uses: temporalio/setup-temporal@1059a504f87e7fa2f385e3fa40d1aa7e62f1c6ca # v0
-        with:
-          version: 1.8.2
+        run: make install-temporal
       - name: Install released dexcli
         run: make install-dexcli
       - name: Start Dex and run integration parity
@@ -78,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           dex_log="$RUNNER_TEMP/dexcli.log"
-          .cache/dexcli-v0.1.21 dev \
+          PATH="$PWD/.cache/temporal-v1.8.2:$PATH" .cache/dexcli-v0.1.21 dev \
             -open=false \
             -blob-store-dir "$RUNNER_TEMP/dex-blobs" \
             -sqlite-db-filename "$RUNNER_TEMP/dex.sqlite.db" \

@@ -290,7 +290,7 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 3 upstream parity | Compared Dex PR 448 merge `d09a5d7b` file-by-file; recorded eight immutable source and test blobs; mapped every supported Python workflow to equal or stronger Go coverage |
 | 2026-09-03 | Phase 3 Dex integration | Released CLI `v0.1.21` and Go SDK `v0.2.12`: durability plus stale/completed plan rejection, multi-call input cancellation, choices across Worker replacement, plan clearing, disabled tools, and FIFO batch steering passed in 22.666s |
 | 2026-09-03 | Phase 3 Flow Definition | Checksum-verified CLI `v0.1.21` reproduced `flow-definitions/ai-agent.json` directly from `internal/agent/flow.go` with a valid graph and zero diagnostics |
-| 2026-09-03 | Phase 3 quality | Full `make check` passed generation drift, format, builds, vet, staticcheck, golangci-lint, actionlint, unit/race, 23 Vitest checks, Playwright, govulncheck, and npm audit |
+| 2026-09-03 | Phase 3 quality | Full `make check` passed generation drift, format, builds, vet, staticcheck, golangci-lint, actionlint, unit/race, 23 Vitest checks, Playwright, govulncheck, and the OSV lockfile scan |
 | 2026-09-03 | Phase 3 fuzz | Domain decoders completed 4,418,813 executions in 30 seconds without failure |
 | 2026-09-03 | Phase 3 live provider | Root `.env`-backed OpenAI Responses API test passed without logging or staging credentials |
 | 2026-09-03 | Phase 3 cutover | Deleted all 251 Python-oracle files; governance forbids restoration; backend and frontend build as independent release artifacts |
