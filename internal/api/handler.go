@@ -785,7 +785,19 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 	} else {
 		toolName.SetTo(transportapi.ToolName(*event.ToolName))
 	}
-	return transportapi.AgentEvent{Kind: kind, Message: event.Message, CallId: callID, ToolName: toolName}, nil
+	messageSequence := transportapi.NilSequence{}
+	if event.MessageSequence == nil {
+		messageSequence.SetToNull()
+	} else {
+		messageSequence.SetTo(transportapi.Sequence(*event.MessageSequence))
+	}
+	return transportapi.AgentEvent{
+		Kind:            kind,
+		Message:         event.Message,
+		CallId:          callID,
+		ToolName:        toolName,
+		MessageSequence: messageSequence,
+	}, nil
 }
 
 func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {

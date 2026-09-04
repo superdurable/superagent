@@ -769,10 +769,11 @@ type PendingUserInput struct {
 
 // AgentEvent is emitted to the best-effort activity Stream.
 type AgentEvent struct {
-	Kind     EventKind `json:"kind"`
-	Message  string    `json:"message"`
-	CallID   *CallID   `json:"call_id,omitempty"`
-	ToolName *ToolName `json:"tool_name,omitempty"`
+	Kind            EventKind `json:"kind"`
+	Message         string    `json:"message"`
+	CallID          *CallID   `json:"call_id,omitempty"`
+	ToolName        *ToolName `json:"tool_name,omitempty"`
+	MessageSequence *Sequence `json:"message_sequence,omitempty"`
 }
 
 // StreamEvent is one typed best-effort Stream message.

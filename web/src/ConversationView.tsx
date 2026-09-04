@@ -29,6 +29,7 @@ import {
   type QueueCommandAction,
   type ActiveConversationState,
 } from "./conversation-state";
+import { buildConversationTimeline } from "./conversation-timeline";
 
 const MarkdownContent = lazy(() => import("./MarkdownContent"));
 
@@ -70,6 +71,11 @@ export function ConversationView({
   const isBusy = state.pendingCommand !== null;
   const pendingMessageID = pendingQueueMessageID(state);
   const builtInToolNames = new Set(builtInTools);
+  const timeline = buildConversationTimeline(
+    snapshot.history.messages,
+    state.reasoning,
+    state.activities,
+  );
   const liveContentVersion =
     state.activities.length +
     (state.assistant?.value.length ?? 0) +
@@ -141,7 +147,24 @@ export function ConversationView({
                 <p>Your messages and durable Agent replies will appear here.</p>
               </div>
             )}
-            {snapshot.history.messages.map(({ sequence, message }) => {
+            {timeline.map((entry) => {
+              if (entry.kind === "reasoning") {
+                return (
+                  <details
+                    className="reasoning-card"
+                    key={`reasoning:${entry.value.source}`}
+                    open={!entry.value.isComplete}
+                    onToggle={revealOpenedDetails}
+                  >
+                    <summary>
+                      Reasoning summary · {formatTime(entry.value.createdAt)} ·{" "}
+                      {entry.value.isComplete ? "Complete" : "Streaming"}
+                    </summary>
+                    <RichText value={entry.value.value} />
+                  </details>
+                );
+              }
+              const { sequence, message } = entry.value;
               const visibleToolCalls = message.toolCalls.filter(
                 (call) => !builtInToolNames.has(call.name),
               );
@@ -156,7 +179,7 @@ export function ConversationView({
               return (
                 <article
                   className={`message-bubble ${message.role}`}
-                  key={sequence}
+                  key={`message:${String(sequence)}`}
                 >
                   <div className="message-meta">
                     <strong>{messageRoleLabel(message.role)}</strong>
@@ -183,20 +206,6 @@ export function ConversationView({
                 </article>
               );
             })}
-            {state.reasoning.map((entry) => (
-              <details
-                className="reasoning-card"
-                key={entry.source}
-                open={!entry.isComplete}
-                onToggle={revealOpenedDetails}
-              >
-                <summary>
-                  Reasoning summary · {formatTime(entry.createdAt)} ·{" "}
-                  {entry.isComplete ? "Complete" : "Streaming"}
-                </summary>
-                <RichText value={entry.value} />
-              </details>
-            ))}
             {state.assistant !== null && (
               <article className="message-bubble assistant live-message">
                 <div className="message-meta">
