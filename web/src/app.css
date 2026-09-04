@@ -348,6 +348,7 @@ button.secondary {
 .conversation-main,
 .conversation-sidebar {
   display: grid;
+  min-width: 0;
   gap: 16px;
 }
 .messages-card,
@@ -361,6 +362,7 @@ button.secondary {
 }
 .messages-card {
   display: grid;
+  min-width: 0;
   gap: 12px;
   min-height: 420px;
   padding: 18px;
@@ -382,6 +384,8 @@ button.secondary {
 }
 .message-bubble {
   width: min(86%, 720px);
+  min-width: 0;
+  max-width: 100%;
   padding: 13px 15px;
   border: 1px solid #e3e7ed;
   border-radius: 15px;
@@ -418,6 +422,8 @@ button.secondary {
   white-space: pre-wrap;
 }
 .markdown-content {
+  min-width: 0;
+  max-width: 100%;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -459,6 +465,32 @@ button.secondary {
 }
 .markdown-content a {
   color: #4353c7;
+}
+.markdown-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+.markdown-content table {
+  width: max-content;
+  min-width: min(560px, 100%);
+  border-collapse: collapse;
+  overflow-wrap: normal;
+}
+.markdown-content th,
+.markdown-content td {
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid #dfe3ea;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.markdown-content th {
+  background: #f5f6f8;
 }
 .tool-call,
 .reasoning-card {

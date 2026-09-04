@@ -191,10 +191,11 @@ export function Conversation({
       ? state.snapshot.description.status
       : null;
   useEffect(() => {
-    if (snapshotStatus !== AgentStatus.INITIALIZING) return;
+    const delay = fastSnapshotDelay(snapshotStatus);
+    if (delay === null) return;
     const timeout = window.setTimeout(() => {
-      dispatch({ type: "request-snapshot", connection: "stale" });
-    }, 250);
+      dispatch({ type: "request-snapshot", connection: "live" });
+    }, delay);
     return () => {
       window.clearTimeout(timeout);
     };
@@ -213,7 +214,9 @@ export function Conversation({
     window.addEventListener("online", requestReconciliation);
     document.addEventListener("visibilitychange", onVisibilityChange);
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") requestReconciliation();
+      if (document.visibilityState === "visible") {
+        dispatch({ type: "request-snapshot", connection: "live" });
+      }
     }, 8_000);
     return () => {
       window.clearInterval(interval);
@@ -481,6 +484,24 @@ function statusLabel(value: string): string {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function fastSnapshotDelay(status: AgentStatus | null): number | null {
+  switch (status) {
+    case AgentStatus.INITIALIZING:
+      return 250;
+    case AgentStatus.COMPACTING_CONTEXT:
+    case AgentStatus.CALLING_MODEL:
+    case AgentStatus.ROUTING_TOOL:
+    case AgentStatus.EXECUTING_TOOL:
+    case AgentStatus.APPLYING_STEERING:
+      return 750;
+    case AgentStatus.WAITING_FOR_MESSAGE:
+    case AgentStatus.WAITING_FOR_TOOL_APPROVAL:
+    case AgentStatus.WAITING_FOR_TIMER:
+    case null:
+      return null;
+  }
 }
 
 async function waitBeforeNextPoll(signal: AbortSignal): Promise<void> {

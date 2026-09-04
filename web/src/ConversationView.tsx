@@ -202,7 +202,8 @@ export function ConversationView({
                 <div className="message-meta">
                   <strong>Assistant</strong>
                   <span>
-                    {formatTime(state.assistant.createdAt)} · Streaming
+                    {formatTime(state.assistant.createdAt)} ·{" "}
+                    {state.assistant.isComplete ? "Finalizing" : "Streaming"}
                   </span>
                 </div>
                 <RichText value={state.assistant.value} />

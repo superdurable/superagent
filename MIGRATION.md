@@ -293,4 +293,5 @@ zero legacy read requests and exactly one initial Snapshot request.
 | 2026-09-03 | Phase 3 quality | Full `make check` passed generation drift, format, builds, vet, staticcheck, golangci-lint, actionlint, unit/race, 23 Vitest checks, Playwright, govulncheck, and the OSV lockfile scan |
 | 2026-09-03 | Phase 3 fuzz | Domain decoders completed 4,418,813 executions in 30 seconds without failure |
 | 2026-09-03 | Phase 3 live provider | Root `.env`-backed OpenAI Responses API test passed without logging or staging credentials |
+| 2026-09-03 | Phase 3 long conversation | Three-turn OpenAI browser run streamed provider reasoning summaries and assistant text, retained context, committed 3+3 durable messages, recovered from refresh without duplicate live text, and passed desktop/mobile overflow checks; full `make check` passed with 29 Vitest checks |
 | 2026-09-03 | Phase 3 cutover | Deleted all 251 Python-oracle files; governance forbids restoration; backend and frontend build as independent release artifacts |
