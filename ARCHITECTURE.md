@@ -69,12 +69,18 @@ The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
 and Run identity through one reducer action. Three cancellable event polls apply
 assistant, reasoning-summary, and activity deltas. Reasoning entries are keyed
-by the producing model invocation source. Activity, disconnect, command
-completion, an eight-second visible-page fallback, focus, online, visibility
-recovery, or explicit retry reconciles another Snapshot. The four legacy reads
-do not exist.
+by the producing model invocation source. Completion activity marks later text
+from the same source as finalizing instead of starting a second live response.
+Busy Agent states reconcile frequently until the durable Step commit becomes
+visible. The visible-page fallback reconciles every eight seconds without
+marking a healthy connection stale. Disconnect, command completion, focus,
+online, visibility recovery, or explicit retry also reconciles a Snapshot. The
+four legacy reads do not exist.
 
 Resume tokens belong to the live subscription and are not durable UI state.
+Retained events may replay after refresh. Completed-source tracking prevents
+those events from duplicating durable assistant messages and keeps replayed
+reasoning summaries in a completed state.
 Every poll, Snapshot, and command owns cancellation and rejects stale responses.
 Message send displays one local, non-actionable `Submitting` item until Snapshot
 reveals the durable queue or history result. Failure restores its composer text

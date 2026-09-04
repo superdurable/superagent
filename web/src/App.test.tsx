@@ -135,6 +135,39 @@ describe("App", () => {
     expect(startAgent).not.toHaveBeenCalled();
   });
 
+  it("prefers a configured provider and omits unavailable MCP controls", async () => {
+    const mockProvider = portal.providers[0];
+    if (mockProvider === undefined) throw new Error("expected mock provider");
+    vi.mocked(getPortal).mockResolvedValueOnce({
+      ...portal,
+      providers: [
+        mockProvider,
+        {
+          id: Provider.OPENAI,
+          label: "OpenAI",
+          modelPrefix: "openai",
+          defaultModel: "gpt-5-mini",
+          credentialEnvironmentVariable: "OPENAI_API_KEY",
+          configured: true,
+        },
+      ],
+      mcpServers: [],
+      tools: [],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("radio", { name: /OpenAI/ })).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", { name: "Enable trusted MCP servers" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No trusted MCP servers are configured for this Worker.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("atomically loads one Snapshot when resuming a Flow", async () => {
     window.history.replaceState({}, "", "/?flowId=flow-existing");
 
@@ -245,5 +278,79 @@ describe("App", () => {
     expect(await screen.findByText("Submitting…")).toBeInTheDocument();
     expect(screen.getByText("new work")).toBeInTheDocument();
     expect(composer).toHaveValue("");
+  });
+
+  it("fills the composer from a durable input choice", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.WAITING_FOR_MESSAGE,
+        pendingUserInput: {
+          callId: "call-1",
+          prompt: "Choose a pace",
+          choices: ["Relaxed", "Fast"],
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Relaxed" }));
+
+    expect(
+      screen.getByRole("textbox", { name: "Answer Agent question" }),
+    ).toHaveValue("Relaxed");
+    expect(screen.getByRole("button", { name: "Submit answer" })).toBeEnabled();
+  });
+
+  it("renders assistant Markdown without exposing built-in tool records", async () => {
+    vi.mocked(getPortal).mockResolvedValueOnce({
+      ...portal,
+      builtInTools: ["request_user_input"],
+    });
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      history: {
+        messages: [
+          {
+            sequence: 1,
+            message: {
+              role: "assistant",
+              content: "**Durable reply**",
+              toolCalls: [
+                {
+                  id: "call-1",
+                  name: "request_user_input",
+                  argumentsJson: '{"prompt":"Choose"}',
+                },
+              ],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-03T00:00:00Z",
+            },
+          },
+          {
+            sequence: 2,
+            message: {
+              role: "tool",
+              content: '{"status":"waiting_for_user"}',
+              toolCalls: [],
+              toolCallId: "call-1",
+              toolName: "request_user_input",
+              createdAt: "2026-09-03T00:00:01Z",
+            },
+          },
+        ],
+        nextBeforeSequence: null,
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    const reply = await screen.findByText("Durable reply");
+    expect(reply.tagName).toBe("STRONG");
+    expect(screen.queryByText(/waiting_for_user/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tool request/)).not.toBeInTheDocument();
   });
 });

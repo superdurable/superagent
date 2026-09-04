@@ -48,6 +48,41 @@ func TestHTTPHandlerDoesNotServeFrontendRoutes(t *testing.T) {
 	}
 }
 
+func TestPortalEncodesEmptyMCPArrays(t *testing.T) {
+	t.Parallel()
+	apiHandler := NewHandler(
+		&fakeAgentService{},
+		emptyToolCatalog{},
+		fakeCredentials{},
+		func() bool { return true },
+		slog.New(slog.DiscardHandler),
+	)
+	handler, err := NewHTTPHandler(apiHandler, &config.HTTP{}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/products/ai-agent/portal",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var portal transportapi.Portal
+	if err := portal.UnmarshalJSON(response.Body.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if portal.McpServers == nil || portal.Tools == nil {
+		t.Fatalf("MCP arrays must encode as arrays: %#v", portal)
+	}
+}
+
 func TestSnapshotResponseCannotBeCached(t *testing.T) {
 	t.Parallel()
 	service := &fakeAgentService{snapshot: agent.AgentSnapshot{

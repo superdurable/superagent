@@ -5,6 +5,7 @@
  */
 
 import {
+  AgentStatus,
   EventKind,
   type AgentDescription,
   type AgentEvent,
@@ -41,6 +42,10 @@ interface LiveText {
   source: string;
   createdAt: string;
   value: string;
+}
+
+interface AssistantEntry extends LiveText {
+  isComplete: boolean;
 }
 
 export interface ReasoningEntry extends LiveText {
@@ -83,7 +88,7 @@ interface ReadyConversationBase {
   optimisticSubmission: OptimisticSubmission | null;
   composer: string;
   isPlanMode: boolean;
-  assistant: LiveText | null;
+  assistant: AssistantEntry | null;
   reasoning: ReasoningEntry[];
   activities: ActivityEntry[];
   error: string | null;
@@ -240,6 +245,9 @@ function reconcileSnapshot(
     previous !== null &&
     snapshot.description.lastSequence >
       previous.snapshot.description.lastSequence;
+  const hasCommittedAssistant =
+    previous?.assistant?.isComplete === true &&
+    snapshot.description.status !== AgentStatus.CALLING_MODEL;
   return {
     kind: "ready",
     lifecycle: "active",
@@ -258,7 +266,10 @@ function reconcileSnapshot(
     ),
     composer: previous?.composer ?? "",
     isPlanMode: previous?.isPlanMode ?? false,
-    assistant: hasDurableProgress ? null : (previous?.assistant ?? null),
+    assistant:
+      hasDurableProgress || hasCommittedAssistant
+        ? null
+        : (previous?.assistant ?? null),
     reasoning: hasDurableProgress
       ? completeReasoning(previous.reasoning)
       : (previous?.reasoning ?? []),
@@ -426,24 +437,40 @@ function applyLiveUpdate(
   update: LiveUpdate,
 ): ActiveConversationState {
   switch (update.kind) {
-    case "assistant":
+    case "assistant": {
+      const isComplete = isModelFinishedForSource(
+        state.activities,
+        update.source,
+      );
+      if (
+        isComplete &&
+        state.snapshot.description.status === AgentStatus.WAITING_FOR_MESSAGE
+      ) {
+        return state;
+      }
       return {
         ...state,
-        assistant: appendLiveText(state.assistant, update),
+        assistant: appendAssistant(state.assistant, update, isComplete),
       };
+    }
     case "reasoning":
       return {
         ...state,
-        reasoning: appendReasoning(state.reasoning, update),
+        reasoning: appendReasoning(
+          state.reasoning,
+          update,
+          isModelFinishedForSource(state.activities, update.source),
+        ),
       };
     case "activity":
       return {
         ...state,
-        assistant:
-          isModelFinished(update.value.kind) &&
-          state.assistant?.source === update.source
+        assistant: isModelFinished(update.value.kind)
+          ? state.snapshot.description.status ===
+            AgentStatus.WAITING_FOR_MESSAGE
             ? null
-            : state.assistant,
+            : completeAssistantSource(state.assistant, update.source)
+          : state.assistant,
         reasoning: isModelFinished(update.value.kind)
           ? completeReasoningSource(state.reasoning, update.source)
           : state.reasoning,
@@ -452,24 +479,44 @@ function applyLiveUpdate(
   }
 }
 
-function appendLiveText(current: LiveText | null, update: LiveText): LiveText {
-  if (current?.source !== update.source) return update;
-  return { ...current, value: current.value + update.value };
+function appendAssistant(
+  current: AssistantEntry | null,
+  update: LiveText,
+  isComplete: boolean,
+): AssistantEntry {
+  if (current?.source !== update.source) return { ...update, isComplete };
+  return {
+    ...current,
+    value: current.value + update.value,
+    isComplete: current.isComplete || isComplete,
+  };
 }
 
 function appendReasoning(
   entries: ReasoningEntry[],
   update: LiveText,
+  isComplete: boolean,
 ): ReasoningEntry[] {
   const index = entries.findIndex((entry) => entry.source === update.source);
   if (index < 0) {
-    return [...entries, { ...update, isComplete: false }].slice(-20);
+    return [...entries, { ...update, isComplete }].slice(-20);
   }
   return entries.map((entry, entryIndex) =>
     entryIndex === index
-      ? { ...entry, value: entry.value + update.value, isComplete: false }
+      ? {
+          ...entry,
+          value: entry.value + update.value,
+          isComplete: entry.isComplete || isComplete,
+        }
       : entry,
   );
+}
+
+function completeAssistantSource(
+  entry: AssistantEntry | null,
+  source: string,
+): AssistantEntry | null {
+  return entry?.source === source ? { ...entry, isComplete: true } : entry;
 }
 
 function completeReasoning(entries: ReasoningEntry[]): ReasoningEntry[] {
@@ -487,6 +534,15 @@ function completeReasoningSource(
 
 function isModelFinished(kind: AgentEvent["kind"]): boolean {
   return kind === EventKind.MODEL_COMPLETED || kind === EventKind.MODEL_FAILED;
+}
+
+function isModelFinishedForSource(
+  activities: ActivityEntry[],
+  source: string,
+): boolean {
+  return activities.some(
+    (entry) => entry.source === source && isModelFinished(entry.value.kind),
+  );
 }
 
 export function pendingQueueMessageID(

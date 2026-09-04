@@ -175,6 +175,93 @@ describe("conversationReducer", () => {
     });
   });
 
+  it("keeps late Stream batches complete until Snapshot reconciliation", () => {
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshotWithStatus(AgentStatus.CALLING_MODEL),
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "assistant",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:01Z",
+        value: "answer ",
+      },
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "activity",
+        resumeToken: "activity-1",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:02Z",
+        value: {
+          kind: EventKind.MODEL_COMPLETED,
+          message: "complete",
+          callId: null,
+          toolName: null,
+        },
+      },
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "assistant",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:03Z",
+        value: "tail",
+      },
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "reasoning",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:04Z",
+        value: "late summary",
+      },
+    });
+
+    expect(state).toMatchObject({
+      assistant: {
+        source: "model-call-1",
+        value: "answer tail",
+        isComplete: true,
+      },
+      reasoning: [
+        {
+          source: "model-call-1",
+          value: "late summary",
+          isComplete: true,
+        },
+      ],
+    });
+
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: snapshotWithStatus(AgentStatus.CALLING_MODEL),
+    });
+    expect(state).toMatchObject({ assistant: { value: "answer tail" } });
+
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: snapshotWithStatus(AgentStatus.WAITING_FOR_MESSAGE),
+    });
+    expect(state).toMatchObject({ assistant: null });
+
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "assistant",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:05Z",
+        value: "replayed tail",
+      },
+    });
+    expect(state).toMatchObject({ assistant: null });
+  });
+
   it("shows a submitting queue item and restores the composer on failure", () => {
     let state = conversationReducer(initialConversationState(), {
       type: "snapshot-loaded",
@@ -303,5 +390,14 @@ function snapshot(
       },
     ],
     steered: [],
+  };
+}
+
+function snapshotWithStatus(status: AgentStatus): AgentSnapshot {
+  const value = snapshot("run-1", "queued-1", "hello");
+  if (value.description === null) throw new Error("expected active Snapshot");
+  return {
+    ...value,
+    description: { ...value.description, status },
   };
 }
