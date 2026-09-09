@@ -368,6 +368,8 @@ type fakeAgentService struct {
 	eventErr         error
 }
 
+var _ AgentService = (*fakeAgentService)(nil)
+
 func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, config agent.AgentConfig) (agent.RunID, error) {
 	service.startCalls++
 	service.started = config
@@ -424,6 +426,8 @@ func (credentials fakeCredentials) HasAPIKey(_ agent.FlowID, provider agent.Prov
 
 type fakeToolCatalog struct{}
 
+var _ ToolCatalog = fakeToolCatalog{}
+
 func (fakeToolCatalog) ServerNames() []string { return []string{"files"} }
 
 func (fakeToolCatalog) RegisteredTools() []agent.RegisteredTool {
@@ -435,6 +439,8 @@ func (fakeToolCatalog) Definitions([]string, []agent.ToolName) []agent.ToolDefin
 }
 
 type emptyToolCatalog struct{}
+
+var _ ToolCatalog = emptyToolCatalog{}
 
 func (emptyToolCatalog) ServerNames() []string { return []string{} }
 

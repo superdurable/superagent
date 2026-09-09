@@ -36,6 +36,8 @@ type corsHandler struct {
 	logger         *slog.Logger
 }
 
+var _ http.Handler = (*corsHandler)(nil)
+
 func newCORSHandler(next http.Handler, httpConfig *config.HTTP, logger *slog.Logger) http.Handler {
 	if next == nil || httpConfig == nil || logger == nil {
 		panic("CORS handler dependencies are required")

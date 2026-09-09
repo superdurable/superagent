@@ -32,6 +32,8 @@ type Client struct {
 	groq      agent.ModelClient
 }
 
+var _ agent.ModelClient = (*Client)(nil)
+
 // NewClient constructs the provider router.
 func NewClient(
 	mock *MockClient,

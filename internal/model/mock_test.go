@@ -24,7 +24,7 @@ import (
 	"github.com/superdurable/superagent/internal/agent"
 )
 
-func TestMockClientPlansAndWaitsLikePython(t *testing.T) {
+func TestMockClientPlansAndWaitsDeterministically(t *testing.T) {
 	client := NewMockClient()
 	tests := []struct {
 		name       string

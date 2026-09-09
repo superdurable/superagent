@@ -1,5 +1,5 @@
 ---
-description: Dex application modeling and Snapshot phase constraints
+description: Dex application modeling and Snapshot constraints
 globs: "{internal,cmd}/**/*.go"
 alwaysApply: false
 ---
@@ -14,13 +14,15 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill.
 - Use only the installed released SDK and version-matched runnable examples or
   real-server compile-contract tests.
 - Keep the static Flow graph and resource use visible to `dexcli visualize`.
+- Generate Flow Definition JSON only in temporary directories and reject every
+  visualizer diagnostic in CI.
 - Put durable conditions in `WaitFor` and external effects in `Execute`.
 - Treat each WaitFor, Execute, and RPC as an independent atomic boundary.
 - Use typed Attributes for state, Channels for delivery, and buffered Streams
   for best-effort deltas.
 - Do not expose resource getter wrappers.
-- Snapshot is the only durable browser read model. Do not add the legacy
-  history, queue-read, describe, or status HTTP endpoints.
+- Snapshot is the only durable browser read model. Do not add parallel durable
+  read models.
 - Queue mutation accepts only message IDs loaded through Snapshot.
 - Application history is `AgentMessages`, never Dex execution history.
 - SuperAgent does not load the skill at application runtime.

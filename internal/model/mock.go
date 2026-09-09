@@ -32,12 +32,14 @@ import (
 // MockClient provides deterministic credential-free local behavior.
 type MockClient struct{}
 
+var _ agent.ModelClient = (*MockClient)(nil)
+
 // NewMockClient creates the local model adapter.
 func NewMockClient() *MockClient {
 	return &MockClient{}
 }
 
-// Complete implements the Python mock/dex command language.
+// Complete implements the deterministic mock/dex command language.
 func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
 	if request.WriteAssistant == nil || request.WriteReasoning == nil || request.WriteActivity == nil {
 		return agent.ModelReply{}, errors.New("mock model writers are required")
@@ -216,7 +218,7 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 	return agent.ModelReply{Content: content, ToolCalls: []agent.ToolCall{}}, nil
 }
 
-// Summarize creates the same bounded local transcript as Python mock/dex.
+// Summarize creates a bounded local transcript.
 func (*MockClient) Summarize(_ context.Context, request agent.SummarizeRequest) (string, error) {
 	parts := make([]string, 0, len(request.Messages)+1)
 	if request.PreviousSummary != "" {
@@ -236,7 +238,7 @@ func (*MockClient) Summarize(_ context.Context, request agent.SummarizeRequest) 
 	return result, nil
 }
 
-// CountTokens uses the Python mock/dex four-characters estimate.
+// CountTokens uses a four-characters-per-token estimate.
 func (*MockClient) CountTokens(_ agent.Model, messages []agent.AgentMessage) int {
 	total := 0
 	for _, message := range messages {
@@ -465,5 +467,3 @@ func pointerValue(value *agent.ToolName) agent.ToolName {
 	}
 	return *value
 }
-
-var _ agent.ModelClient = (*MockClient)(nil)

@@ -34,6 +34,8 @@ type Flow struct {
 	tools       ToolRegistry
 }
 
+var _ dex.Flow = (*Flow)(nil)
+
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
 func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
 	if modelClient == nil {
@@ -47,12 +49,12 @@ func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
 
 const flowTypeAIAgent = "AIAgentFlow"
 
-// GetFlowType pins the durable identity to the Python Flow name.
+// GetFlowType pins the durable Flow identity.
 func (*Flow) GetFlowType() string {
 	return flowTypeAIAgent
 }
 
-// GetSteps registers the Python-compatible state-machine nodes.
+// GetSteps registers the state-machine nodes.
 func (flow *Flow) GetSteps() []dex.StepDef {
 	return []dex.StepDef{
 		dex.DefineStartStep(initStep{flow: flow}),
@@ -953,8 +955,6 @@ func allTasksCompleted(tasks []PlanTask) bool {
 	return true
 }
 
-var _ dex.Flow = (*Flow)(nil)
-
 const (
 	continueAwaitUser         continuation = "await_user"
 	continueCallModel         continuation = "call_model"
@@ -1030,6 +1030,8 @@ type initStep struct {
 	flow *Flow
 }
 
+var _ dex.Step[AgentConfig] = initStep{}
+
 func (initStep) GetStepType() string { return string(stepTypeInit) }
 
 func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecision, error) {
@@ -1049,6 +1051,8 @@ type awaitUserStep struct {
 	dex.StepDefaults
 	flow *Flow
 }
+
+var _ dex.Step[dex.None] = awaitUserStep{}
 
 func (awaitUserStep) GetStepType() string { return string(stepTypeAwaitUser) }
 
@@ -1143,6 +1147,8 @@ type compactContextStep struct {
 	flow *Flow
 }
 
+var _ dex.Step[Sequence] = compactContextStep{}
+
 func (compactContextStep) GetStepType() string { return string(stepTypeCompactContext) }
 
 func (compactContextStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
@@ -1219,6 +1225,8 @@ type callModelStep struct {
 	dex.StepDefaultsNoWaitFor[dex.None]
 	flow *Flow
 }
+
+var _ dex.Step[dex.None] = callModelStep{}
 
 func (callModelStep) GetStepType() string { return string(stepTypeCallModel) }
 
@@ -1341,6 +1349,8 @@ type checkSteeredStep struct {
 	flow *Flow
 }
 
+var _ dex.Step[continuation] = checkSteeredStep{}
+
 func (checkSteeredStep) GetStepType() string { return string(stepTypeCheckSteered) }
 
 func (checkSteeredStep) WaitFor(_ dex.Context, _ continuation) (*dex.Wait, error) {
@@ -1389,6 +1399,8 @@ type routeToolStep struct {
 	dex.StepDefaultsNoWaitFor[dex.None]
 	flow *Flow
 }
+
+var _ dex.Step[dex.None] = routeToolStep{}
 
 func (routeToolStep) GetStepType() string { return string(stepTypeRouteTool) }
 
@@ -1573,6 +1585,8 @@ type awaitToolApprovalStep struct {
 	flow *Flow
 }
 
+var _ dex.Step[dex.None] = awaitToolApprovalStep{}
+
 func (awaitToolApprovalStep) GetStepType() string { return string(stepTypeAwaitApproval) }
 
 func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
@@ -1647,6 +1661,8 @@ type executeToolStep struct {
 	dex.StepDefaultsNoWaitFor[dex.None]
 	flow *Flow
 }
+
+var _ dex.Step[dex.None] = executeToolStep{}
 
 func (executeToolStep) GetStepType() string { return string(stepTypeExecuteTool) }
 
@@ -1726,6 +1742,8 @@ type durableWaitStep struct {
 	dex.StepDefaults
 	flow *Flow
 }
+
+var _ dex.Step[dex.None] = durableWaitStep{}
 
 func (durableWaitStep) GetStepType() string { return string(stepTypeDurableWait) }
 

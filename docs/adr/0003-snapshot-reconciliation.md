@@ -23,8 +23,8 @@ pending Channel values. The version-matched real-server contract is
 typed domain value. It does not consume, lock, or mutate projected resources.
 
 Application history comes only from `AgentMessages`; Dex execution history is
-not an application data source. The HTTP API exposes only
-`GET /products/ai-agent/snapshot`, never the four earlier read routes.
+not an application data source. `GET /products/ai-agent/snapshot` is the HTTP
+API's durable browser read model.
 
 The React reducer replaces the complete durable view with one Snapshot action.
 Assistant, reasoning-summary, and activity Streams add low-latency updates.

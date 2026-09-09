@@ -41,6 +41,8 @@ type OpenAIClient struct {
 	baseURL     string
 }
 
+var _ agent.ModelClient = (*OpenAIClient)(nil)
+
 // NewOpenAIClient constructs an adapter with an explicitly owned HTTP client.
 func NewOpenAIClient(credentials *CredentialStore, httpClient *http.Client, baseURL string) *OpenAIClient {
 	if credentials == nil {

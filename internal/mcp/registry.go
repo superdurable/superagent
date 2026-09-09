@@ -81,6 +81,8 @@ type Registry struct {
 	httpTransport *http.Transport
 }
 
+var _ agent.ToolRegistry = (*Registry)(nil)
+
 // NewRegistry validates immutable server configuration.
 func NewRegistry(servers []ServerConfig, logger *slog.Logger) (*Registry, error) {
 	if logger == nil {
@@ -616,6 +618,8 @@ type headerTransport struct {
 	headers map[string]string
 }
 
+var _ http.RoundTripper = headerTransport{}
+
 func (transport headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	request = request.Clone(request.Context())
 	request.Header = request.Header.Clone()
@@ -719,6 +723,8 @@ type mcpSDKLogHandler struct {
 	next slog.Handler
 }
 
+var _ slog.Handler = mcpSDKLogHandler{}
+
 func (handler mcpSDKLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return handler.next.Enabled(ctx, level)
 }
@@ -743,5 +749,3 @@ func (handler mcpSDKLogHandler) WithAttrs(_ []slog.Attr) slog.Handler {
 func (handler mcpSDKLogHandler) WithGroup(_ string) slog.Handler {
 	return handler
 }
-
-var _ agent.ToolRegistry = (*Registry)(nil)

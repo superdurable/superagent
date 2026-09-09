@@ -43,6 +43,8 @@ type GeminiClient struct {
 	baseURL     *url.URL
 }
 
+var _ agent.ModelClient = (*GeminiClient)(nil)
+
 // NewGeminiClient constructs a Gemini adapter.
 func NewGeminiClient(credentials *CredentialStore, httpClient *http.Client, baseURL string) (*GeminiClient, error) {
 	if credentials == nil {

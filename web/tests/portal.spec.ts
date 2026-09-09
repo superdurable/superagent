@@ -182,14 +182,4 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
   expect(
     apiRequests.filter((path) => path === "/products/ai-agent/snapshot"),
   ).toHaveLength(1);
-  expect(
-    apiRequests.filter((path) =>
-      [
-        "/products/ai-agent/history",
-        "/products/ai-agent/message-queue",
-        "/products/ai-agent/describe",
-        "/products/ai-agent/status",
-      ].includes(path),
-    ),
-  ).toEqual([]);
 });

@@ -18,8 +18,8 @@ info:
   title: SuperAgent API
   version: 0.2.0
   description: >-
-    Phase 2 command, atomic Snapshot, queue mutation, and live-event contract
-    for the durable AI Agent.
+    Command, atomic Snapshot, queue mutation, and live-event contract for the
+    durable AI Agent.
 servers:
   - url: /
 paths:

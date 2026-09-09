@@ -1,6 +1,6 @@
-.PHONY: audit-web build-api build-web check check-agent-rules check-cutover check-flow-definition \
-	check-generated copyright-check flow-render flow-visualize format-check fuzz generate \
-	generate-flow-definition generate-go generate-web governance-check install-dexcli install-osv-scanner install-temporal lint lint-go lint-web lint-workflows \
+.PHONY: audit-web build-api build-web check check-agent-rules check-flow-definition \
+	check-generated copyright-check flow-visualize format-check fuzz generate \
+	generate-go generate-web governance-check install-dexcli install-osv-scanner install-temporal lint lint-go lint-web lint-workflows \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
 	test-race test-web vet vulnerability-check
 
@@ -12,8 +12,6 @@ OSV_SCANNER_VERSION := v2.5.1
 OSV_SCANNER_BINARY := $(CURDIR)/.cache/osv-scanner-$(OSV_SCANNER_VERSION)
 TEMPORAL_VERSION := v1.8.2
 TEMPORAL_BINARY := $(CURDIR)/.cache/temporal-$(TEMPORAL_VERSION)/temporal
-FLOW_DEFINITION := $(CURDIR)/flow-definitions/ai-agent.json
-FLOW_DEFINITION_PREFIX := $(CURDIR)/flow-definitions/ai-agent
 STATICCHECK_VERSION := v0.7.0
 GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.7.0
@@ -48,10 +46,7 @@ check-agent-rules:
 copyright-check:
 	@sh script/check-license-headers.sh
 
-check-cutover:
-	@sh script/check-cutover.sh
-
-governance-check: check-agent-rules check-cutover copyright-check
+governance-check: check-agent-rules copyright-check
 
 install-dexcli: $(DEXCLI_BINARY)
 
@@ -68,25 +63,26 @@ install-temporal: $(TEMPORAL_BINARY)
 $(TEMPORAL_BINARY): script/install-temporal.sh
 	@sh script/install-temporal.sh "$(TEMPORAL_BINARY)" "$(TEMPORAL_VERSION)"
 
-generate-flow-definition: install-dexcli
-	@mkdir -p "$(CURDIR)/flow-definitions"
-	@cd "$(CURDIR)" && GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go \
-		--language go --json --out "$(FLOW_DEFINITION_PREFIX)"
-
 check-flow-definition: install-dexcli
 	@set -eu; \
 		flow_definition_tmp="$$(mktemp -d)"; \
-		trap 'rm -rf "$${flow_definition_tmp}"' EXIT; \
+		trap 'rm -r "$${flow_definition_tmp}"' EXIT; \
 		cd "$(CURDIR)"; \
-		GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
-			--out "$${flow_definition_tmp}/ai-agent"; \
-		diff -u "$(FLOW_DEFINITION)" "$${flow_definition_tmp}/ai-agent.json"
+		flow_definition="$${flow_definition_tmp}/ai-agent.json"; \
+		if ! GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
+			--out "$${flow_definition_tmp}/ai-agent"; then \
+			test ! -f "$${flow_definition}" || sed -n '/"diagnostics"/,$$p' "$${flow_definition}"; \
+			exit 1; \
+		fi; \
+		if ! grep -Fqx '  "valid": true,' "$${flow_definition}" || \
+			! grep -Fqx '  "diagnostics": []' "$${flow_definition}"; then \
+			echo "Flow definition must be valid with zero diagnostics" >&2; \
+			sed -n '/"diagnostics"/,$$p' "$${flow_definition}" >&2; \
+			exit 1; \
+		fi
 
 flow-visualize: install-dexcli
 	@cd "$(CURDIR)" && GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go
-
-flow-render: generate-flow-definition
-	@"$(DEXCLI_BINARY)" dev --flow-rendering-dir "$(CURDIR)/flow-definitions"
 
 vet:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go vet $(GO_PACKAGES)

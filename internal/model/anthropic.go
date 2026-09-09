@@ -46,6 +46,8 @@ type AnthropicClient struct {
 	baseURL     *url.URL
 }
 
+var _ agent.ModelClient = (*AnthropicClient)(nil)
+
 // NewAnthropicClient constructs an Anthropic adapter.
 func NewAnthropicClient(credentials *CredentialStore, httpClient *http.Client, baseURL string) (*AnthropicClient, error) {
 	if credentials == nil {

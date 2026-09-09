@@ -414,6 +414,8 @@ type EnumValidationError struct {
 	Value string
 }
 
+var _ error = (*EnumValidationError)(nil)
+
 // Error describes the invalid enum without changing its value.
 func (err *EnumValidationError) Error() string {
 	return fmt.Sprintf("invalid %s value %q", err.Type, err.Value)
@@ -802,10 +804,14 @@ type CommandRejectedError struct {
 	Command Command
 }
 
+var _ error = (*CommandRejectedError)(nil)
+
 // PendingMessageNotFoundError reports a queue ID that is no longer pending.
 type PendingMessageNotFoundError struct {
 	MessageID MessageID
 }
+
+var _ error = (*PendingMessageNotFoundError)(nil)
 
 // Error describes the stale queue identity.
 func (err *PendingMessageNotFoundError) Error() string {

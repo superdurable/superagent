@@ -5,8 +5,8 @@
 - Flow type: `AIAgentFlow`
 - Business identity: one stable Flow ID per durable Agent conversation
 - Start input: typed `AgentConfig`
-- Completion: intentionally open-ended in Phase 1; the Agent waits for the next
-  user command after each turn
+- Completion: intentionally open-ended; the Agent waits for the next user
+  command after each turn
 - Command RPCs: `SendMessage`, `SteerMessage`, `ApproveTool`, and `ExecutePlan`
 - Read RPC: `Snapshot`
 
