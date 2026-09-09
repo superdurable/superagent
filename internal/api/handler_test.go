@@ -146,6 +146,7 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 		}}},
 		Description: &agent.AgentDescription{
 			Status:                     agent.AgentStatusWaitingForToolApproval,
+			InteractionStatus:          agent.AgentInteractionStatusWaiting,
 			Model:                      "openai/gpt-5-mini",
 			SystemPrompt:               "be helpful",
 			FirstRetainedSequence:      1,
@@ -163,7 +164,6 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	handler := newTestHandler(service, fakeCredentials{})
 	response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
 		FlowId: "flow-1",
-		Limit:  transportapi.NewOptInt(50),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +210,6 @@ func TestGetAgentSnapshotMapsTerminalFlowResult(t *testing.T) {
 	}}, fakeCredentials{})
 	response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
 		FlowId: "flow-terminal",
-		Limit:  transportapi.NewOptInt(50),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +261,6 @@ func TestGetAgentSnapshotPreservesDexFlowLifecycleErrors(t *testing.T) {
 			handler := newTestHandler(&fakeAgentService{snapshotErr: test.err}, fakeCredentials{})
 			response, err := handler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
 				FlowId: "flow-1",
-				Limit:  transportapi.NewOptInt(50),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -271,6 +269,76 @@ func TestGetAgentSnapshotPreservesDexFlowLifecycleErrors(t *testing.T) {
 				t.Fatalf("response type = %T", response)
 			}
 		})
+	}
+}
+
+func TestGetArchivedMessagesMapsExactChunkAndBoundary(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{archived: agent.HistoryPage{
+		Messages: []agent.SequencedMessage{{
+			Sequence: 1,
+			Message:  agent.AgentMessage{Role: agent.MessageRoleUser, Content: "old", CreatedAt: time.Unix(1, 0).UTC()},
+		}},
+	}}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.GetArchivedMessages(context.Background(), transportapi.GetArchivedMessagesParams{
+		FlowId: "flow-1", BeforeSequence: 11,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, ok := response.(*transportapi.HistoryPageHeaders)
+	if !ok || len(page.Response.Messages) != 1 || page.Response.Messages[0].Message.Content != "old" {
+		t.Fatalf("response = %#v", response)
+	}
+	if page.CacheControl != transportapi.GetArchivedMessagesOKCacheControlNoStore {
+		t.Fatalf("Cache-Control = %q", page.CacheControl)
+	}
+
+	invalid, err := handler.GetArchivedMessages(context.Background(), transportapi.GetArchivedMessagesParams{
+		FlowId: "flow-1", BeforeSequence: 12,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := invalid.(*transportapi.GetArchivedMessagesBadRequest); !ok {
+		t.Fatalf("invalid boundary response = %T", invalid)
+	}
+	tooEarly, err := handler.GetArchivedMessages(context.Background(), transportapi.GetArchivedMessagesParams{
+		FlowId: "flow-1", BeforeSequence: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tooEarly.(*transportapi.GetArchivedMessagesBadRequest); !ok {
+		t.Fatalf("too-early boundary response = %T", tooEarly)
+	}
+}
+
+func TestWaitForAgentInteractionStatusReturnsDurableValueAndTimeout(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.WaitForAgentInteractionStatus(context.Background(), transportapi.WaitForAgentInteractionStatusParams{
+		FlowId: "flow-1", ExpectedStatus: transportapi.AgentInteractionStatusWaiting,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, ok := response.(*transportapi.AgentInteractionState)
+	if !ok || state.Status != transportapi.AgentInteractionStatusWaiting || service.waitedStatus != agent.AgentInteractionStatusWaiting {
+		t.Fatalf("response = %#v, waited = %q", response, service.waitedStatus)
+	}
+
+	service.waitErr = context.DeadlineExceeded
+	response, err = handler.WaitForAgentInteractionStatus(context.Background(), transportapi.WaitForAgentInteractionStatusParams{
+		FlowId: "flow-1", ExpectedStatus: transportapi.AgentInteractionStatusSubmitted,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response.(*transportapi.PollTimeout); !ok {
+		t.Fatalf("timeout response = %T", response)
 	}
 }
 
@@ -360,6 +428,10 @@ type fakeAgentService struct {
 	sendErr          error
 	snapshot         agent.AgentSnapshot
 	snapshotErr      error
+	archived         agent.HistoryPage
+	archivedErr      error
+	waitErr          error
+	waitedStatus     agent.AgentInteractionStatus
 	deletedMessageID agent.MessageID
 	deleteErr        error
 	steeredMessageID agent.MessageID
@@ -383,9 +455,25 @@ func (service *fakeAgentService) SendMessage(context.Context, agent.FlowID, agen
 func (service *fakeAgentService) Snapshot(
 	context.Context,
 	agent.FlowID,
-	agent.SnapshotRequest,
 ) (agent.AgentSnapshot, error) {
 	return service.snapshot, service.snapshotErr
+}
+
+func (service *fakeAgentService) ArchivedMessages(
+	context.Context,
+	agent.FlowID,
+	agent.Sequence,
+) (agent.HistoryPage, error) {
+	return service.archived, service.archivedErr
+}
+
+func (service *fakeAgentService) WaitForInteractionStatus(
+	_ context.Context,
+	_ agent.FlowID,
+	status agent.AgentInteractionStatus,
+) error {
+	service.waitedStatus = status
+	return service.waitErr
 }
 
 func (service *fakeAgentService) DeleteQueuedMessage(

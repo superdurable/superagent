@@ -13,16 +13,18 @@ import {
 } from "react";
 
 import {
-  AgentStatus,
+  AgentInteractionStatus,
   EventStream,
   PollTimeoutReason,
   approveTool,
   deleteQueuedMessage,
   executePlan,
   getAgentSnapshot,
+  getArchivedMessages,
   readEvent,
   sendMessage,
   steerQueuedMessage,
+  waitForAgentInteractionStatus,
   type CallId,
   type FlowId,
   type PendingUserMessage,
@@ -40,7 +42,6 @@ import {
 } from "./conversation-state";
 import { ConversationView } from "./ConversationView";
 
-const snapshotPageSize = 50;
 const eventStreams = [
   EventStream.REASONING,
   EventStream.ASSISTANT,
@@ -75,7 +76,7 @@ export function Conversation({
     const controller = new AbortController();
     let isCurrent = true;
     void getAgentSnapshot({
-      query: { flowId, limit: snapshotPageSize },
+      query: { flowId },
       signal: controller.signal,
     })
       .then((snapshot) => {
@@ -100,17 +101,16 @@ export function Conversation({
     if (historyRequest === null) return;
     const controller = new AbortController();
     let isCurrent = true;
-    void getAgentSnapshot({
+    void getArchivedMessages({
       query: {
         flowId,
         beforeSequence: historyRequest.beforeSequence,
-        limit: snapshotPageSize,
       },
       signal: controller.signal,
     })
-      .then((snapshot) => {
+      .then((page) => {
         if (isCurrent) {
-          dispatch({ type: "older-loaded", id: historyRequest.id, snapshot });
+          dispatch({ type: "older-loaded", id: historyRequest.id, page });
         }
       })
       .catch((reason: unknown) => {
@@ -136,15 +136,6 @@ export function Conversation({
     if (subscriptionGeneration < 0) return;
     const controller = new AbortController();
     let isCurrent = true;
-    let reconciliationTimeout: number | null = null;
-    const scheduleReconciliation = () => {
-      if (reconciliationTimeout !== null) {
-        window.clearTimeout(reconciliationTimeout);
-      }
-      reconciliationTimeout = window.setTimeout(() => {
-        dispatch({ type: "request-snapshot", connection: "live" });
-      }, 200);
-    };
     const poll = async (stream: EventStream): Promise<void> => {
       let resumeToken = resumeTokens.current[stream];
       while (isCurrent && !controller.signal.aborted) {
@@ -157,9 +148,6 @@ export function Conversation({
           resumeTokens.current[stream] = resumeToken;
           const update = liveUpdate(stream, event);
           dispatch({ type: "stream-update", update });
-          if (update.kind === "activity") {
-            scheduleReconciliation();
-          }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
           if (isPollTimeout(reason)) {
@@ -180,49 +168,66 @@ export function Conversation({
     return () => {
       isCurrent = false;
       controller.abort();
-      if (reconciliationTimeout !== null) {
-        window.clearTimeout(reconciliationTimeout);
-      }
     };
   }, [flowId, subscriptionGeneration]);
 
-  const snapshotStatus =
+  const interactionStatus =
     state.kind === "ready" && state.lifecycle === "active"
-      ? state.snapshot.description.status
+      ? state.snapshot.description.interactionStatus
       : null;
   useEffect(() => {
-    const delay = fastSnapshotDelay(snapshotStatus);
-    if (delay === null) return;
-    const timeout = window.setTimeout(() => {
-      dispatch({ type: "request-snapshot", connection: "live" });
-    }, delay);
-    return () => {
-      window.clearTimeout(timeout);
+    if (interactionStatus === null) return;
+    const controller = new AbortController();
+    let isCurrent = true;
+    const wait = async (): Promise<void> => {
+      let expectedStatus =
+        interactionStatus === AgentInteractionStatus.WAITING
+          ? AgentInteractionStatus.SUBMITTED
+          : AgentInteractionStatus.WAITING;
+      while (isCurrent && !controller.signal.aborted) {
+        try {
+          const result = await waitForAgentInteractionStatus({
+            query: { flowId, expectedStatus },
+            signal: controller.signal,
+          });
+          expectedStatus =
+            result.status === AgentInteractionStatus.WAITING
+              ? AgentInteractionStatus.SUBMITTED
+              : AgentInteractionStatus.WAITING;
+          if (result.status === AgentInteractionStatus.WAITING) {
+            dispatch({ type: "request-snapshot", connection: "live" });
+          }
+        } catch (reason: unknown) {
+          if (isAbortError(reason)) return;
+          if (isPollTimeout(reason)) {
+            await waitBeforeNextPoll(controller.signal);
+            continue;
+          }
+          dispatch({
+            type: "stream-failed",
+            message: `Durable status disconnected: ${errorMessage(reason)}`,
+          });
+          return;
+        }
+      }
     };
-  }, [snapshotStatus, state.snapshotRequest]);
+    void wait();
+    return () => {
+      isCurrent = false;
+      controller.abort();
+    };
+  }, [flowId, interactionStatus, subscriptionGeneration]);
 
   const isActive = state.kind === "ready" && state.lifecycle === "active";
   useEffect(() => {
     if (!isActive) return;
-    const requestReconciliation = () => {
-      dispatch({ type: "request-snapshot", connection: "stale" });
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") requestReconciliation();
-    };
-    window.addEventListener("focus", requestReconciliation);
-    window.addEventListener("online", requestReconciliation);
-    document.addEventListener("visibilitychange", onVisibilityChange);
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         dispatch({ type: "request-snapshot", connection: "live" });
       }
-    }, 8_000);
+    }, 10_000);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", requestReconciliation);
-      window.removeEventListener("online", requestReconciliation);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [isActive]);
 
@@ -484,24 +489,6 @@ function statusLabel(value: string): string {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-function fastSnapshotDelay(status: AgentStatus | null): number | null {
-  switch (status) {
-    case AgentStatus.INITIALIZING:
-      return 250;
-    case AgentStatus.COMPACTING_CONTEXT:
-    case AgentStatus.CALLING_MODEL:
-    case AgentStatus.ROUTING_TOOL:
-    case AgentStatus.EXECUTING_TOOL:
-    case AgentStatus.APPLYING_STEERING:
-      return 750;
-    case AgentStatus.WAITING_FOR_MESSAGE:
-    case AgentStatus.WAITING_FOR_TOOL_APPROVAL:
-    case AgentStatus.WAITING_FOR_TIMER:
-    case null:
-      return null;
-  }
 }
 
 async function waitBeforeNextPoll(signal: AbortSignal): Promise<void> {

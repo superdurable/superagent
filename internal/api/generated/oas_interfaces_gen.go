@@ -17,6 +17,10 @@ type GetAgentSnapshotRes interface {
 	getAgentSnapshotRes()
 }
 
+type GetArchivedMessagesRes interface {
+	getArchivedMessagesRes()
+}
+
 type GetPortalRes interface {
 	getPortalRes()
 }
@@ -39,4 +43,8 @@ type StartAgentRes interface {
 
 type SteerQueuedMessageRes interface {
 	steerQueuedMessageRes()
+}
+
+type WaitForAgentInteractionStatusRes interface {
+	waitForAgentInteractionStatusRes()
 }

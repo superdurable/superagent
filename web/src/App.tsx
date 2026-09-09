@@ -72,7 +72,7 @@ function initialForm(portal: Portal): LaunchForm {
     model: provider.defaultModel,
     systemPrompt: defaultSystemPrompt,
     maxContextTokens: 32_000,
-    messageRetentionLimit: 2_000,
+    messageRetentionLimit: 1_000,
     mcpEnabled: portal.mcpServers.length > 0,
     enabledMcpServers: [...portal.mcpServers],
     enabledTools: portal.tools.map((tool) => tool.name),
@@ -339,7 +339,9 @@ function LaunchPortal({
           <NumberInput
             label="Retained messages"
             value={state.form.messageRetentionLimit}
+            minimum={20}
             maximum={1_000_000}
+            step={10}
             disabled={state.submitting}
             onChange={(value) => {
               dispatch({
@@ -417,13 +419,17 @@ function LaunchPortal({
 function NumberInput({
   label,
   value,
+  minimum = 1,
   maximum,
+  step = 1,
   disabled,
   onChange,
 }: {
   label: string;
   value: number;
+  minimum?: number;
   maximum: number;
+  step?: number;
   disabled: boolean;
   onChange: (value: number) => void;
 }) {
@@ -433,8 +439,9 @@ function NumberInput({
       <input
         type="number"
         value={value}
-        min={1}
+        min={minimum}
         max={maximum}
+        step={step}
         required
         disabled={disabled}
         onChange={(event) => {

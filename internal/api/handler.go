@@ -34,7 +34,9 @@ import (
 type AgentService interface {
 	Start(context.Context, agent.FlowID, agent.AgentConfig) (agent.RunID, error)
 	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
-	Snapshot(context.Context, agent.FlowID, agent.SnapshotRequest) (agent.AgentSnapshot, error)
+	Snapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
+	ArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
+	WaitForInteractionStatus(context.Context, agent.FlowID, agent.AgentInteractionStatus) error
 	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
 	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
 	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error
@@ -193,13 +195,8 @@ func (handler *Handler) GetAgentSnapshot(
 	ctx context.Context,
 	params transportapi.GetAgentSnapshotParams,
 ) (transportapi.GetAgentSnapshotRes, error) {
-	request := agent.SnapshotRequest{Limit: params.Limit.Or(50)}
-	if beforeSequence, ok := params.BeforeSequence.Get(); ok {
-		sequence := agent.Sequence(beforeSequence)
-		request.BeforeSequence = &sequence
-	}
 	flowID := agent.FlowID(params.FlowId)
-	snapshot, err := handler.agent.Snapshot(ctx, flowID, request)
+	snapshot, err := handler.agent.Snapshot(ctx, flowID)
 	if err != nil {
 		return handler.snapshotError(ctx, flowID, err), nil
 	}
@@ -213,6 +210,49 @@ func (handler *Handler) GetAgentSnapshot(
 		CacheControl: transportapi.GetAgentSnapshotOKCacheControlNoStore,
 		Response:     result,
 	}, nil
+}
+
+// GetArchivedMessages reads one exact archived history chunk.
+func (handler *Handler) GetArchivedMessages(
+	ctx context.Context,
+	params transportapi.GetArchivedMessagesParams,
+) (transportapi.GetArchivedMessagesRes, error) {
+	if params.BeforeSequence <= 10 || (params.BeforeSequence-1)%10 != 0 {
+		problem := newProblem(400, "Bad Request", "beforeSequence must identify an archive boundary")
+		return (*transportapi.GetArchivedMessagesBadRequest)(&problem), nil
+	}
+	flowID := agent.FlowID(params.FlowId)
+	page, err := handler.agent.ArchivedMessages(ctx, flowID, agent.Sequence(params.BeforeSequence))
+	if err != nil {
+		return handler.archivedMessagesError(ctx, flowID, err), nil
+	}
+	result, err := transportHistoryPage(page)
+	if err != nil {
+		handler.logFailure(ctx, flowID, err)
+		problem := newProblem(503, "Service Unavailable", "the archived messages could not be encoded")
+		return (*transportapi.GetArchivedMessagesServiceUnavailable)(&problem), nil
+	}
+	return &transportapi.HistoryPageHeaders{
+		CacheControl: transportapi.GetArchivedMessagesOKCacheControlNoStore,
+		Response:     result,
+	}, nil
+}
+
+// WaitForAgentInteractionStatus waits for one exact durable status value.
+func (handler *Handler) WaitForAgentInteractionStatus(
+	ctx context.Context,
+	params transportapi.WaitForAgentInteractionStatusParams,
+) (transportapi.WaitForAgentInteractionStatusRes, error) {
+	expected, err := domainAgentInteractionStatus(params.ExpectedStatus)
+	if err != nil {
+		problem := problemBadRequest(err)
+		return (*transportapi.WaitForAgentInteractionStatusBadRequest)(&problem), nil
+	}
+	flowID := agent.FlowID(params.FlowId)
+	if err := handler.agent.WaitForInteractionStatus(ctx, flowID, expected); err != nil {
+		return handler.waitForInteractionStatusError(ctx, flowID, err)
+	}
+	return &transportapi.AgentInteractionState{Status: params.ExpectedStatus}, nil
 }
 
 // DeleteQueuedMessage removes one exact pending queued user message.
@@ -351,6 +391,17 @@ func domainEventStream(stream transportapi.EventStream) (agent.EventStream, erro
 		return agent.EventStreamActivity, nil
 	default:
 		return "", &agent.EnumValidationError{Type: "EventStream", Value: string(stream)}
+	}
+}
+
+func domainAgentInteractionStatus(status transportapi.AgentInteractionStatus) (agent.AgentInteractionStatus, error) {
+	switch status {
+	case transportapi.AgentInteractionStatusSubmitted:
+		return agent.AgentInteractionStatusSubmitted, nil
+	case transportapi.AgentInteractionStatusWaiting:
+		return agent.AgentInteractionStatusWaiting, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "AgentInteractionStatus", Value: string(status)}
 	}
 }
 
@@ -528,6 +579,10 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 	if err != nil {
 		return transportapi.AgentDescription{}, err
 	}
+	interactionStatus, err := transportAgentInteractionStatus(description.InteractionStatus)
+	if err != nil {
+		return transportapi.AgentDescription{}, err
+	}
 	plan, err := transportOptionalAgentPlan(description.Plan)
 	if err != nil {
 		return transportapi.AgentDescription{}, err
@@ -540,6 +595,7 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 	copy(availableMCPServers, description.AvailableMCPServers)
 	return transportapi.AgentDescription{
 		Status:                     status,
+		InteractionStatus:          interactionStatus,
 		Model:                      string(description.Model),
 		SystemPrompt:               description.SystemPrompt,
 		FirstRetainedSequence:      int64(description.FirstRetainedSequence),
@@ -555,6 +611,17 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 		AvailableMcpServers:        availableMCPServers,
 		AvailableTools:             availableTools,
 	}, nil
+}
+
+func transportAgentInteractionStatus(status agent.AgentInteractionStatus) (transportapi.AgentInteractionStatus, error) {
+	switch status {
+	case agent.AgentInteractionStatusSubmitted:
+		return transportapi.AgentInteractionStatusSubmitted, nil
+	case agent.AgentInteractionStatusWaiting:
+		return transportapi.AgentInteractionStatusWaiting, nil
+	default:
+		return "", &agent.EnumValidationError{Type: "AgentInteractionStatus", Value: string(status)}
+	}
 }
 
 func transportPendingUserMessages(messages []agent.PendingUserMessage) []transportapi.PendingUserMessage {
@@ -872,8 +939,11 @@ func classifyFailure(err error) failureKind {
 	var channelMessageNotFound *dex.ChannelMessageNotFoundError
 	var rejected *agent.CommandRejectedError
 	var pendingMessageNotFound *agent.PendingMessageNotFoundError
+	var archivedMessagesNotFound *agent.ArchivedMessagesNotFoundError
 	switch {
 	case errors.As(err, &notFound):
+		return failureNotFound
+	case errors.As(err, &archivedMessagesNotFound):
 		return failureNotFound
 	case errors.As(err, &conflict),
 		errors.As(err, &inactive),
@@ -957,6 +1027,22 @@ func (handler *Handler) snapshotError(ctx context.Context, flowID agent.FlowID, 
 	}
 }
 
+func (handler *Handler) archivedMessagesError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) transportapi.GetArchivedMessagesRes {
+	handler.logFailure(ctx, flowID, err)
+	switch classifyFailure(err) {
+	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the archived message chunk does not exist")
+		return (*transportapi.GetArchivedMessagesNotFound)(&problem)
+	default:
+		problem := newProblem(503, "Service Unavailable", "the archived messages are unavailable")
+		return (*transportapi.GetArchivedMessagesServiceUnavailable)(&problem)
+	}
+}
+
 func (handler *Handler) deleteQueuedMessageError(
 	ctx context.Context,
 	flowID agent.FlowID,
@@ -1026,6 +1112,32 @@ func (handler *Handler) readEventError(ctx context.Context, flowID agent.FlowID,
 	default:
 		problem := newProblem(503, "Service Unavailable", "the event Stream is unavailable")
 		return (*transportapi.ReadEventServiceUnavailable)(&problem), nil
+	}
+}
+
+func (handler *Handler) waitForInteractionStatusError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) (transportapi.WaitForAgentInteractionStatusRes, error) {
+	if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+		return nil, ctx.Err()
+	}
+	var pollTimeout *dex.LongPollTimeoutError
+	if errors.As(err, &pollTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		return &transportapi.PollTimeout{Reason: transportapi.PollTimeoutReasonTimeout}, nil
+	}
+	handler.logFailure(ctx, flowID, err)
+	switch classifyFailure(err) {
+	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
+		return (*transportapi.WaitForAgentInteractionStatusNotFound)(&problem), nil
+	case failureConflict:
+		problem := newProblem(409, "Conflict", "the Agent Flow is no longer active")
+		return (*transportapi.WaitForAgentInteractionStatusConflict)(&problem), nil
+	default:
+		problem := newProblem(503, "Service Unavailable", "the interaction status is unavailable")
+		return (*transportapi.WaitForAgentInteractionStatusServiceUnavailable)(&problem), nil
 	}
 }
 

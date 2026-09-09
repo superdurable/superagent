@@ -93,6 +93,7 @@ func TestSnapshotResponseCannotBeCached(t *testing.T) {
 		},
 		Description: &agent.AgentDescription{
 			Status:              agent.AgentStatusInitializing,
+			InteractionStatus:   agent.AgentInteractionStatusSubmitted,
 			Model:               "mock/reliable",
 			AvailableMCPServers: []string{},
 			AvailableTools:      []agent.ToolName{},
@@ -103,7 +104,6 @@ func TestSnapshotResponseCannotBeCached(t *testing.T) {
 	apiHandler := newTestHandler(service, fakeCredentials{})
 	directResponse, err := apiHandler.GetAgentSnapshot(context.Background(), transportapi.GetAgentSnapshotParams{
 		FlowId: "flow-1",
-		Limit:  transportapi.NewOptInt(50),
 	})
 	if err != nil {
 		t.Fatal(err)

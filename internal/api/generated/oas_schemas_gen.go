@@ -136,26 +136,32 @@ func (s *ActivityStreamEventKind) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/AgentDescription
 type AgentDescription struct {
-	Status                     AgentStatus         `json:"status"`
-	Model                      string              `json:"model"`
-	SystemPrompt               string              `json:"systemPrompt"`
-	FirstRetainedSequence      int64               `json:"firstRetainedSequence"`
-	LastSequence               int64               `json:"lastSequence"`
-	SummarizedThroughSequence  int64               `json:"summarizedThroughSequence"`
-	PendingApproval            NilPendingApproval  `json:"pendingApproval"`
-	PendingTimer               NilPendingTimer     `json:"pendingTimer"`
-	PendingUserInput           NilPendingUserInput `json:"pendingUserInput"`
-	Plan                       NilAgentPlan        `json:"plan"`
-	IsPlanExecutionRequested   bool                `json:"isPlanExecutionRequested"`
-	PendingQueuedMessageCount  int                 `json:"pendingQueuedMessageCount"`
-	PendingSteeredMessageCount int                 `json:"pendingSteeredMessageCount"`
-	AvailableMcpServers        []string            `json:"availableMcpServers"`
-	AvailableTools             []ToolName          `json:"availableTools"`
+	Status                     AgentStatus            `json:"status"`
+	InteractionStatus          AgentInteractionStatus `json:"interactionStatus"`
+	Model                      string                 `json:"model"`
+	SystemPrompt               string                 `json:"systemPrompt"`
+	FirstRetainedSequence      int64                  `json:"firstRetainedSequence"`
+	LastSequence               int64                  `json:"lastSequence"`
+	SummarizedThroughSequence  int64                  `json:"summarizedThroughSequence"`
+	PendingApproval            NilPendingApproval     `json:"pendingApproval"`
+	PendingTimer               NilPendingTimer        `json:"pendingTimer"`
+	PendingUserInput           NilPendingUserInput    `json:"pendingUserInput"`
+	Plan                       NilAgentPlan           `json:"plan"`
+	IsPlanExecutionRequested   bool                   `json:"isPlanExecutionRequested"`
+	PendingQueuedMessageCount  int                    `json:"pendingQueuedMessageCount"`
+	PendingSteeredMessageCount int                    `json:"pendingSteeredMessageCount"`
+	AvailableMcpServers        []string               `json:"availableMcpServers"`
+	AvailableTools             []ToolName             `json:"availableTools"`
 }
 
 // GetStatus returns the value of Status.
 func (s *AgentDescription) GetStatus() AgentStatus {
 	return s.Status
+}
+
+// GetInteractionStatus returns the value of InteractionStatus.
+func (s *AgentDescription) GetInteractionStatus() AgentInteractionStatus {
+	return s.InteractionStatus
 }
 
 // GetModel returns the value of Model.
@@ -231,6 +237,11 @@ func (s *AgentDescription) GetAvailableTools() []ToolName {
 // SetStatus sets the value of Status.
 func (s *AgentDescription) SetStatus(val AgentStatus) {
 	s.Status = val
+}
+
+// SetInteractionStatus sets the value of InteractionStatus.
+func (s *AgentDescription) SetInteractionStatus(val AgentInteractionStatus) {
+	s.InteractionStatus = val
 }
 
 // SetModel sets the value of Model.
@@ -361,6 +372,65 @@ func (s *AgentEvent) SetToolName(val NilToolName) {
 // SetMessageSequence sets the value of MessageSequence.
 func (s *AgentEvent) SetMessageSequence(val NilSequence) {
 	s.MessageSequence = val
+}
+
+// Ref: #/components/schemas/AgentInteractionState
+type AgentInteractionState struct {
+	Status AgentInteractionStatus `json:"status"`
+}
+
+// GetStatus returns the value of Status.
+func (s *AgentInteractionState) GetStatus() AgentInteractionStatus {
+	return s.Status
+}
+
+// SetStatus sets the value of Status.
+func (s *AgentInteractionState) SetStatus(val AgentInteractionStatus) {
+	s.Status = val
+}
+
+func (*AgentInteractionState) waitForAgentInteractionStatusRes() {}
+
+// Ref: #/components/schemas/AgentInteractionStatus
+type AgentInteractionStatus string
+
+const (
+	AgentInteractionStatusSubmitted AgentInteractionStatus = "submitted"
+	AgentInteractionStatusWaiting   AgentInteractionStatus = "waiting"
+)
+
+// AllValues returns all AgentInteractionStatus values.
+func (AgentInteractionStatus) AllValues() []AgentInteractionStatus {
+	return []AgentInteractionStatus{
+		AgentInteractionStatusSubmitted,
+		AgentInteractionStatusWaiting,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AgentInteractionStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case AgentInteractionStatusSubmitted:
+		return []byte(s), nil
+	case AgentInteractionStatusWaiting:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AgentInteractionStatus) UnmarshalText(data []byte) error {
+	switch AgentInteractionStatus(data) {
+	case AgentInteractionStatusSubmitted:
+		*s = AgentInteractionStatusSubmitted
+		return nil
+	case AgentInteractionStatusWaiting:
+		*s = AgentInteractionStatusWaiting
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/AgentMessage
@@ -1207,6 +1277,52 @@ type GetAgentSnapshotServiceUnavailable Problem
 
 func (*GetAgentSnapshotServiceUnavailable) getAgentSnapshotRes() {}
 
+type GetArchivedMessagesBadRequest Problem
+
+func (*GetArchivedMessagesBadRequest) getArchivedMessagesRes() {}
+
+type GetArchivedMessagesNotFound Problem
+
+func (*GetArchivedMessagesNotFound) getArchivedMessagesRes() {}
+
+type GetArchivedMessagesOKCacheControl string
+
+const (
+	GetArchivedMessagesOKCacheControlNoStore GetArchivedMessagesOKCacheControl = "no-store"
+)
+
+// AllValues returns all GetArchivedMessagesOKCacheControl values.
+func (GetArchivedMessagesOKCacheControl) AllValues() []GetArchivedMessagesOKCacheControl {
+	return []GetArchivedMessagesOKCacheControl{
+		GetArchivedMessagesOKCacheControlNoStore,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s GetArchivedMessagesOKCacheControl) MarshalText() ([]byte, error) {
+	switch s {
+	case GetArchivedMessagesOKCacheControlNoStore:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *GetArchivedMessagesOKCacheControl) UnmarshalText(data []byte) error {
+	switch GetArchivedMessagesOKCacheControl(data) {
+	case GetArchivedMessagesOKCacheControlNoStore:
+		*s = GetArchivedMessagesOKCacheControlNoStore
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type GetArchivedMessagesServiceUnavailable Problem
+
+func (*GetArchivedMessagesServiceUnavailable) getArchivedMessagesRes() {}
+
 // Ref: #/components/schemas/Health
 type Health struct {
 	Status HealthStatus `json:"status"`
@@ -1284,6 +1400,34 @@ func (s *HistoryPage) SetMessages(val []SequencedMessage) {
 func (s *HistoryPage) SetNextBeforeSequence(val NilSequence) {
 	s.NextBeforeSequence = val
 }
+
+// HistoryPageHeaders wraps HistoryPage with response headers.
+type HistoryPageHeaders struct {
+	CacheControl GetArchivedMessagesOKCacheControl
+	Response     HistoryPage
+}
+
+// GetCacheControl returns the value of CacheControl.
+func (s *HistoryPageHeaders) GetCacheControl() GetArchivedMessagesOKCacheControl {
+	return s.CacheControl
+}
+
+// GetResponse returns the value of Response.
+func (s *HistoryPageHeaders) GetResponse() HistoryPage {
+	return s.Response
+}
+
+// SetCacheControl sets the value of CacheControl.
+func (s *HistoryPageHeaders) SetCacheControl(val GetArchivedMessagesOKCacheControl) {
+	s.CacheControl = val
+}
+
+// SetResponse sets the value of Response.
+func (s *HistoryPageHeaders) SetResponse(val HistoryPage) {
+	s.Response = val
+}
+
+func (*HistoryPageHeaders) getArchivedMessagesRes() {}
 
 type MessageID string
 
@@ -1839,52 +1983,6 @@ func (o OptFloat64) Or(d float64) float64 {
 	return d
 }
 
-// NewOptInt returns new OptInt with value set to v.
-func NewOptInt(v int) OptInt {
-	return OptInt{
-		Value: v,
-		Set:   true,
-	}
-}
-
-// OptInt is optional int.
-type OptInt struct {
-	Value int
-	Set   bool
-}
-
-// IsSet returns true if OptInt was set.
-func (o OptInt) IsSet() bool { return o.Set }
-
-// Reset unsets value.
-func (o *OptInt) Reset() {
-	var v int
-	o.Value = v
-	o.Set = false
-}
-
-// SetTo sets value to v.
-func (o *OptInt) SetTo(v int) {
-	o.Set = true
-	o.Value = v
-}
-
-// Get returns value and boolean that denotes whether value was set.
-func (o OptInt) Get() (v int, ok bool) {
-	if !o.Set {
-		return v, false
-	}
-	return o.Value, true
-}
-
-// Or returns value if set, or given parameter if does not.
-func (o OptInt) Or(d int) int {
-	if v, ok := o.Get(); ok {
-		return v
-	}
-	return d
-}
-
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -1993,52 +2091,6 @@ func (o OptResumeToken) Get() (v ResumeToken, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptResumeToken) Or(d ResumeToken) ResumeToken {
-	if v, ok := o.Get(); ok {
-		return v
-	}
-	return d
-}
-
-// NewOptSequence returns new OptSequence with value set to v.
-func NewOptSequence(v Sequence) OptSequence {
-	return OptSequence{
-		Value: v,
-		Set:   true,
-	}
-}
-
-// OptSequence is optional Sequence.
-type OptSequence struct {
-	Value Sequence
-	Set   bool
-}
-
-// IsSet returns true if OptSequence was set.
-func (o OptSequence) IsSet() bool { return o.Set }
-
-// Reset unsets value.
-func (o *OptSequence) Reset() {
-	var v Sequence
-	o.Value = v
-	o.Set = false
-}
-
-// SetTo sets value to v.
-func (o *OptSequence) SetTo(v Sequence) {
-	o.Set = true
-	o.Value = v
-}
-
-// Get returns value and boolean that denotes whether value was set.
-func (o OptSequence) Get() (v Sequence, ok bool) {
-	if !o.Set {
-		return v, false
-	}
-	return o.Value, true
-}
-
-// Or returns value if set, or given parameter if does not.
-func (o OptSequence) Or(d Sequence) Sequence {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2318,7 +2370,8 @@ func (s *PollTimeout) SetReason(val PollTimeoutReason) {
 	s.Reason = val
 }
 
-func (*PollTimeout) readEventRes() {}
+func (*PollTimeout) readEventRes()                     {}
+func (*PollTimeout) waitForAgentInteractionStatusRes() {}
 
 // Ref: #/components/schemas/PollTimeoutReason
 type PollTimeoutReason string
@@ -3365,3 +3418,19 @@ func (s *UserMessage) SetContent(val string) {
 func (s *UserMessage) SetPlanMode(val bool) {
 	s.PlanMode = val
 }
+
+type WaitForAgentInteractionStatusBadRequest Problem
+
+func (*WaitForAgentInteractionStatusBadRequest) waitForAgentInteractionStatusRes() {}
+
+type WaitForAgentInteractionStatusConflict Problem
+
+func (*WaitForAgentInteractionStatusConflict) waitForAgentInteractionStatusRes() {}
+
+type WaitForAgentInteractionStatusNotFound Problem
+
+func (*WaitForAgentInteractionStatusNotFound) waitForAgentInteractionStatusRes() {}
+
+type WaitForAgentInteractionStatusServiceUnavailable Problem
+
+func (*WaitForAgentInteractionStatusServiceUnavailable) waitForAgentInteractionStatusRes() {}

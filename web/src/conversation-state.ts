@@ -10,6 +10,7 @@ import {
   type AgentDescription,
   type AgentEvent,
   type AgentSnapshot,
+  type HistoryPage,
   type MessageId,
   type PendingUserMessage,
   type ResumeToken,
@@ -74,6 +75,7 @@ interface OptimisticSubmission {
   value: UserMessage;
   submittedAfterSequence: Sequence;
   knownMessageIDs: readonly MessageId[];
+  phase: "submitting" | "queued";
 }
 
 type ActiveSnapshot = AgentSnapshot & { description: AgentDescription };
@@ -85,7 +87,7 @@ interface ReadyConversationBase {
   subscriptionGeneration: number;
   historyRequest: HistoryRequest | null;
   pendingCommand: { id: number; command: Command } | null;
-  optimisticSubmission: OptimisticSubmission | null;
+  optimisticSubmissions: OptimisticSubmission[];
   composer: string;
   isPlanMode: boolean;
   assistant: AssistantEntry | null;
@@ -119,7 +121,7 @@ export type ConversationAction =
   | { type: "snapshot-failed"; message: string }
   | { type: "request-snapshot"; connection: ActiveConnectionState }
   | { type: "older-requested"; id: number; beforeSequence: Sequence }
-  | { type: "older-loaded"; id: number; snapshot: AgentSnapshot }
+  | { type: "older-loaded"; id: number; page: HistoryPage }
   | { type: "older-failed"; id: number; message: string }
   | { type: "stream-update"; update: LiveUpdate }
   | { type: "stream-failed"; message: string }
@@ -171,7 +173,7 @@ export function conversationReducer(
           }
         : state;
     case "older-loaded":
-      return mergeOlderHistory(state, action.id, action.snapshot);
+      return mergeOlderHistory(state, action.id, action.page);
     case "older-failed":
       if (
         state.kind !== "ready" ||
@@ -220,12 +222,7 @@ export function conversationReducer(
       ) {
         return state;
       }
-      return {
-        ...state,
-        pendingCommand: null,
-        snapshotRequest: state.snapshotRequest + 1,
-        error: null,
-      };
+      return completeCommand(state, action.id);
     case "command-failed":
       return failCommand(state, action.id, action.message);
   }
@@ -238,9 +235,20 @@ function reconcileSnapshot(
   if (snapshot.description === null) {
     return terminalState({ ...snapshot, description: null }, state);
   }
-  const activeSnapshot = { ...snapshot, description: snapshot.description };
   const previous =
     state.kind === "ready" && state.lifecycle === "active" ? state : null;
+  const activeSnapshot = {
+    ...snapshot,
+    description: snapshot.description,
+    history:
+      previous?.snapshot.runId === snapshot.runId
+        ? reconcileHistory(
+            previous.snapshot.history,
+            snapshot.history,
+            snapshot.description.firstRetainedSequence,
+          )
+        : snapshot.history,
+  };
   const hasDurableProgress =
     previous !== null &&
     snapshot.description.lastSequence >
@@ -260,8 +268,8 @@ function reconcileSnapshot(
         : (previous?.subscriptionGeneration ?? 0),
     historyRequest: null,
     pendingCommand: previous?.pendingCommand ?? null,
-    optimisticSubmission: reconcileOptimisticSubmission(
-      previous?.optimisticSubmission ?? null,
+    optimisticSubmissions: reconcileOptimisticSubmissions(
+      previous?.optimisticSubmissions ?? [],
       activeSnapshot,
     ),
     composer: previous?.composer ?? "",
@@ -292,7 +300,7 @@ function terminalState(
     subscriptionGeneration: priorReady?.subscriptionGeneration ?? 0,
     historyRequest: null,
     pendingCommand: null,
-    optimisticSubmission: null,
+    optimisticSubmissions: [],
     composer: priorReady?.composer ?? "",
     isPlanMode: priorReady?.isPlanMode ?? false,
     assistant: null,
@@ -305,27 +313,22 @@ function terminalState(
 function mergeOlderHistory(
   state: ConversationState,
   requestID: number,
-  snapshot: AgentSnapshot,
+  page: HistoryPage,
 ): ConversationState {
   if (
     state.kind !== "ready" ||
     state.lifecycle === "terminal" ||
-    state.historyRequest?.id !== requestID ||
-    snapshot.description === null
+    state.historyRequest?.id !== requestID
   ) {
     return state;
   }
   return {
     ...state,
     snapshot: {
-      ...snapshot,
-      description: snapshot.description,
+      ...state.snapshot,
       history: {
-        messages: [
-          ...snapshot.history.messages,
-          ...state.snapshot.history.messages,
-        ],
-        nextBeforeSequence: snapshot.history.nextBeforeSequence,
+        messages: mergeMessages(page.messages, state.snapshot.history.messages),
+        nextBeforeSequence: page.nextBeforeSequence,
       },
     },
     historyRequest: null,
@@ -343,12 +346,16 @@ function beginCommand(
       ...state,
       composer: "",
       isPlanMode: false,
-      optimisticSubmission: {
-        localID: `submitting-${String(id)}`,
-        value: command.value,
-        submittedAfterSequence: command.submittedAfterSequence,
-        knownMessageIDs: command.knownMessageIDs,
-      },
+      optimisticSubmissions: [
+        ...state.optimisticSubmissions,
+        {
+          localID: `submitting-${String(id)}`,
+          value: command.value,
+          submittedAfterSequence: command.submittedAfterSequence,
+          knownMessageIDs: command.knownMessageIDs,
+          phase: "submitting",
+        },
+      ],
       pendingCommand: { id, command },
       error: null,
     };
@@ -359,14 +366,20 @@ function beginCommand(
   const queued = state.snapshot.queued.filter(
     (message) => message.messageId !== command.message.messageId,
   );
+  const steered =
+    command.action === "steer"
+      ? [...state.snapshot.steered, command.message]
+      : state.snapshot.steered;
   return {
     ...state,
     snapshot: {
       ...state.snapshot,
       queued,
+      steered,
       description: {
         ...state.snapshot.description,
         pendingQueuedMessageCount: queued.length,
+        pendingSteeredMessageCount: steered.length,
       },
     },
     composer:
@@ -379,6 +392,86 @@ function beginCommand(
         : state.isPlanMode,
     pendingCommand: { id, command },
     error: null,
+  };
+}
+
+function completeCommand(
+  state: ActiveConversationState,
+  id: number,
+): ActiveConversationState {
+  if (state.pendingCommand?.id !== id) return state;
+  const command = state.pendingCommand.command;
+  if (command.kind === "send") {
+    return {
+      ...state,
+      pendingCommand: null,
+      optimisticSubmissions: state.optimisticSubmissions.map((submission) =>
+        submission.localID === `submitting-${String(id)}`
+          ? { ...submission, phase: "queued" }
+          : submission,
+      ),
+      error: null,
+    };
+  }
+  if (command.kind === "approve") {
+    return {
+      ...state,
+      pendingCommand: null,
+      snapshot: {
+        ...state.snapshot,
+        description: {
+          ...state.snapshot.description,
+          pendingApproval: null,
+        },
+      },
+      error: null,
+    };
+  }
+  if (command.kind === "execute-plan") {
+    return {
+      ...state,
+      pendingCommand: null,
+      snapshot: {
+        ...state.snapshot,
+        description: {
+          ...state.snapshot.description,
+          isPlanExecutionRequested: true,
+        },
+      },
+      error: null,
+    };
+  }
+  return { ...state, pendingCommand: null, error: null };
+}
+
+function mergeMessages(
+  older: AgentSnapshot["history"]["messages"],
+  current: AgentSnapshot["history"]["messages"],
+): AgentSnapshot["history"]["messages"] {
+  const messages = new Map<number, (typeof current)[number]>();
+  for (const message of [...older, ...current]) {
+    messages.set(message.sequence, message);
+  }
+  return [...messages.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+}
+
+function reconcileHistory(
+  previous: HistoryPage,
+  current: HistoryPage,
+  firstRetainedSequence: Sequence,
+): HistoryPage {
+  const messages = mergeMessages(previous.messages, current.messages).filter(
+    (message) => message.sequence >= firstRetainedSequence,
+  );
+  const firstSequence = messages[0]?.sequence;
+  return {
+    messages,
+    nextBeforeSequence:
+      firstSequence !== undefined && firstSequence > firstRetainedSequence
+        ? firstSequence
+        : null,
   };
 }
 
@@ -400,32 +493,48 @@ function failCommand(
     composer: command.kind === "send" ? command.value.content : state.composer,
     isPlanMode:
       command.kind === "send" ? command.value.planMode : state.isPlanMode,
-    optimisticSubmission:
-      command.kind === "send" ? null : state.optimisticSubmission,
+    optimisticSubmissions:
+      command.kind === "send"
+        ? state.optimisticSubmissions.filter(
+            (submission) => submission.localID !== `submitting-${String(id)}`,
+          )
+        : state.optimisticSubmissions,
     pendingCommand: null,
     snapshotRequest: state.snapshotRequest + 1,
     error: message,
   };
 }
 
-function reconcileOptimisticSubmission(
-  submission: OptimisticSubmission | null,
+function reconcileOptimisticSubmissions(
+  submissions: OptimisticSubmission[],
   snapshot: AgentSnapshot & { description: AgentDescription },
-): OptimisticSubmission | null {
-  if (submission === null) return null;
-  const knownIDs = new Set(submission.knownMessageIDs);
-  const isNowQueued = [...snapshot.queued, ...snapshot.steered].some(
-    (message) =>
-      !knownIDs.has(message.messageId) &&
-      sameUserMessage(message.value, submission.value),
-  );
-  const isNowDurable = snapshot.history.messages.some(
-    ({ sequence, message }) =>
-      sequence > submission.submittedAfterSequence &&
-      message.role === "user" &&
-      message.content === submission.value.content,
-  );
-  return isNowQueued || isNowDurable ? null : submission;
+): OptimisticSubmission[] {
+  const claimed = new Set<string>();
+  return submissions.filter((submission) => {
+    const knownIDs = new Set(submission.knownMessageIDs);
+    const queued = [...snapshot.queued, ...snapshot.steered].find(
+      (message) =>
+        !knownIDs.has(message.messageId) &&
+        !claimed.has(`queue:${message.messageId}`) &&
+        sameUserMessage(message.value, submission.value),
+    );
+    if (queued !== undefined) {
+      claimed.add(`queue:${queued.messageId}`);
+      return false;
+    }
+    const durable = snapshot.history.messages.find(
+      ({ sequence, message }) =>
+        sequence > submission.submittedAfterSequence &&
+        !claimed.has(`history:${String(sequence)}`) &&
+        message.role === "user" &&
+        message.content === submission.value.content,
+    );
+    if (durable !== undefined) {
+      claimed.add(`history:${String(durable.sequence)}`);
+      return false;
+    }
+    return true;
+  });
 }
 
 function sameUserMessage(left: UserMessage, right: UserMessage): boolean {
@@ -474,7 +583,7 @@ function applyLiveUpdate(
         reasoning: isModelFinished(update.value.kind)
           ? completeReasoningSource(state.reasoning, update.source)
           : state.reasoning,
-        activities: [update, ...state.activities].slice(0, 100),
+        activities: [update],
       };
   }
 }

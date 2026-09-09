@@ -75,8 +75,10 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 		Attributes: []dex.AttributeDef{
 			agentConfigAttribute,
 			agentStateAttribute,
+			agentInteractionStatusAttribute,
 			contextSummaryAttribute,
-			agentMessagesAttribute,
+			currentMessagesAttribute,
+			archivedMessagesAttribute,
 			agentPlanAttribute,
 			pendingApprovalAttribute,
 			pendingTimerAttribute,
@@ -104,6 +106,9 @@ func (*Flow) SendMessage(ctx dex.Context, input UserMessage) (*dex.RPCResult[boo
 	if err := queuedUserMessagesChannel.Publish(ctx, input); err != nil {
 		return nil, err
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
@@ -125,14 +130,14 @@ func (*Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCR
 	if err := steeredUserMessagesChannel.Publish(ctx, message.Value); err != nil {
 		return nil, err
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
 // Snapshot returns one atomic durable application view without consuming Channels.
-func (flow *Flow) Snapshot(ctx dex.Context, input SnapshotRequest) (*dex.RPCResult[AgentSnapshot], error) {
-	if input.Limit < minimumSnapshotPageSize || input.Limit > maximumSnapshotPageSize {
-		return nil, fmt.Errorf("snapshot limit must be between %d and %d", minimumSnapshotPageSize, maximumSnapshotPageSize)
-	}
+func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSnapshot], error) {
 	queued, err := queuedUserMessagesChannel.PendingMessages(ctx)
 	if err != nil {
 		return nil, err
@@ -152,7 +157,7 @@ func (flow *Flow) Snapshot(ctx dex.Context, input SnapshotRequest) (*dex.RPCResu
 	if err != nil {
 		return nil, err
 	}
-	history, err := flow.historyPage(ctx, state, input)
+	history, err := flow.currentHistory(ctx, state)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +185,9 @@ func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCRe
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := toolApprovalsChannel.Publish(ctx, string(input.CallID), ToolApproval{Approved: input.Approved}); err != nil {
+		return nil, err
+	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
@@ -218,19 +226,17 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	if err := planExecutionsChannel.Publish(ctx, fmt.Sprint(plan.Revision), input); err != nil {
 		return nil, err
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
-func (flow *Flow) historyPage(ctx dex.Context, state AgentState, request SnapshotRequest) (HistoryPage, error) {
-	end := state.LastSequence + 1
-	if request.BeforeSequence != nil && *request.BeforeSequence < end {
-		end = *request.BeforeSequence
-	}
-	end = max(end, state.FirstRetainedSequence)
-	start := max(state.FirstRetainedSequence, end-Sequence(request.Limit))
-	messages := make([]SequencedMessage, 0, int(end-start))
-	for sequence := start; sequence < end; sequence++ {
-		message, err := agentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+func (*Flow) currentHistory(ctx dex.Context, state AgentState) (HistoryPage, error) {
+	start := max(state.FirstRetainedSequence, state.CurrentFirstSequence)
+	messages := make([]SequencedMessage, 0, int(state.LastSequence-start+1))
+	for sequence := start; sequence <= state.LastSequence; sequence++ {
+		message, err := currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
 		if err != nil {
 			return HistoryPage{}, err
 		}
@@ -267,6 +273,10 @@ func (flow *Flow) describe(
 	if err != nil {
 		return AgentDescription{}, err
 	}
+	interactionStatus, err := agentInteractionStatusAttribute.Get(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
 	definitions := flow.toolDefinitions(config)
 	availableTools := make([]ToolName, 0, len(definitions)+1)
 	availableTools = append(availableTools, ToolNameWriteTodos)
@@ -275,6 +285,7 @@ func (flow *Flow) describe(
 	}
 	return AgentDescription{
 		Status:                     state.Status,
+		InteractionStatus:          interactionStatus,
 		Model:                      config.Model,
 		SystemPrompt:               config.SystemPrompt,
 		FirstRetainedSequence:      state.FirstRetainedSequence,
@@ -303,6 +314,7 @@ func (flow *Flow) initializingSnapshot(
 		History:    HistoryPage{Messages: []SequencedMessage{}},
 		Description: &AgentDescription{
 			Status:                     AgentStatusInitializing,
+			InteractionStatus:          AgentInteractionStatusSubmitted,
 			FirstRetainedSequence:      1,
 			PendingQueuedMessageCount:  len(queued),
 			PendingSteeredMessageCount: len(steered),
@@ -540,15 +552,43 @@ func (flow *Flow) appendMessage(ctx dex.Context, message AgentMessage) (Sequence
 	if message.ProviderContextItems == nil {
 		message.ProviderContextItems = []ProviderContextItem{}
 	}
-	if err := agentMessagesAttribute.Set(ctx, sequenceKey(sequence), message); err != nil {
+	if err := currentMessagesAttribute.Set(ctx, sequenceKey(sequence), message); err != nil {
 		return 0, err
 	}
 	state.NextSequence = sequence + 1
 	state.LastSequence = sequence
+	if err := flow.archiveCurrentMessages(ctx, &state); err != nil {
+		return 0, err
+	}
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return 0, err
 	}
 	return sequence, nil
+}
+
+func (*Flow) archiveCurrentMessages(ctx dex.Context, state *AgentState) error {
+	if state.LastSequence-state.CurrentFirstSequence+1 < Sequence(currentMessageLimit) {
+		return nil
+	}
+	first := state.CurrentFirstSequence
+	messages := make([]SequencedMessage, 0, archiveMessageChunkSize)
+	for sequence := first; sequence < first+Sequence(archiveMessageChunkSize); sequence++ {
+		message, err := currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+		if err != nil {
+			return err
+		}
+		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
+	}
+	if err := archivedMessagesAttribute.Set(ctx, sequenceKey(first), ArchivedMessageChunk{Messages: messages}); err != nil {
+		return err
+	}
+	for sequence := first; sequence < first+Sequence(archiveMessageChunkSize); sequence++ {
+		if err := currentMessagesAttribute.Delete(ctx, sequenceKey(sequence)); err != nil {
+			return err
+		}
+	}
+	state.CurrentFirstSequence += Sequence(archiveMessageChunkSize)
+	return nil
 }
 
 func (flow *Flow) appendToolResult(ctx dex.Context, call ToolCall, result ToolExecutionResult) error {
@@ -722,19 +762,39 @@ func (flow *Flow) planContextMessage(ctx dex.Context, state AgentState) (*AgentM
 	}, nil
 }
 
-func (*Flow) loadMessages(ctx dex.Context, start Sequence, end Sequence, config AgentConfig) ([]AgentMessage, error) {
+func (flow *Flow) loadMessages(ctx dex.Context, start Sequence, end Sequence, config AgentConfig) ([]AgentMessage, error) {
 	if end < start {
 		return []AgentMessage{}, nil
 	}
 	result := make([]AgentMessage, 0, int(end-start+1))
 	for sequence := start; sequence <= end; sequence++ {
-		message, err := agentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+		message, err := flow.messageAt(ctx, sequence)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, projectMessage(message, config.MaxContextTokens))
 	}
 	return result, nil
+}
+
+func (*Flow) messageAt(ctx dex.Context, sequence Sequence) (AgentMessage, error) {
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	if sequence >= state.CurrentFirstSequence {
+		return currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+	}
+	first := ((sequence - 1) / Sequence(archiveMessageChunkSize) * Sequence(archiveMessageChunkSize)) + 1
+	chunk, err := archivedMessagesAttribute.Get(ctx, sequenceKey(first))
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	index := sequence - first
+	if index < 0 || index >= Sequence(len(chunk.Messages)) || chunk.Messages[index].Sequence != sequence {
+		return AgentMessage{}, fmt.Errorf("archived message %d is missing from chunk %d", sequence, first)
+	}
+	return chunk.Messages[index].Message, nil
 }
 
 func (flow *Flow) compactionCutoff(ctx dex.Context, config AgentConfig, state AgentState) (Sequence, error) {
@@ -746,7 +806,7 @@ func (flow *Flow) compactionCutoff(ctx dex.Context, config AgentConfig, state Ag
 	retainedTokens := 0
 	cutoff := state.LastSequence - 1
 	for sequence := state.LastSequence; sequence >= start; sequence-- {
-		message, err := agentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+		message, err := flow.messageAt(ctx, sequence)
 		if err != nil {
 			return 0, err
 		}
@@ -802,12 +862,14 @@ func (flow *Flow) pendingCompactionCutoff(ctx dex.Context) (*Sequence, error) {
 func (*Flow) trimSummarizedMessages(ctx dex.Context, config AgentConfig, state AgentState) (AgentState, error) {
 	retained := max(Sequence(0), state.LastSequence-state.FirstRetainedSequence+1)
 	first := state.FirstRetainedSequence
-	for retained > Sequence(config.MessageRetentionLimit) && first <= state.SummarizedThroughSequence {
-		if err := agentMessagesAttribute.Delete(ctx, sequenceKey(first)); err != nil {
+	for retained > Sequence(config.MessageRetentionLimit) &&
+		first < state.CurrentFirstSequence &&
+		first+Sequence(archiveMessageChunkSize)-1 <= state.SummarizedThroughSequence {
+		if err := archivedMessagesAttribute.Delete(ctx, sequenceKey(first)); err != nil {
 			return AgentState{}, err
 		}
-		first++
-		retained--
+		first += Sequence(archiveMessageChunkSize)
+		retained -= Sequence(archiveMessageChunkSize)
 	}
 	if first != state.FirstRetainedSequence {
 		state.FirstRetainedSequence = first
@@ -836,7 +898,18 @@ func (flow *Flow) continueAfterTool(ctx dex.Context) (*dex.StepDecision, error) 
 }
 
 func (*Flow) writeActivity(ctx dex.Context, event AgentEvent) error {
+	event.Message = condenseActivityMessage(event.Message)
 	return agentActivityStream.Write(ctx, event)
+}
+
+func condenseActivityMessage(message string) string {
+	const maximumRunes = 200
+	condensed := strings.Join(strings.Fields(message), " ")
+	runes := []rune(condensed)
+	if len(runes) <= maximumRunes {
+		return condensed
+	}
+	return string(runes[:maximumRunes-1]) + "…"
 }
 
 func getAgentPlan(ctx dex.Context) (*AgentPlan, error) {
@@ -975,8 +1048,6 @@ const (
 	stepTypeDurableWait    stepType = "DurableWait"
 
 	maximumSteeringMessageCount = 2_147_483_647
-	minimumSnapshotPageSize     = 1
-	maximumSnapshotPageSize     = 200
 )
 
 type continuation string
@@ -1044,6 +1115,9 @@ func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecis
 	if err := agentStateAttribute.Set(ctx, NewAgentState()); err != nil {
 		return nil, err
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
 }
 
@@ -1071,10 +1145,16 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if plan != nil && plan.Status != PlanStatusCompleted {
 		conditions = append(conditions, planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)))
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
+		return nil, err
+	}
 	return dex.AnyOf(conditions...), nil
 }
 
 func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	steered, err := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if err != nil {
 		return nil, err
@@ -1597,6 +1677,9 @@ func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wai
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForToolApproval); err != nil {
 		return nil, err
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
+		return nil, err
+	}
 	return dex.AnyOf(
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
 		toolApprovalsChannel.ForOne(string(call.ID)),
@@ -1604,6 +1687,9 @@ func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wai
 }
 
 func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	steered, err := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if err != nil {
 		return nil, err
@@ -1716,7 +1802,7 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	toolName := call.Name
 	if activityErr := step.flow.writeActivity(ctx, AgentEvent{
 		Kind:     EventKindToolCompleted,
-		Message:  result.Content,
+		Message:  fmt.Sprintf("Completed %s.", call.Name),
 		CallID:   &callID,
 		ToolName: &toolName,
 	}); activityErr != nil {
@@ -1755,6 +1841,9 @@ func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, err
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForTimer); err != nil {
 		return nil, err
 	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
+		return nil, err
+	}
 	return dex.AnyOf(
 		dex.Timer(time.Duration(timer.DurationSeconds)*time.Second),
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
@@ -1762,6 +1851,9 @@ func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, err
 }
 
 func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
 	call, err := step.flow.currentToolCall(ctx)
 	if err != nil {
 		return nil, err
@@ -1852,7 +1944,7 @@ type toolProgress struct {
 	call ToolCall
 }
 
-func (progress toolProgress) write(message string) error {
+func (progress toolProgress) write(_ string) error {
 	if err := progress.ctx.RecordHeartbeat(toolHeartbeat{
 		Phase:    heartbeatPhaseToolProgress,
 		ToolName: progress.call.Name,
@@ -1863,7 +1955,7 @@ func (progress toolProgress) write(message string) error {
 	toolName := progress.call.Name
 	return progress.flow.writeActivity(progress.ctx, AgentEvent{
 		Kind:     EventKindToolProgress,
-		Message:  message,
+		Message:  "Running " + string(progress.call.Name) + ".",
 		CallID:   &callID,
 		ToolName: &toolName,
 	})

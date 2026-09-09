@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   FlowErrorType,
@@ -294,10 +295,12 @@ describe("conversationReducer", () => {
     expect(state).toMatchObject({
       composer: "",
       isPlanMode: false,
-      optimisticSubmission: {
-        localID: "submitting-7",
-        value: { content: "new work", planMode: true },
-      },
+      optimisticSubmissions: [
+        {
+          localID: "submitting-7",
+          value: { content: "new work", planMode: true },
+        },
+      ],
     });
 
     state = conversationReducer(state, {
@@ -308,7 +311,7 @@ describe("conversationReducer", () => {
     expect(state).toMatchObject({
       composer: "new work",
       isPlanMode: true,
-      optimisticSubmission: null,
+      optimisticSubmissions: [],
       error: "unavailable",
     });
   });
@@ -329,6 +332,10 @@ describe("conversationReducer", () => {
       },
     });
     state = conversationReducer(state, { type: "command-succeeded", id: 8 });
+    expect(state).toMatchObject({
+      pendingCommand: null,
+      optimisticSubmissions: [{ phase: "queued" }],
+    });
     const reconciled = snapshot("run-1", "queued-2", "new work");
     state = conversationReducer(state, {
       type: "snapshot-loaded",
@@ -336,11 +343,115 @@ describe("conversationReducer", () => {
     });
 
     expect(state).toMatchObject({
-      optimisticSubmission: null,
+      optimisticSubmissions: [],
       snapshot: { queued: [{ messageId: "queued-2" }] },
     });
   });
+
+  it("keeps multiple accepted submissions visible until each is durable", () => {
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshot("run-1", "queued-1", "existing"),
+    });
+    for (const [id, content, planMode] of [
+      [10, "first", true],
+      [11, "second", false],
+    ] as const) {
+      state = conversationReducer(state, {
+        type: "command-started",
+        id,
+        command: {
+          kind: "send",
+          value: { content, planMode },
+          submittedAfterSequence: 1,
+          knownMessageIDs: ["queued-1"],
+        },
+      });
+      state = conversationReducer(state, { type: "command-succeeded", id });
+    }
+    expect(state).toMatchObject({
+      optimisticSubmissions: [
+        { value: { content: "first", planMode: true }, phase: "queued" },
+        { value: { content: "second", planMode: false }, phase: "queued" },
+      ],
+    });
+
+    const durable = snapshot("run-1", "queued-2", "first");
+    const firstQueued = durable.queued[0];
+    if (firstQueued === undefined) throw new Error("expected queued message");
+    firstQueued.value.planMode = true;
+    durable.queued.push({
+      messageId: "queued-3",
+      value: { content: "second", planMode: false },
+    });
+    if (durable.description === null)
+      throw new Error("expected active Snapshot");
+    durable.description.pendingQueuedMessageCount = 2;
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: durable,
+    });
+    expect(state).toMatchObject({ optimisticSubmissions: [] });
+  });
+
+  it("preserves loaded archive chunks across Snapshot reconciliation", () => {
+    const current = snapshot("run-1", "queued-1", "current");
+    if (current.description === null)
+      throw new Error("expected active Snapshot");
+    current.history = {
+      messages: [sequencedMessage(11, "current")],
+      nextBeforeSequence: 11,
+    };
+    current.description.lastSequence = 11;
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: current,
+    });
+    state = conversationReducer(state, {
+      type: "older-requested",
+      id: 9,
+      beforeSequence: 11,
+    });
+    state = conversationReducer(state, {
+      type: "older-loaded",
+      id: 9,
+      page: {
+        messages: [sequencedMessage(1, "archived")],
+        nextBeforeSequence: null,
+      },
+    });
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: current,
+    });
+
+    expect(state).toMatchObject({
+      snapshot: {
+        history: {
+          messages: [
+            { sequence: 1, message: { content: "archived" } },
+            { sequence: 11, message: { content: "current" } },
+          ],
+          nextBeforeSequence: null,
+        },
+      },
+    });
+  });
 });
+
+function sequencedMessage(sequence: number, content: string) {
+  return {
+    sequence,
+    message: {
+      role: MessageRole.USER,
+      content,
+      toolCalls: [],
+      toolCallId: null,
+      toolName: null,
+      createdAt: "2026-09-03T00:00:00Z",
+    },
+  };
+}
 
 function snapshot(
   runId: string,
@@ -370,6 +481,7 @@ function snapshot(
     },
     description: {
       status: AgentStatus.WAITING_FOR_MESSAGE,
+      interactionStatus: AgentInteractionStatus.WAITING,
       model: "mock/reliable",
       systemPrompt: "Be helpful.",
       firstRetainedSequence: 1,

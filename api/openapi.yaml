@@ -16,7 +16,7 @@
 openapi: 3.0.3
 info:
   title: SuperAgent API
-  version: 0.2.0
+  version: 0.3.0
   description: >-
     Command, atomic Snapshot, queue mutation, and live-event contract for the
     durable AI Agent.
@@ -118,20 +118,6 @@ paths:
           required: true
           schema:
             $ref: "#/components/schemas/FlowId"
-        - name: beforeSequence
-          in: query
-          required: false
-          schema:
-            allOf:
-              - $ref: "#/components/schemas/Sequence"
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
-            default: 50
       responses:
         "200":
           description: One atomic durable application Snapshot.
@@ -152,6 +138,77 @@ paths:
           $ref: "#/components/responses/Problem"
         "503":
           $ref: "#/components/responses/Problem"
+  /products/ai-agent/archived-messages:
+    get:
+      operationId: getArchivedMessages
+      summary: Read one exact archived ten-message chunk
+      parameters:
+        - name: flowId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FlowId"
+        - name: beforeSequence
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Sequence"
+      responses:
+        "200":
+          description: The archived chunk immediately before the boundary.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryPage"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/interaction-status:
+    get:
+      operationId: waitForAgentInteractionStatus
+      summary: Wait for one durable Agent interaction status
+      parameters:
+        - name: flowId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FlowId"
+        - name: expectedStatus
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/AgentInteractionStatus"
+      responses:
+        "200":
+          description: The expected durable interaction status was observed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentInteractionState"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        "504":
+          description: The expected status was not observed before the bounded poll expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PollTimeout"
   /products/ai-agent/message-queue/delete:
     post:
       operationId: deleteQueuedMessage
@@ -381,6 +438,19 @@ components:
         - executing_tool
         - waiting_for_timer
         - applying_steering
+    AgentInteractionStatus:
+      type: string
+      enum:
+        - submitted
+        - waiting
+    AgentInteractionState:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          $ref: "#/components/schemas/AgentInteractionStatus"
     MessageRole:
       type: string
       enum:
@@ -544,8 +614,9 @@ components:
           default: 0.1
         messageRetentionLimit:
           type: integer
-          minimum: 1
+          minimum: 20
           maximum: 1000000
+          multipleOf: 10
         mcpEnabled:
           type: boolean
         enabledMcpServers:
@@ -792,6 +863,7 @@ components:
       additionalProperties: false
       required:
         - status
+        - interactionStatus
         - model
         - systemPrompt
         - firstRetainedSequence
@@ -809,6 +881,8 @@ components:
       properties:
         status:
           $ref: "#/components/schemas/AgentStatus"
+        interactionStatus:
+          $ref: "#/components/schemas/AgentInteractionStatus"
         model:
           type: string
         systemPrompt:

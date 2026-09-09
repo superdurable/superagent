@@ -27,7 +27,9 @@ import (
 
 var supportedPaths = []string{
 	"/healthz",
+	"/products/ai-agent/archived-messages",
 	"/products/ai-agent/events",
+	"/products/ai-agent/interaction-status",
 	"/products/ai-agent/message-queue/delete",
 	"/products/ai-agent/message-queue/steer",
 	"/products/ai-agent/messages",

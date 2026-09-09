@@ -324,14 +324,6 @@ func (s *Server) handleGetAgentSnapshotRequest(args [0]string, argsEscaped bool,
 					Name: "flowId",
 					In:   "query",
 				}: params.FlowId,
-				{
-					Name: "beforeSequence",
-					In:   "query",
-				}: params.BeforeSequence,
-				{
-					Name: "limit",
-					In:   "query",
-				}: params.Limit,
 			},
 			Raw: r,
 		}
@@ -364,6 +356,94 @@ func (s *Server) handleGetAgentSnapshotRequest(args [0]string, argsEscaped bool,
 	}
 
 	if err := encodeGetAgentSnapshotResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleGetArchivedMessagesRequest handles getArchivedMessages operation.
+//
+// Read one exact archived ten-message chunk.
+//
+// GET /products/ai-agent/archived-messages
+func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: GetArchivedMessagesOperation,
+			ID:   "getArchivedMessages",
+		}
+	)
+	params, err := decodeGetArchivedMessagesParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response GetArchivedMessagesRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    GetArchivedMessagesOperation,
+			OperationSummary: "Read one exact archived ten-message chunk",
+			OperationID:      "getArchivedMessages",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "flowId",
+					In:   "query",
+				}: params.FlowId,
+				{
+					Name: "beforeSequence",
+					In:   "query",
+				}: params.BeforeSequence,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = GetArchivedMessagesParams
+			Response = GetArchivedMessagesRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackGetArchivedMessagesParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.GetArchivedMessages(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.GetArchivedMessages(ctx, params)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeGetArchivedMessagesResponse(response, w); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -905,6 +985,94 @@ func (s *Server) handleSteerQueuedMessageRequest(args [0]string, argsEscaped boo
 	}
 
 	if err := encodeSteerQueuedMessageResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleWaitForAgentInteractionStatusRequest handles waitForAgentInteractionStatus operation.
+//
+// Wait for one durable Agent interaction status.
+//
+// GET /products/ai-agent/interaction-status
+func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: WaitForAgentInteractionStatusOperation,
+			ID:   "waitForAgentInteractionStatus",
+		}
+	)
+	params, err := decodeWaitForAgentInteractionStatusParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response WaitForAgentInteractionStatusRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    WaitForAgentInteractionStatusOperation,
+			OperationSummary: "Wait for one durable Agent interaction status",
+			OperationID:      "waitForAgentInteractionStatus",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "flowId",
+					In:   "query",
+				}: params.FlowId,
+				{
+					Name: "expectedStatus",
+					In:   "query",
+				}: params.ExpectedStatus,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = WaitForAgentInteractionStatusParams
+			Response = WaitForAgentInteractionStatusRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackWaitForAgentInteractionStatusParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.WaitForAgentInteractionStatus(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.WaitForAgentInteractionStatus(ctx, params)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeWaitForAgentInteractionStatusResponse(response, w); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)

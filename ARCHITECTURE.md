@@ -37,11 +37,12 @@ package.
 
 ## Durable Agent model
 
-One stable `FlowID` identifies one conversation. `AgentMessages` is the typed
-application history; it is not Dex execution history. `AgentState` owns the
-retained sequence range, interaction mode, status, pending tool cursor, and plan
-revision. Plans, pending approvals, timers, input prompts, and cumulative context
-summaries are separate typed Attributes.
+One stable `FlowID` identifies one conversation. `CurrentMessages` and
+`ArchivedMessages` are the typed application history; they are not Dex
+execution history. `AgentState` owns the retained sequence range, interaction
+mode, status, pending tool cursor, and plan revision. Plans, pending approvals,
+timers, input prompts, and cumulative context summaries are separate typed
+Attributes.
 
 Queued and steered user messages use distinct Channels. A queued message enters
 application history only after a Step consumes it. Steering is consumed only at
@@ -75,20 +76,21 @@ Model activity carries the target durable message sequence. The browser places
 each reasoning summary before that assistant message. If sequence metadata is
 unavailable, one completed model activity window may identify exactly one
 assistant message; ambiguous summaries remain with the current live output.
-Busy Agent states reconcile frequently until the durable Step commit becomes
-visible. The visible-page fallback reconciles every eight seconds without
-marking a healthy connection stale. Disconnect, command completion, focus,
-online, visibility recovery, or explicit retry also reconciles a Snapshot.
+`AgentInteractionStatus` alternates between `submitted` and `waiting`. The
+browser long-polls those durable values and reads Snapshot after a real durable
+wait. Server errors, explicit reconcile, and a visible-page ten-second
+lifecycle fallback also reconcile. Commands and ordinary Stream events do not.
+Terminal reconciliation stops Streams, Attribute waits, and fallback polling.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Retained events may replay after refresh. Completed-source tracking prevents
 those events from duplicating durable assistant messages and keeps replayed
 reasoning summaries in a completed state.
 Every poll, Snapshot, and command owns cancellation and rejects stale responses.
-Message send displays one local, non-actionable `Submitting` item until Snapshot
-reveals the durable queue or history result. Failure restores its composer text
-and plan mode. Queue edit, delete, and steer optimistically remove one stable
-message ID, then reconcile. The backend resolves a steer value from the loaded
+Message send displays one local, non-actionable `Submitting` item and changes it
+to `Queued` after HTTP acceptance. Failure restores its composer text and plan
+mode. Queue edit, delete, and steer optimistically remove one stable message ID.
+The backend resolves a steer value from the loaded
 Channel snapshot; the browser cannot replace the queued content during that
 operation.
 
@@ -100,7 +102,8 @@ models, and enums. Explicit mappers keep generated transport types out of the
 domain package.
 
 The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
-queue deletion and steering, typed event polling, health, and readiness. The API
+one exact archive-chunk read, interaction-status long polling, queue deletion
+and steering, typed event polling, health, and readiness. The API
 process does not serve React files. Long-poll expiry has a generated typed body,
 so the browser can distinguish normal polling cadence from a transport failure.
 Snapshot responses carry the generated `Cache-Control: no-store` contract.

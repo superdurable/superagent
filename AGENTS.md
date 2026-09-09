@@ -38,8 +38,8 @@ not load the skill at application runtime.
 
 `GET /products/ai-agent/snapshot` is the only durable browser read model. Do not
 add parallel durable read models. Queue deletion and steering accept only
-message IDs from a Snapshot. Application history means the `AgentMessages`
-AttributeMap, never Dex execution history.
+message IDs from a Snapshot. Application history means `CurrentMessages` and
+`ArchivedMessages`, never Dex execution history.
 
 ## Dex application modeling
 
@@ -192,6 +192,13 @@ AttributeMap, never Dex execution history.
 - Run repository suites through Make targets, not ad hoc full-suite commands.
 - Tee long-running suite output to a scoped file under `/tmp`.
 - Do not skip, gate, weaken, or delete a failing assertion to make a suite pass.
+- Every Agent behavior change or feature requires a released-Dex server
+  integration test and a full-stack browser E2E test.
+- Full-stack E2E uses the real HTTP API and asserts visible DOM state, focus,
+  keyboard behavior, and user interactions. Do not replace the API with route
+  fulfillment or stop at an HTTP success assertion.
+- When a test reveals a product discrepancy, fix production code. Never change
+  the expected behavior to preserve a bug.
 - Async tests use unique Flow IDs and deadline-based polling. Do not use sleeps
   for convergence.
 - Test Worker replacement at every durable wait and external-effect boundary.
