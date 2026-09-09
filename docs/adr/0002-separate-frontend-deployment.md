@@ -6,10 +6,9 @@ Accepted on 2026-09-03.
 
 ## Context
 
-The initial Phase 1 build embedded the React assets in the Go binary. Any
-frontend fix therefore required rebuilding and replacing the API and Worker
-process. The shared release unit also coupled browser caching to backend
-lifecycles.
+Embedding React assets in the Go binary would require every frontend fix to
+rebuild and replace the API and Worker process. A shared release unit would also
+couple browser caching to backend lifecycles.
 
 ## Decision
 

@@ -35,6 +35,8 @@ type providerHTTPError struct {
 	statusCode int
 }
 
+var _ error = (*providerHTTPError)(nil)
+
 func (err *providerHTTPError) Error() string {
 	return fmt.Sprintf("%s API returned HTTP %d", err.provider, err.statusCode)
 }

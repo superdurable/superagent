@@ -78,6 +78,8 @@ type TransportValidationError struct {
 	Value string
 }
 
+var _ error = (*TransportValidationError)(nil)
+
 // Error describes the unsupported transport.
 func (err *TransportValidationError) Error() string {
 	return fmt.Sprintf("unsupported MCP transport %q", err.Value)

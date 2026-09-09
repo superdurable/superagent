@@ -57,7 +57,7 @@ type CredentialLookup interface {
 // Readiness reports whether every required runtime dependency is ready.
 type Readiness func() bool
 
-// Handler implements the generated Phase 1 OpenAPI server.
+// Handler implements the generated OpenAPI server.
 type Handler struct {
 	agent       AgentService
 	tools       ToolCatalog
@@ -65,6 +65,8 @@ type Handler struct {
 	ready       Readiness
 	logger      *slog.Logger
 }
+
+var _ transportapi.Handler = (*Handler)(nil)
 
 // NewHandler constructs a generated-contract handler from required dependencies.
 func NewHandler(

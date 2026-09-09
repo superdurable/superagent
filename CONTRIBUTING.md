@@ -11,8 +11,7 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill. Confirm APIs
 against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
-Snapshot code targets Dex Go SDK `v0.2.12` and the version-matched selective
-state contract recorded in `MIGRATION.md`. Recheck the installed SDK source and
+Snapshot code targets Dex Go SDK `v0.2.12`. Recheck the installed SDK source and
 the installed skill before changing its resource projection or errors. Never
 infer an API from a design screenshot or unreleased branch.
 
@@ -45,7 +44,6 @@ Install locked browser dependencies once with `npm --prefix web ci`, then run:
 
 ```bash
 make governance-check
-make check-cutover
 make format-check
 make vet
 make lint
@@ -67,22 +65,17 @@ static graph separately:
 
 ```bash
 DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
-make flow-visualize
-make generate-flow-definition
 make check-flow-definition
+make flow-visualize
 ```
 
 The integration suite reads private resources through the Dex Client only. It
 must not add an HTTP read endpoint or exported descriptor getter to make tests
 easier.
 
-The checked-in `flow-definitions/ai-agent.json` is generated from
-`internal/agent/flow.go`. Run both Flow Definition targets after changing the
-Flow graph. To load that JSON in Dex Web, run:
-
-```bash
-make flow-render
-```
+`make check-flow-definition` generates JSON in a temporary directory and fails
+on any visualizer diagnostic. `make flow-visualize` analyzes
+`internal/agent/flow.go` directly and serves the graph in Flow Rendering.
 
 The explicit live provider test is serial and bounded:
 
@@ -93,16 +86,9 @@ make test-openai-live
 It is the only test permitted to read `OPENAI_API_KEY` from the ignored root
 `.env`. Never print, stage, or copy that file.
 
-## Cutover provenance
-
-The vendored Python oracle was removed after the Phase 3 parity review. Do not
-restore copied upstream examples. Compare future behavior against the immutable
-Dex commit and blob list in `docs/python-go-parity.md`. `make check-cutover`
-enforces that boundary.
-
-The CI workflow runs deterministic checks, fuzzing, Flow Definition drift, and
-real Dex integration. It uploads the Go backend and static frontend as separate
-artifacts so either deployment can be released independently.
+The CI workflow runs deterministic checks, fuzzing, Flow Definition validation,
+and real Dex integration. It uploads the Go backend and static frontend as
+separate artifacts so either deployment can be released independently.
 
 Before committing, run the full applicable gates and `git diff --check`. Do not
 bypass hooks. Inspect the staged diff, commit with a meaningful message, verify

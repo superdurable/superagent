@@ -4,9 +4,7 @@ This React application consumes only the TypeScript client generated from
 `api/openapi.yaml`. Do not hand-write HTTP request or response models.
 
 The application restores a Flow with one generated Snapshot request and applies
-generated event polls for live updates. It does not call the legacy history,
-describe, status, or message-queue read endpoints. Final parity with the
-upstream frontend is recorded in `../docs/python-go-parity.md`.
+generated event polls for live updates.
 
 ## Commands
 
@@ -46,4 +44,4 @@ queued messages, steered messages, and Run identity from `/snapshot`. Three
 cancellable `/events` polls add assistant text, reasoning summaries, and
 structured activity. Disconnects and command completion reconcile with another
 Snapshot. Queue mutations optimistically update by stable message ID and then
-reconcile; no four-read compatibility layer exists.
+reconcile.

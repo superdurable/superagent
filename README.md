@@ -19,7 +19,7 @@ transport boundaries from one contract.
 The browser restores durable state through one
 `GET /products/ai-agent/snapshot` request. It applies Stream updates for low
 latency and reconciles from Snapshot after reconnects, mutations, and detected
-gaps. The retired history, queue-read, describe, and status routes do not exist.
+gaps.
 
 ## Architecture
 
@@ -137,31 +137,27 @@ Only `make test-openai-live` reads `OPENAI_API_KEY` from the ignored root
 
 ## Flow visualization
 
-Generate and verify the checked-in Go Flow Definition Graph:
+Verify that the Go Flow Definition Graph is valid with zero diagnostics:
 
 ```bash
-make generate-flow-definition
 make check-flow-definition
 ```
 
-Render the Go source directly, or serve all generated definitions:
+Render the Go source directly:
 
 ```bash
 make flow-visualize
-make flow-render
 ```
 
-`make flow-render` starts a local Dex development environment. Select
-**Flow Rendering** in the printed Dex Web address. Restart it after regenerating
-definitions.
+The command analyzes `internal/agent/flow.go`, opens Flow Rendering, and serves
+the graph until stopped. The CI check generates JSON in a temporary directory
+and rejects every visualizer diagnostic.
 
 ## Project documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): setup, generation, and verification rules
 - [ARCHITECTURE.md](ARCHITECTURE.md): package and deployment boundaries
 - [docs/flow-model.md](docs/flow-model.md): Flow resources and transitions
-- [MIGRATION.md](MIGRATION.md): completed migration evidence
-- [docs/python-go-parity.md](docs/python-go-parity.md): immutable Python parity baseline
 
 Read [`AGENTS.md`](AGENTS.md) before making changes. Work involving Dex Flows,
 Steps, RPCs, Channels, Streams, Timers, retries, or recovery must also follow

@@ -13,9 +13,6 @@ not a Dex SDK example and must not depend on Dex internals.
 - Do not add a `go.mod` `replace` directive for Dex.
 - Before launch, remove dead APIs and fields. Do not add compatibility shims,
   deprecated aliases, dual paths, or comments describing discarded behavior.
-- The Python parity oracle was removed after the Phase 3 cutover. Do not restore
-  copied upstream examples; use the immutable Dex commit recorded in
-  `docs/python-go-parity.md` for future comparison.
 
 ## Dex skill is mandatory
 
@@ -39,18 +36,10 @@ not load the skill at application runtime.
 
 ## Snapshot boundary
 
-Do not expose or implement these legacy read endpoints:
-
-- `GET /products/ai-agent/history`
-- `GET /products/ai-agent/message-queue`
-- `GET /products/ai-agent/describe`
-- `GET /products/ai-agent/status`
-
 `GET /products/ai-agent/snapshot` is the only durable browser read model. Do not
-add placeholders, local aggregation services, temporary wrappers, or parallel
-compatibility reads. Queue deletion and steering accept only message IDs from a
-Snapshot. Application history means the `AgentMessages` AttributeMap, never Dex
-execution history.
+add parallel durable read models. Queue deletion and steering accept only
+message IDs from a Snapshot. Application history means the `AgentMessages`
+AttributeMap, never Dex execution history.
 
 ## Dex application modeling
 
@@ -59,6 +48,8 @@ execution history.
 - Keep one Flow per source file. Keep registrations, handlers, waits,
   transitions, resource access, and recovery directly visible to
   `dexcli visualize`.
+- Do not commit generated Flow Definition JSON. Generate it in a temporary
+  directory and reject every visualizer diagnostic in CI.
 - Put durable wait conditions in `WaitFor`; put external side effects only in
   `Execute`.
 - Treat each `WaitFor`, `Execute`, and RPC invocation as an independent Dex
@@ -112,6 +103,11 @@ execution history.
 - Order handwritten files top-down: type, constructor, entry methods, handlers
   in dispatch order, state mutation, conversion, then small accessors.
 - Keep one struct's method set together in one primary file.
+- Put a compile-time interface assertion immediately after each handwritten
+  concrete struct that intentionally implements an interface. Assert
+  consumer-owned cross-package interfaces at the composition boundary when an
+  adjacent assertion would reverse package dependencies. Exclude generated
+  code.
 - Use descriptive names. Receivers and `i`, `j`, `k`, `n`, `err`, `ctx`, `ok`,
   `t`, `mu`, `wg`, `id`, `r`, `w`, and `ch` may be short.
 - Boolean variables, constants, and methods use predicate names such as `is`,
@@ -153,7 +149,7 @@ execution history.
 - Define optional, nullable, formats, bounds, discriminators, and enums
   precisely in the specification.
 - Map generated transport types to domain types explicitly.
-- Phase 1 tests must assert that deferred read and Snapshot paths are absent.
+- Contract tests must assert the complete supported HTTP path set.
 
 ## Providers, MCP, and secrets
 
@@ -199,8 +195,8 @@ execution history.
 - Async tests use unique Flow IDs and deadline-based polling. Do not use sleeps
   for convergence.
 - Test Worker replacement at every durable wait and external-effect boundary.
-- Run `dexcli visualize` after changing the Flow graph and fail on blocking
-  diagnostics.
+- Run `dexcli visualize` after changing the Flow graph and fail on every
+  diagnostic.
 - Required gates include formatting, vet, static analysis, race tests,
   vulnerability checks, generated-code drift, TypeScript strict checking,
   type-aware lint, component tests, and browser E2E.
@@ -212,18 +208,15 @@ Every implementation plan includes concrete `Tests`, `Documentation`, and
 
 Keep these documents current with the code:
 
-- `MIGRATION.md` for phase scope, parity, external gates, and test evidence.
 - `ARCHITECTURE.md` for package boundaries and durable/live reconciliation.
 - `docs/flow-model.md` for Flow resources and application-history semantics.
-- `docs/python-go-parity.md` for the immutable upstream baseline and cutover
-  evidence.
 - `docs/adr/` for consequential architecture decisions.
 - `CONTRIBUTING.md` for local setup, generation, verification, and skill use.
 
 ## Git and license
 
 - New feature branches start from the current `origin/main`; fetch before
-  branching. The approved migration baseline commit is the sole exception.
+  branching.
 - End every turn that changes files with a meaningful commit and a clean working
   tree. Do not create empty commits.
 - Never use `--no-verify` and never add Cursor or an agent as author, committer,

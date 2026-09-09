@@ -46,6 +46,8 @@ type GroqClient struct {
 	baseURL     *url.URL
 }
 
+var _ agent.ModelClient = (*GroqClient)(nil)
+
 // NewGroqClient constructs a Groq adapter.
 func NewGroqClient(credentials *CredentialStore, httpClient *http.Client, baseURL string) (*GroqClient, error) {
 	if credentials == nil {

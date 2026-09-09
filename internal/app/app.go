@@ -69,6 +69,12 @@ type ownedApplication struct {
 	ready         atomic.Bool
 }
 
+var (
+	_ httpapi.AgentService     = (*agent.Client)(nil)
+	_ httpapi.ToolCatalog      = (*mcpregistry.Registry)(nil)
+	_ httpapi.CredentialLookup = (*model.CredentialStore)(nil)
+)
+
 func build(ctx context.Context, applicationConfig *config.Config, logger *slog.Logger) (_ *ownedApplication, returnedErr error) {
 	owned := &ownedApplication{config: applicationConfig, logger: logger}
 	defer func() {

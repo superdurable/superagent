@@ -219,9 +219,9 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	})
 }
 
-func TestAgentUserInputParityIntegration(t *testing.T) {
+func TestAgentUserInputIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
-	flowID := FlowID("agent-input-parity-" + randomLocalID(t))
+	flowID := FlowID("agent-input-" + randomLocalID(t))
 	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
 		t.Fatal(err)
 	}
@@ -842,6 +842,8 @@ func assertModelActivity(t *testing.T, client *Client, flowID FlowID, expectedSe
 
 type integrationModel struct{}
 
+var _ ModelClient = integrationModel{}
+
 func (integrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
 	if request.WriteAssistant == nil || request.WriteReasoning == nil || request.WriteActivity == nil {
 		return ModelReply{}, errors.New("integration model writers are required")
@@ -1039,6 +1041,8 @@ type integrationToolRegistry struct {
 	mutex   sync.Mutex
 	callIDs []CallID
 }
+
+var _ ToolRegistry = (*integrationToolRegistry)(nil)
 
 func newIntegrationToolRegistry() *integrationToolRegistry {
 	return &integrationToolRegistry{}

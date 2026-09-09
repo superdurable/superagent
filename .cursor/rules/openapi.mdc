@@ -10,5 +10,5 @@ alwaysApply: false
 with ogen and the TypeScript Fetch client with Hey API. Commit generated files
 and enforce zero drift. Handwritten code uses explicit domain mappers.
 
-Snapshot is the only durable read path. The four legacy read paths must remain
-absent, and tests must enforce their absence.
+Snapshot is the only durable browser read model. Contract tests must enforce
+the complete supported HTTP path set.

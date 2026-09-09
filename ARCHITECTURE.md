@@ -78,8 +78,7 @@ assistant message; ambiguous summaries remain with the current live output.
 Busy Agent states reconcile frequently until the durable Step commit becomes
 visible. The visible-page fallback reconciles every eight seconds without
 marking a healthy connection stale. Disconnect, command completion, focus,
-online, visibility recovery, or explicit retry also reconciles a Snapshot. The
-four legacy reads do not exist.
+online, visibility recovery, or explicit retry also reconciles a Snapshot.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Retained events may replay after refresh. Completed-source tracking prevents

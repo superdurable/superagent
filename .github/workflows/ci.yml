@@ -40,7 +40,7 @@ jobs:
         run: make check
       - name: Run decoder fuzzing cadence
         run: make fuzz FUZZ_TIME=30s
-      - name: Verify the Go Flow Definition
+      - name: Validate the Go Flow graph
         run: make check-flow-definition
       - name: Upload backend artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -71,7 +71,7 @@ jobs:
         run: make install-temporal
       - name: Install released dexcli
         run: make install-dexcli
-      - name: Start Dex and run integration parity
+      - name: Start Dex and run integration tests
         shell: bash
         run: |
           set -euo pipefail
