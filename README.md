@@ -165,4 +165,4 @@ definitions.
 
 Read [`AGENTS.md`](AGENTS.md) before making changes. Work involving Dex Flows,
 Steps, RPCs, Channels, Streams, Timers, retries, or recovery must also follow
-the vendored [`skills/dex-developer`](skills/dex-developer/SKILL.md) guidance.
+the installed [Dex Developer skill](https://docs.superdurable.io/build-with-ai/dex-developer-skill).
