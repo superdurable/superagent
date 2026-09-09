@@ -22,13 +22,20 @@ not a Dex SDK example and must not depend on Dex internals.
 Before changing or reviewing Flow, Step, RPC, Attribute, AttributeMap, Channel,
 ChannelMap, Stream, Timer, retry, recovery, or Dex Client code:
 
-1. Read `skills/dex-developer/SKILL.md` completely in that turn.
-2. Read every reference routed by that skill for the work being performed.
+1. Load the installed `dex-developer` skill through the agent's native skill
+   mechanism. Codex uses `$dex-developer`, Claude Code uses
+   `/dex:dex-developer`, and Cursor uses the installed `dex-developer` skill.
+2. Read every reference routed by the skill for the work being performed.
 3. Treat the installed SDK source and version-matched runnable examples or
    real-server compile-contract tests as the API contract.
 
 Do this again in every later turn that touches those concepts. Do not rely on a
 previous turn's memory.
+
+If the skill is unavailable, stop Dex-related changes and provide the
+installation instructions at
+https://docs.superdurable.io/build-with-ai/dex-developer-skill. SuperAgent does
+not load the skill at application runtime.
 
 ## Snapshot boundary
 

@@ -5,14 +5,16 @@ Read `AGENTS.md` before changing the repository.
 ## Dex changes
 
 For every turn that modifies or reviews Dex Flow, Step, RPC, resource, Stream,
-Timer, retry, or recovery code, read `skills/dex-developer/SKILL.md` and all
-references it routes for that task. Confirm APIs against the installed released
-SDK and a version-matched runnable example or real-server compile-contract test.
+Timer, retry, or recovery code, load the installed `dex-developer` skill and all
+references it routes for that task. Installation instructions are at
+https://docs.superdurable.io/build-with-ai/dex-developer-skill. Confirm APIs
+against the installed released SDK and a version-matched runnable example or
+real-server compile-contract test.
 
 Snapshot code targets Dex Go SDK `v0.2.12` and the version-matched selective
 state contract recorded in `MIGRATION.md`. Recheck the installed SDK source and
-refresh the vendored skill before changing its resource projection or errors.
-Never infer an API from a design screenshot or unreleased branch.
+the installed skill before changing its resource projection or errors. Never
+infer an API from a design screenshot or unreleased branch.
 
 ## Deployment boundary
 

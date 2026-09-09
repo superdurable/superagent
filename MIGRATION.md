@@ -15,7 +15,7 @@ and removed the vendored Python tree.
 
 | Phase | Deliverable | Snapshot scope |
 |---|---|---|
-| 0 | Rules, skill, provenance, hooks, and spike audit | Remove premature reads |
+| 0 | Rules, skill version, hooks, and spike audit | Remove premature reads |
 | 1 | Stable Agent core, providers, MCP, command API, runtime, and retained UI | No read HTTP surface |
 | 2 | Released Dex Snapshot RPC, OpenAPI, and complete UI reconciliation | One `/snapshot` read |
 | 3 | Full reliability, live providers, release, and Python-oracle removal | Final parity and cutover |
@@ -24,7 +24,7 @@ and removed the vendored Python tree.
 
 - Preserve the imported Python baseline byte-for-byte.
 - Copy and adapt applicable Dex engineering rules.
-- Vendor the complete `dex-developer` skill and record its source commit.
+- Adopt versioned `dex-developer` guidance and record its source commit.
 - Preserve the pre-plan Go and frontend spike in a recoverable stash.
 - Audit every restored file before it can enter a product commit.
 - Delete old read-path code, dynamic domain objects, raw state strings, and
@@ -86,8 +86,8 @@ All conditions must be true:
 4. AttributeMap, Channel, running Flow, and closed Flow read semantics are
    documented and stable.
 5. SDK error types, locks, resource selection, and RPC return types are fixed.
-6. The local `dex-developer` skill is refreshed or its version differences are
-   recorded and reviewed.
+6. The installed `dex-developer` skill is compatible or its version differences
+   are recorded and reviewed.
 
 The SDK upgrade is its own commit. It updates `go.mod` and `go.sum`, contains no
 local `replace`, compiles all Phase 1 code, runs the complete Dex integration
@@ -115,8 +115,8 @@ The Phase 2 entry gates were reviewed against Dex commit `2f961961` on
 SuperAgent uses decimal sequence values as `AgentMessages` instance keys. The
 slash restriction does not require a data migration.
 
-The initial vendored `dex-developer` skill was byte-identical at `13db6da5` and
-`ce1d734e`. Phase 3 refreshed it from Dex PR 448 merge commit `d09a5d7b`.
+The initially adopted `dex-developer` guidance was byte-identical at `13db6da5`
+and `ce1d734e`. Phase 3 refreshed it from Dex PR 448 merge commit `d09a5d7b`.
 
 ### Dex Go SDK v0.2.12
 
@@ -203,8 +203,8 @@ Phase 3 closes the migration without changing the stable Flow contract.
 - Real Dex integration adds explicit stale plan revision, completed plan,
   multi-call input cancellation, durable choices, plan revision and clearing,
   incomplete active plan, disabled tool, and ordered batch steering coverage.
-- The vendored `dex-developer` skill includes the merged Snapshot and ID-only
-  steering guidance.
+- The `dex-developer` guidance used for cutover includes the merged Snapshot and
+  ID-only steering behavior.
 - `make check-cutover` prevents restoration of the Python oracle or operational
   references to its former path.
 - GitHub Actions runs deterministic quality, fuzz, Flow Definition, and released

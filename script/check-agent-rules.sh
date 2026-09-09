@@ -17,5 +17,10 @@ for rule in project-core dex-application go typescript-react openapi testing pla
   }
 done
 
-test -f skills/dex-developer/SKILL.md
-test -f skills/dex-developer/UPSTREAM.md
+for rules in AGENTS.md CLAUDE.md .cursor/rules/dex-application.mdc; do
+  grep -Fq 'installed `dex-developer` skill' "$rules"
+  grep -Fq 'docs.superdurable.io/build-with-ai/dex-developer-skill' "$rules"
+  grep -Fq 'application runtime.' "$rules"
+done
+
+test ! -e skills/dex-developer
