@@ -6,15 +6,17 @@ package api
 type OperationName = string
 
 const (
-	ApproveToolOperation         OperationName = "ApproveTool"
-	DeleteQueuedMessageOperation OperationName = "DeleteQueuedMessage"
-	ExecutePlanOperation         OperationName = "ExecutePlan"
-	GetAgentSnapshotOperation    OperationName = "GetAgentSnapshot"
-	GetHealthOperation           OperationName = "GetHealth"
-	GetPortalOperation           OperationName = "GetPortal"
-	GetReadinessOperation        OperationName = "GetReadiness"
-	ReadEventOperation           OperationName = "ReadEvent"
-	SendMessageOperation         OperationName = "SendMessage"
-	StartAgentOperation          OperationName = "StartAgent"
-	SteerQueuedMessageOperation  OperationName = "SteerQueuedMessage"
+	ApproveToolOperation                   OperationName = "ApproveTool"
+	DeleteQueuedMessageOperation           OperationName = "DeleteQueuedMessage"
+	ExecutePlanOperation                   OperationName = "ExecutePlan"
+	GetAgentSnapshotOperation              OperationName = "GetAgentSnapshot"
+	GetArchivedMessagesOperation           OperationName = "GetArchivedMessages"
+	GetHealthOperation                     OperationName = "GetHealth"
+	GetPortalOperation                     OperationName = "GetPortal"
+	GetReadinessOperation                  OperationName = "GetReadiness"
+	ReadEventOperation                     OperationName = "ReadEvent"
+	SendMessageOperation                   OperationName = "SendMessage"
+	StartAgentOperation                    OperationName = "StartAgent"
+	SteerQueuedMessageOperation            OperationName = "SteerQueuedMessage"
+	WaitForAgentInteractionStatusOperation OperationName = "WaitForAgentInteractionStatus"
 )

@@ -24,5 +24,6 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill.
 - Snapshot is the only durable browser read model. Do not add parallel durable
   read models.
 - Queue mutation accepts only message IDs loaded through Snapshot.
-- Application history is `AgentMessages`, never Dex execution history.
+- Application history is `CurrentMessages` plus `ArchivedMessages`, never Dex
+  execution history.
 - SuperAgent does not load the skill at application runtime.

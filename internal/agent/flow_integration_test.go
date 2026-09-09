@@ -50,7 +50,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	config.MaxContextTokens = 80
 	config.CompactionTriggerFraction = 0.60
 	config.CompactionKeepFraction = 0.20
-	config.MessageRetentionLimit = 8
+	config.MessageRetentionLimit = 20
 
 	runID, err := environment.agent.Start(t.Context(), flowID, config)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	initialSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	initialSnapshot := readSnapshot(t, environment, flowID)
 	if initialSnapshot.RunID != runID {
 		t.Fatalf("Snapshot run ID = %q, want %q", initialSnapshot.RunID, runID)
 	}
@@ -82,21 +82,14 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	})
 	assertApplicationMessage(t, environment, flowID, state.LastSequence-1, MessageRoleUser, "hello")
 	assertApplicationMessage(t, environment, flowID, state.LastSequence, MessageRoleAssistant, "integration response: hello")
-	latestSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 1})
-	if len(latestSnapshot.History.Messages) != 1 ||
-		latestSnapshot.History.Messages[0].Sequence != state.LastSequence ||
-		latestSnapshot.History.Messages[0].Message.Role != MessageRoleAssistant ||
-		latestSnapshot.History.NextBeforeSequence == nil {
+	latestSnapshot := readSnapshot(t, environment, flowID)
+	if len(latestSnapshot.History.Messages) != 2 ||
+		latestSnapshot.History.Messages[0].Sequence != state.LastSequence-1 ||
+		latestSnapshot.History.Messages[0].Message.Role != MessageRoleUser ||
+		latestSnapshot.History.Messages[1].Sequence != state.LastSequence ||
+		latestSnapshot.History.Messages[1].Message.Role != MessageRoleAssistant ||
+		latestSnapshot.History.NextBeforeSequence != nil {
 		t.Fatalf("latest Snapshot history = %#v", latestSnapshot.History)
-	}
-	previousSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{
-		BeforeSequence: latestSnapshot.History.NextBeforeSequence,
-		Limit:          1,
-	})
-	if len(previousSnapshot.History.Messages) != 1 ||
-		previousSnapshot.History.Messages[0].Sequence != state.LastSequence-1 ||
-		previousSnapshot.History.Messages[0].Message.Role != MessageRoleUser {
-		t.Fatalf("previous Snapshot history = %#v", previousSnapshot.History)
 	}
 	assertTextStream(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
@@ -124,6 +117,26 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
 	})
 	toolRegistry.assertCallsUseID(t, approval.CallID)
+
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+		t.Fatal(err)
+	}
+	rejectedApproval := waitForPendingApproval(t, environment, flowID)
+	if err := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: rejectedApproval.CallID, Approved: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
+	})
+	toolRegistry.assertExecutionCount(t, 1)
+	if snapshot := readSnapshot(t, environment, flowID); !historyContainsText(
+		snapshot.History.Messages,
+		string(toolErrorRejectedByUser),
+	) {
+		t.Fatalf("rejected tool result is missing from history: %#v", snapshot.History.Messages)
+	}
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
 		Content: "ship safely", PlanMode: true,
@@ -175,8 +188,8 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if stateAfterQueue := readAgentState(t, environment, flowID); stateAfterQueue.LastSequence != stateBeforeQueue.LastSequence {
 		t.Fatalf("queued message entered history: sequence advanced from %d to %d", stateBeforeQueue.LastSequence, stateAfterQueue.LastSequence)
 	}
-	firstQueueSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
-	secondQueueSnapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	firstQueueSnapshot := readSnapshot(t, environment, flowID)
+	secondQueueSnapshot := readSnapshot(t, environment, flowID)
 	if len(firstQueueSnapshot.Queued) != 2 || len(secondQueueSnapshot.Queued) != 2 {
 		t.Fatalf("Snapshot queue lengths = %d/%d, want 2/2", len(firstQueueSnapshot.Queued), len(secondQueueSnapshot.Queued))
 	}
@@ -214,9 +227,116 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if !errors.As(steerErr, &pendingMessageNotFound) {
 		t.Fatalf("repeated queue steer error = %T %v", steerErr, steerErr)
 	}
-	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+	state = waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.CompactionGeneration > 0
 	})
+	retained := state.LastSequence - state.FirstRetainedSequence + 1
+	if retained > Sequence(config.MessageRetentionLimit) {
+		t.Fatalf("retained messages = %d, limit = %d", retained, config.MessageRetentionLimit)
+	}
+	if state.FirstRetainedSequence > 1 && state.SummarizedThroughSequence < state.FirstRetainedSequence-1 {
+		t.Fatalf("messages deleted before summary: state = %#v", state)
+	}
+}
+
+func TestAgentInteractionStatusIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-interaction-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusWaiting); err != nil {
+		t.Fatal(err)
+	}
+
+	submitted := make(chan error, 1)
+	go func() {
+		submitted <- environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusSubmitted)
+	}()
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "status cycle"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-submitted; err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusWaiting); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := readSnapshot(t, environment, flowID)
+	if snapshot.Description == nil || snapshot.Description.InteractionStatus != AgentInteractionStatusWaiting ||
+		!historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: status cycle") {
+		t.Fatalf("reconciled Snapshot = %#v", snapshot)
+	}
+}
+
+func TestAgentMessageArchiveIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-archive-" + randomLocalID(t))
+	config := NewAgentConfig()
+	config.MaxContextTokens = 1_000_000
+	if _, err := environment.agent.Start(t.Context(), flowID, config); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+
+	for index := 1; index <= 15; index++ {
+		content := fmt.Sprintf("archive %02d", index)
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: content}); err != nil {
+			t.Fatal(err)
+		}
+		lastSequence := Sequence(index * 2)
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage && state.LastSequence >= lastSequence
+		})
+		if index == 10 {
+			assertArchiveWindow(t, environment, flowID, 11, 20)
+		}
+		if index == 14 {
+			assertArchiveWindow(t, environment, flowID, 11, 28)
+		}
+	}
+	assertArchiveWindow(t, environment, flowID, 21, 30)
+
+	first, err := environment.agent.ArchivedMessages(t.Context(), flowID, 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := environment.agent.ArchivedMessages(t.Context(), flowID, 21)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Messages) != 10 || first.Messages[0].Sequence != 1 || first.Messages[9].Sequence != 10 ||
+		first.NextBeforeSequence != nil {
+		t.Fatalf("first archive = %#v", first)
+	}
+	if len(second.Messages) != 10 || second.Messages[0].Sequence != 11 || second.Messages[9].Sequence != 20 ||
+		second.NextBeforeSequence == nil || *second.NextBeforeSequence != 11 {
+		t.Fatalf("second archive = %#v", second)
+	}
+}
+
+func assertArchiveWindow(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	first Sequence,
+	last Sequence,
+) {
+	t.Helper()
+	snapshot := readSnapshot(t, environment, flowID)
+	if len(snapshot.History.Messages) != int(last-first+1) ||
+		snapshot.History.Messages[0].Sequence != first ||
+		snapshot.History.Messages[len(snapshot.History.Messages)-1].Sequence != last {
+		t.Fatalf("current history at %d = %#v", last, snapshot.History)
+	}
+	if snapshot.History.NextBeforeSequence == nil || *snapshot.History.NextBeforeSequence != first {
+		t.Fatalf("archive boundary at %d = %#v", last, snapshot.History.NextBeforeSequence)
+	}
 }
 
 func TestAgentUserInputIntegration(t *testing.T) {
@@ -420,7 +540,7 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 		t.Fatalf("Flow status = %v, want terminated", result.Status)
 	}
 
-	snapshot := readSnapshot(t, environment, flowID, SnapshotRequest{Limit: 50})
+	snapshot := readSnapshot(t, environment, flowID)
 	if snapshot.RunID != runID || snapshot.FlowStatus != FlowStatusTerminated {
 		t.Fatalf("terminal Snapshot identity = %#v", snapshot)
 	}
@@ -434,10 +554,9 @@ func readSnapshot(
 	t *testing.T,
 	environment *agentIntegrationEnvironment,
 	flowID FlowID,
-	request SnapshotRequest,
 ) AgentSnapshot {
 	t.Helper()
-	snapshot, err := environment.agent.Snapshot(t.Context(), flowID, request)
+	snapshot, err := environment.agent.Snapshot(t.Context(), flowID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +573,7 @@ func waitForSnapshot(
 	var snapshot AgentSnapshot
 	waitUntil(t, environment, "Agent Snapshot", func() (bool, error) {
 		var err error
-		snapshot, err = environment.agent.Snapshot(t.Context(), flowID, SnapshotRequest{Limit: 200})
+		snapshot, err = environment.agent.Snapshot(t.Context(), flowID)
 		return err == nil && accept(snapshot), err
 	})
 	return snapshot
@@ -772,17 +891,7 @@ func assertApplicationMessage(
 	content string,
 ) {
 	t.Helper()
-	var message AgentMessage
-	found, err := environment.sdk.GetAttributeMapInstance(
-		t.Context(),
-		string(flowID),
-		agentMessagesAttribute,
-		sequenceKey(sequence),
-		&message,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	message, found := readApplicationMessage(t, environment, flowID, sequence)
 	if !found || message.Role != role || message.Content != content {
 		t.Fatalf("message %d = found:%t role:%q content:%q", sequence, found, message.Role, message.Content)
 	}
@@ -798,22 +907,49 @@ func historyContains(
 ) bool {
 	t.Helper()
 	for sequence := state.FirstRetainedSequence; sequence <= state.LastSequence; sequence++ {
-		var message AgentMessage
-		found, err := environment.sdk.GetAttributeMapInstance(
-			t.Context(),
-			string(flowID),
-			agentMessagesAttribute,
-			sequenceKey(sequence),
-			&message,
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
+		message, found := readApplicationMessage(t, environment, flowID, sequence)
 		if found && message.Role == role && message.Content == content {
 			return true
 		}
 	}
 	return false
+}
+
+func readApplicationMessage(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	sequence Sequence,
+) (AgentMessage, bool) {
+	t.Helper()
+	state := readAgentState(t, environment, flowID)
+	if sequence >= state.CurrentFirstSequence {
+		var message AgentMessage
+		found, err := environment.sdk.GetAttributeMapInstance(
+			t.Context(), string(flowID), currentMessagesAttribute, sequenceKey(sequence), &message,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return message, found
+	}
+	firstSequence := ((sequence - 1) / archiveMessageChunkSize * archiveMessageChunkSize) + 1
+	var chunk ArchivedMessageChunk
+	found, err := environment.sdk.GetAttributeMapInstance(
+		t.Context(), string(flowID), archivedMessagesAttribute, sequenceKey(firstSequence), &chunk,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		return AgentMessage{}, false
+	}
+	for _, archived := range chunk.Messages {
+		if archived.Sequence == sequence {
+			return archived.Message, true
+		}
+	}
+	return AgentMessage{}, false
 }
 
 func assertTextStream(t *testing.T, client *Client, flowID FlowID, stream EventStream, expected string) {
@@ -1088,6 +1224,15 @@ func (registry *integrationToolRegistry) assertCallsUseID(t *testing.T, callID C
 		if actual != callID {
 			t.Fatalf("tool call ID changed across Worker replacement: got %q, want %q", actual, callID)
 		}
+	}
+}
+
+func (registry *integrationToolRegistry) assertExecutionCount(t *testing.T, expected int) {
+	t.Helper()
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.callIDs) != expected {
+		t.Fatalf("tool executions = %d, want %d", len(registry.callIDs), expected)
 	}
 }
 

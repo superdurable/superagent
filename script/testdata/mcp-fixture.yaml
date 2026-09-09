@@ -1,0 +1,16 @@
+# Copyright (c) 2022-2026 Super Durable, Inc.
+# Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
+servers:
+  - name: fixture
+    transport: stdio
+    command: bin/superagent-mcp-fixture.test
+    env:
+      SUPERAGENT_MCP_HELPER_DIRECTORY: SUPERAGENT_E2E_MCP_HELPER_DIRECTORY
+    tools:
+      echo:
+        read_only: false
+        timeout_seconds: 10
+        maximum_attempts: 1
+        retry_total_seconds: 10

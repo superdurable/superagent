@@ -15,6 +15,7 @@ import {
 } from "react";
 
 import {
+  AgentInteractionStatus,
   MessageRole,
   PlanStatus,
   TaskStatus,
@@ -66,6 +67,8 @@ export function ConversationView({
   onStartAnother,
 }: ConversationViewProps) {
   const { shellRef, composerRef } = useComposerClearance();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const focusAfterEdit = useRef(false);
   const { snapshot } = state;
   const description = snapshot.description;
   const isBusy = state.pendingCommand !== null;
@@ -81,6 +84,23 @@ export function ConversationView({
     (state.assistant?.value.length ?? 0) +
     state.reasoning.reduce((total, entry) => total + entry.value.length, 0);
   useAutoScroll(description.lastSequence, liveContentVersion);
+  useArchiveScroll(
+    snapshot.history.nextBeforeSequence,
+    state.historyRequest !== null,
+    snapshot.history.messages.length,
+    onLoadOlder,
+  );
+  useEffect(() => {
+    const command = state.pendingCommand?.command;
+    if (command?.kind === "queue" && command.action === "edit") {
+      focusAfterEdit.current = true;
+      return;
+    }
+    if (state.pendingCommand === null && focusAfterEdit.current) {
+      focusAfterEdit.current = false;
+      textareaRef.current?.focus();
+    }
+  }, [state.pendingCommand]);
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Enter" &&
@@ -238,11 +258,13 @@ export function ConversationView({
                       if (revision !== undefined) onExecutePlan(revision);
                     }}
                   >
-                    {description.isPlanExecutionRequested
-                      ? "Execution requested"
-                      : description.plan.status === PlanStatus.DRAFT
-                        ? "Execute plan"
-                        : "Continue plan"}
+                    {state.pendingCommand?.command.kind === "execute-plan"
+                      ? "Requesting execution…"
+                      : description.isPlanExecutionRequested
+                        ? "Execution requested"
+                        : description.plan.status === PlanStatus.DRAFT
+                          ? "Execute plan"
+                          : "Continue plan"}
                   </button>
                 )}
               </div>
@@ -279,7 +301,9 @@ export function ConversationView({
                     if (callId !== undefined) onApproveTool(callId, true);
                   }}
                 >
-                  Approve
+                  {state.pendingCommand?.command.kind === "approve"
+                    ? "Processing…"
+                    : "Approve"}
                 </button>
                 <button
                   type="button"
@@ -290,7 +314,9 @@ export function ConversationView({
                     if (callId !== undefined) onApproveTool(callId, false);
                   }}
                 >
-                  Reject
+                  {state.pendingCommand?.command.kind === "approve"
+                    ? "Processing…"
+                    : "Reject"}
                 </button>
               </div>
             </section>
@@ -307,7 +333,7 @@ export function ConversationView({
 
           {(snapshot.queued.length > 0 ||
             snapshot.steered.length > 0 ||
-            state.optimisticSubmission !== null) && (
+            state.optimisticSubmissions.length > 0) && (
             <section className="side-card queue-card">
               <div className="section-heading compact">
                 <div>
@@ -315,7 +341,7 @@ export function ConversationView({
                   <h2>
                     {String(
                       snapshot.queued.length +
-                        (state.optimisticSubmission === null ? 0 : 1),
+                        state.optimisticSubmissions.length,
                     )}{" "}
                     queued · {String(snapshot.steered.length)} steering
                   </h2>
@@ -327,18 +353,23 @@ export function ConversationView({
                   <p>{message.value.content}</p>
                 </div>
               ))}
-              {state.optimisticSubmission !== null && (
+              {state.optimisticSubmissions.map((submission) => (
                 <div
                   className="queue-message submitting"
-                  key={state.optimisticSubmission.localID}
+                  key={submission.localID}
                 >
-                  <strong>Submitting…</strong>
-                  <p>{state.optimisticSubmission.value.content}</p>
+                  <strong>
+                    {submission.phase === "submitting"
+                      ? "Submitting…"
+                      : "Queued"}
+                  </strong>
+                  <small>{submission.value.planMode ? "Plan" : "Chat"}</small>
+                  <p>{submission.value.content}</p>
                 </div>
-              )}
+              ))}
               {snapshot.queued.map((message) => (
                 <div className="queue-message" key={message.messageId}>
-                  <strong>{message.value.planMode ? "Plan" : "Queued"}</strong>
+                  <strong>{message.value.planMode ? "Plan" : "Chat"}</strong>
                   <p>{message.value.content}</p>
                   <div className="queue-actions">
                     {(["steer", "edit", "delete"] as const).map((action) => (
@@ -362,22 +393,30 @@ export function ConversationView({
             </section>
           )}
 
-          {state.activities.length > 0 && (
-            <section className="side-card activity-card">
-              <p className="eyebrow">Live activity</p>
-              <ul>
-                {state.activities.slice(0, 8).map((entry) => (
-                  <li key={entry.resumeToken}>
-                    <strong>{statusLabel(entry.value.kind)}</strong>
-                    <span>{entry.value.message}</span>
-                    <time dateTime={entry.createdAt}>
-                      {formatTime(entry.createdAt)}
-                    </time>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+          <section
+            className="side-card activity-card"
+            aria-label="Agent activity"
+          >
+            <p className="eyebrow">Activity</p>
+            <div className="activity-summary">
+              {state.activities[0] !== undefined &&
+              description.interactionStatus ===
+                AgentInteractionStatus.SUBMITTED ? (
+                <>
+                  <strong>{statusLabel(state.activities[0].value.kind)}</strong>
+                  <span>{state.activities[0].value.message}</span>
+                  <time dateTime={state.activities[0].createdAt}>
+                    {formatTime(state.activities[0].createdAt)}
+                  </time>
+                </>
+              ) : (
+                <>
+                  <strong>{statusLabel(description.status)}</strong>
+                  <span>Durable Agent status</span>
+                </>
+              )}
+            </div>
+          </section>
         </aside>
       </section>
 
@@ -424,6 +463,7 @@ export function ConversationView({
         )}
         <div className="composer-row">
           <textarea
+            ref={textareaRef}
             aria-label={
               description.pendingUserInput === null
                 ? "Message"
@@ -503,6 +543,46 @@ function useComposerClearance(): {
     };
   }, []);
   return { shellRef, composerRef };
+}
+
+function useArchiveScroll(
+  beforeSequence: number | null,
+  isLoading: boolean,
+  messageCount: number,
+  onLoadOlder: (beforeSequence: number) => void,
+) {
+  const requestedSequence = useRef<number | null>(null);
+  const previousHeight = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isLoading) requestedSequence.current = null;
+  }, [isLoading]);
+  useEffect(() => {
+    const loadAtTop = () => {
+      if (
+        window.scrollY > 80 ||
+        beforeSequence === null ||
+        isLoading ||
+        requestedSequence.current === beforeSequence
+      ) {
+        return;
+      }
+      requestedSequence.current = beforeSequence;
+      previousHeight.current = document.documentElement.scrollHeight;
+      onLoadOlder(beforeSequence);
+    };
+    window.addEventListener("scroll", loadAtTop, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", loadAtTop);
+    };
+  }, [beforeSequence, isLoading, onLoadOlder]);
+  useLayoutEffect(() => {
+    if (isLoading || previousHeight.current === null) return;
+    const addedHeight =
+      document.documentElement.scrollHeight - previousHeight.current;
+    if (addedHeight > 0)
+      window.scrollBy({ top: addedHeight, behavior: "auto" });
+    previousHeight.current = null;
+  }, [isLoading, messageCount]);
 }
 
 function useAutoScroll(lastSequence: number, liveContentVersion: number) {

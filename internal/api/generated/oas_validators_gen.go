@@ -136,6 +136,17 @@ func (s *AgentDescription) Validate() error {
 		})
 	}
 	if err := func() error {
+		if err := s.InteractionStatus.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "interactionStatus",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           0,
@@ -461,6 +472,40 @@ func (s *AgentEvent) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s *AgentInteractionState) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Status.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "status",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s AgentInteractionStatus) Validate() error {
+	switch s {
+	case "submitted":
+		return nil
+	case "waiting":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *AgentMessage) Validate() error {
@@ -1181,6 +1226,39 @@ func (s *GetAgentSnapshotServiceUnavailable) Validate() error {
 	return nil
 }
 
+func (s *GetArchivedMessagesBadRequest) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *GetArchivedMessagesNotFound) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s GetArchivedMessagesOKCacheControl) Validate() error {
+	switch s {
+	case "no-store":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *GetArchivedMessagesServiceUnavailable) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Health) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1270,6 +1348,40 @@ func (s *HistoryPage) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "nextBeforeSequence",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *HistoryPageHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.CacheControl.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "CacheControl",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Response.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "Response",
 			Error: err,
 		})
 	}
@@ -2475,13 +2587,13 @@ func (s *StartAgentRequest) Validate() error {
 	if err := func() error {
 		if err := (validate.Int{
 			MinSet:        true,
-			Min:           1,
+			Min:           20,
 			MaxSet:        true,
 			Max:           1000000,
 			MinExclusive:  false,
 			MaxExclusive:  false,
-			MultipleOfSet: false,
-			MultipleOf:    0,
+			MultipleOfSet: true,
+			MultipleOf:    10,
 			Pattern:       nil,
 		}).Validate(int64(s.MessageRetentionLimit)); err != nil {
 			return errors.Wrap(err, "int")
@@ -2829,6 +2941,38 @@ func (s *UserMessage) Validate() error {
 	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *WaitForAgentInteractionStatusBadRequest) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *WaitForAgentInteractionStatusConflict) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *WaitForAgentInteractionStatusNotFound) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *WaitForAgentInteractionStatusServiceUnavailable) Validate() error {
+	alias := (*Problem)(s)
+	if err := alias.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

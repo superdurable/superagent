@@ -65,9 +65,17 @@ static graph separately:
 
 ```bash
 DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-dex-integration
+DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-server-integration
+DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-full-stack-e2e
+DEX_FLOW_SERVICE_ADDRESS=127.0.0.1:8801 make test-integration
 make check-flow-definition
 make flow-visualize
 ```
+
+The server integration suite uses a released Dex server, a real Worker, and the
+real generated HTTP server. The full-stack suite adds the separately served Web
+artifact and asserts visible DOM and interaction results, not only HTTP status.
+Neither suite may replace API responses with browser route fulfillment.
 
 The integration suite reads private resources through the Dex Client only. It
 must not add an HTTP read endpoint or exported descriptor getter to make tests

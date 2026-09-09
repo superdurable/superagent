@@ -28,12 +28,15 @@ import (
 )
 
 const (
+	archiveMessageChunkSize = 10
+	currentMessageLimit     = 2 * archiveMessageChunkSize
+
 	// DefaultModel uses the deterministic local provider.
 	DefaultModel Model = "mock/dex"
 	// DefaultContextTokens bounds reconstructed model context.
 	DefaultContextTokens = 32_000
 	// DefaultMessageRetention bounds retained summarized messages.
-	DefaultMessageRetention = 2_000
+	DefaultMessageRetention = 1_000
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
 	DefaultSystemPrompt = "You are a helpful durable AI agent. Use tools when they help, explain important actions, and never claim a tool succeeded unless its result says so."
 )
@@ -149,6 +152,29 @@ func (status AgentStatus) Validate() error {
 // UnmarshalJSON decodes and validates an Agent status.
 func (status *AgentStatus) UnmarshalJSON(data []byte) error {
 	return decodeEnum(data, status, AgentStatus.Validate)
+}
+
+// AgentInteractionStatus coordinates durable browser reconciliation.
+type AgentInteractionStatus string
+
+const (
+	AgentInteractionStatusSubmitted AgentInteractionStatus = "submitted"
+	AgentInteractionStatusWaiting   AgentInteractionStatus = "waiting"
+)
+
+// Validate rejects unknown interaction statuses.
+func (status AgentInteractionStatus) Validate() error {
+	switch status {
+	case AgentInteractionStatusSubmitted, AgentInteractionStatusWaiting:
+		return nil
+	default:
+		return newEnumValidationError("AgentInteractionStatus", string(status))
+	}
+}
+
+// UnmarshalJSON decodes and validates an interaction status.
+func (status *AgentInteractionStatus) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, status, AgentInteractionStatus.Validate)
 }
 
 // FlowStatus describes the Dex lifecycle state exposed with an Agent Snapshot.
@@ -516,7 +542,7 @@ type AgentConfig struct {
 	CompactionTriggerFraction float64 `json:"compaction_trigger_fraction"`
 	// CompactionKeepFraction defaults to 0.10 and must be below the trigger.
 	CompactionKeepFraction float64 `json:"compaction_keep_fraction"`
-	// MessageRetentionLimit defaults to 2000 and must be positive.
+	// MessageRetentionLimit defaults to 1000 and must be a multiple of ten.
 	MessageRetentionLimit int `json:"message_retention_limit"`
 	// MCPEnabled defaults true and controls trusted MCP visibility.
 	MCPEnabled bool `json:"mcp_enabled"`
@@ -562,8 +588,8 @@ func (config AgentConfig) Validate() error {
 		config.CompactionKeepFraction >= config.CompactionTriggerFraction,
 		config.CompactionTriggerFraction >= 1:
 		return errors.New("compaction fractions must satisfy 0 < keep < trigger < 1")
-	case config.MessageRetentionLimit <= 0:
-		return errors.New("message_retention_limit must be positive")
+	case config.MessageRetentionLimit < currentMessageLimit || config.MessageRetentionLimit%archiveMessageChunkSize != 0:
+		return fmt.Errorf("message_retention_limit must be at least %d and a multiple of %d", currentMessageLimit, archiveMessageChunkSize)
 	default:
 		return nil
 	}
@@ -622,6 +648,7 @@ type AgentMessage struct {
 type AgentState struct {
 	NextSequence                 Sequence        `json:"next_sequence"`
 	FirstRetainedSequence        Sequence        `json:"first_retained_sequence"`
+	CurrentFirstSequence         Sequence        `json:"current_first_sequence"`
 	LastSequence                 Sequence        `json:"last_sequence"`
 	SummarizedThroughSequence    Sequence        `json:"summarized_through_sequence"`
 	CompactionGeneration         int64           `json:"compaction_generation"`
@@ -633,12 +660,6 @@ type AgentState struct {
 	PlanningRequiresWrite        bool            `json:"planning_requires_write"`
 	PlanningAllowsWrite          bool            `json:"planning_allows_write"`
 	PendingPlanExecutionRevision *PlanRevision   `json:"pending_plan_execution_revision,omitempty"`
-}
-
-// SnapshotRequest selects one bounded application-history page.
-type SnapshotRequest struct {
-	BeforeSequence *Sequence `json:"before_sequence,omitempty"`
-	Limit          int       `json:"limit"`
 }
 
 // SequencedMessage pairs one application message with its durable ordering key.
@@ -653,6 +674,11 @@ type HistoryPage struct {
 	NextBeforeSequence *Sequence          `json:"next_before_sequence,omitempty"`
 }
 
+// ArchivedMessageChunk stores one immutable ten-message history page.
+type ArchivedMessageChunk struct {
+	Messages []SequencedMessage `json:"messages"`
+}
+
 // PendingUserMessage preserves one Dex Channel message ID and value.
 type PendingUserMessage struct {
 	MessageID MessageID   `json:"message_id"`
@@ -661,21 +687,22 @@ type PendingUserMessage struct {
 
 // AgentDescription is the durable application state needed to render a conversation.
 type AgentDescription struct {
-	Status                     AgentStatus       `json:"status"`
-	Model                      Model             `json:"model"`
-	SystemPrompt               string            `json:"system_prompt"`
-	FirstRetainedSequence      Sequence          `json:"first_retained_sequence"`
-	LastSequence               Sequence          `json:"last_sequence"`
-	SummarizedThroughSequence  Sequence          `json:"summarized_through_sequence"`
-	PendingApproval            *PendingApproval  `json:"pending_approval,omitempty"`
-	PendingTimer               *PendingTimer     `json:"pending_timer,omitempty"`
-	PendingUserInput           *PendingUserInput `json:"pending_user_input,omitempty"`
-	Plan                       *AgentPlan        `json:"plan,omitempty"`
-	IsPlanExecutionRequested   bool              `json:"is_plan_execution_requested"`
-	PendingQueuedMessageCount  int               `json:"pending_queued_message_count"`
-	PendingSteeredMessageCount int               `json:"pending_steered_message_count"`
-	AvailableMCPServers        []string          `json:"available_mcp_servers"`
-	AvailableTools             []ToolName        `json:"available_tools"`
+	Status                     AgentStatus            `json:"status"`
+	InteractionStatus          AgentInteractionStatus `json:"interaction_status"`
+	Model                      Model                  `json:"model"`
+	SystemPrompt               string                 `json:"system_prompt"`
+	FirstRetainedSequence      Sequence               `json:"first_retained_sequence"`
+	LastSequence               Sequence               `json:"last_sequence"`
+	SummarizedThroughSequence  Sequence               `json:"summarized_through_sequence"`
+	PendingApproval            *PendingApproval       `json:"pending_approval,omitempty"`
+	PendingTimer               *PendingTimer          `json:"pending_timer,omitempty"`
+	PendingUserInput           *PendingUserInput      `json:"pending_user_input,omitempty"`
+	Plan                       *AgentPlan             `json:"plan,omitempty"`
+	IsPlanExecutionRequested   bool                   `json:"is_plan_execution_requested"`
+	PendingQueuedMessageCount  int                    `json:"pending_queued_message_count"`
+	PendingSteeredMessageCount int                    `json:"pending_steered_message_count"`
+	AvailableMCPServers        []string               `json:"available_mcp_servers"`
+	AvailableTools             []ToolName             `json:"available_tools"`
 }
 
 // AgentSnapshot is one atomic durable application view.
@@ -695,6 +722,7 @@ func NewAgentState() AgentState {
 	return AgentState{
 		NextSequence:          1,
 		FirstRetainedSequence: 1,
+		CurrentFirstSequence:  1,
 		Status:                AgentStatusWaitingForMessage,
 		PendingToolCalls:      []ToolCall{},
 		InteractionMode:       InteractionModeChat,
@@ -816,6 +844,18 @@ var _ error = (*PendingMessageNotFoundError)(nil)
 // Error describes the stale queue identity.
 func (err *PendingMessageNotFoundError) Error() string {
 	return fmt.Sprintf("queued message %q is no longer pending", err.MessageID)
+}
+
+// ArchivedMessagesNotFoundError reports a history chunk lost to retention or a stale view.
+type ArchivedMessagesNotFoundError struct {
+	BeforeSequence Sequence
+}
+
+var _ error = (*ArchivedMessagesNotFoundError)(nil)
+
+// Error describes the missing history boundary.
+func (err *ArchivedMessagesNotFoundError) Error() string {
+	return fmt.Sprintf("archived messages before %d are no longer retained", err.BeforeSequence)
 }
 
 // Error describes the rejected command without exposing durable state internals.

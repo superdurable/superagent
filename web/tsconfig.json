@@ -21,6 +21,7 @@
   "include": [
     "./openapi-ts.config.ts",
     "./playwright.config.ts",
+    "./playwright.full-stack.config.ts",
     "./vitest.config.ts",
     "./src/**/*",
     "./tests/**/*"

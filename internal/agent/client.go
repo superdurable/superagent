@@ -29,7 +29,7 @@ import (
 const (
 	defaultCommandTimeout = 20 * time.Second
 	defaultEventPoll      = 20 * time.Second
-	defaultSnapshotLimit  = 50
+	snapshotActiveProbe   = 100 * time.Millisecond
 )
 
 // Client is the typed application boundary around Dex Agent operations.
@@ -72,6 +72,9 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, config AgentConf
 	})
 	if err != nil {
 		return "", err
+	}
+	if err := client.WaitForInteractionStatus(ctx, flowID, AgentInteractionStatusWaiting); err != nil {
+		return "", fmt.Errorf("wait for initial Agent interaction status: %w", err)
 	}
 	return RunID(runID), nil
 }
@@ -117,55 +120,127 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 func (client *Client) Snapshot(
 	ctx context.Context,
 	flowID FlowID,
-	request SnapshotRequest,
 ) (AgentSnapshot, error) {
 	if err := validateFlowID(flowID); err != nil {
 		return AgentSnapshot{}, err
 	}
-	if request.Limit == 0 {
-		request.Limit = defaultSnapshotLimit
-	}
-	if request.Limit < minimumSnapshotPageSize || request.Limit > maximumSnapshotPageSize {
-		return AgentSnapshot{}, fmt.Errorf("snapshot limit must be between %d and %d", minimumSnapshotPageSize, maximumSnapshotPageSize)
-	}
-	if request.BeforeSequence != nil && *request.BeforeSequence < 1 {
-		return AgentSnapshot{}, errors.New("before sequence must be positive")
-	}
 	var snapshot AgentSnapshot
-	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, request, &snapshot, dex.InvokeOptions{
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, nil, &snapshot, dex.InvokeOptions{
 		Timeout:           client.commandTimeout,
-		LoadAttributeMaps: []dex.AttributeDef{agentMessagesAttribute},
+		LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
 		LoadChannels: []dex.ChannelDef{
 			queuedUserMessagesChannel,
 			steeredUserMessagesChannel,
 		},
 	})
 	if err == nil {
-		// Keep active Snapshots available during visibility projection outages.
-		latest, lookupErr := client.latestAgentRun(ctx, flowID)
-		if lookupErr == nil && latest != nil {
-			status, statusErr := flowStatusFromDex(latest.Status)
-			if statusErr != nil {
-				return AgentSnapshot{}, statusErr
-			}
-			if status != FlowStatusRunning {
-				return client.terminalSnapshot(ctx, flowID)
-			}
-		}
-		return snapshot, nil
+		return client.resolveSnapshotLifecycle(ctx, flowID, snapshot)
 	}
 	var inactive *dex.FlowNotActiveError
 	if !errors.As(err, &inactive) {
 		return AgentSnapshot{}, err
 	}
-	terminal, terminalErr := client.terminalSnapshot(ctx, flowID)
+	terminal, terminalErr := client.terminalSnapshot(ctx, flowID, "")
 	if terminalErr != nil {
 		return AgentSnapshot{}, errors.Join(err, terminalErr)
 	}
 	return terminal, nil
 }
 
-func (client *Client) terminalSnapshot(ctx context.Context, flowID FlowID) (AgentSnapshot, error) {
+func (client *Client) resolveSnapshotLifecycle(
+	ctx context.Context,
+	flowID FlowID,
+	snapshot AgentSnapshot,
+) (AgentSnapshot, error) {
+	if snapshot.Description == nil {
+		return snapshot, nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, snapshotActiveProbe)
+	defer cancel()
+	err := client.sdk.WaitForAttributeEqual(
+		probeCtx,
+		string(flowID),
+		agentInteractionStatusAttribute,
+		snapshot.Description.InteractionStatus,
+	)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		return snapshot, nil
+	}
+	if ctx.Err() != nil {
+		return AgentSnapshot{}, ctx.Err()
+	}
+	var inactive *dex.FlowNotActiveError
+	if errors.As(err, &inactive) {
+		return client.terminalSnapshot(ctx, flowID, snapshot.RunID)
+	}
+	// Keep active Snapshots available during lifecycle probe outages.
+	return snapshot, nil
+}
+
+// ArchivedMessages reads exactly one immutable history chunk before a sequence boundary.
+func (client *Client) ArchivedMessages(ctx context.Context, flowID FlowID, before Sequence) (HistoryPage, error) {
+	if err := validateFlowID(flowID); err != nil {
+		return HistoryPage{}, err
+	}
+	if before <= Sequence(archiveMessageChunkSize) || (before-1)%Sequence(archiveMessageChunkSize) != 0 {
+		return HistoryPage{}, fmt.Errorf("before sequence must identify a %d-message boundary", archiveMessageChunkSize)
+	}
+	first := before - Sequence(archiveMessageChunkSize)
+	var chunk ArchivedMessageChunk
+	found, err := client.sdk.GetAttributeMapInstance(
+		ctx,
+		string(flowID),
+		archivedMessagesAttribute,
+		sequenceKey(first),
+		&chunk,
+	)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if !found {
+		return HistoryPage{}, &ArchivedMessagesNotFoundError{BeforeSequence: before}
+	}
+	var state AgentState
+	found, err = client.sdk.GetAttribute(ctx, string(flowID), agentStateAttribute, &state)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if !found {
+		return HistoryPage{}, errors.New("agent state is not initialized")
+	}
+	var next *Sequence
+	if first > state.FirstRetainedSequence {
+		value := first
+		next = &value
+	}
+	return HistoryPage{Messages: chunk.Messages, NextBeforeSequence: next}, nil
+}
+
+// WaitForInteractionStatus blocks until the durable synchronization status matches expected.
+func (client *Client) WaitForInteractionStatus(
+	ctx context.Context,
+	flowID FlowID,
+	expected AgentInteractionStatus,
+) error {
+	if err := validateFlowID(flowID); err != nil {
+		return err
+	}
+	if err := expected.Validate(); err != nil {
+		return err
+	}
+	return client.sdk.WaitForAttributeEqual(
+		ctx,
+		string(flowID),
+		agentInteractionStatusAttribute,
+		expected,
+	)
+}
+
+func (client *Client) terminalSnapshot(
+	ctx context.Context,
+	flowID FlowID,
+	runID RunID,
+) (AgentSnapshot, error) {
 	result, err := client.sdk.WaitForFlow(ctx, string(flowID), dex.WaitForFlowOptions{})
 	if err != nil {
 		return AgentSnapshot{}, fmt.Errorf("read terminal Flow result: %w", err)
@@ -177,9 +252,11 @@ func (client *Client) terminalSnapshot(ctx context.Context, flowID FlowID) (Agen
 	if status == FlowStatusRunning {
 		return AgentSnapshot{}, errors.New("inactive Agent resolved to a non-terminal Flow")
 	}
-	runID, err := client.currentRunID(ctx, flowID)
-	if err != nil {
-		return AgentSnapshot{}, err
+	if runID == "" {
+		runID, err = client.currentRunID(ctx, flowID)
+		if err != nil {
+			return AgentSnapshot{}, err
+		}
 	}
 	errorType, err := flowErrorTypeFromDex(result.ErrorType)
 	if err != nil {

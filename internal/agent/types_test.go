@@ -28,7 +28,7 @@ func TestAgentConfigDefaultsValidate(t *testing.T) {
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if config.Model != DefaultModel || config.MaxContextTokens != 32_000 {
+	if config.Model != DefaultModel || config.MaxContextTokens != 32_000 || config.MessageRetentionLimit != 1_000 {
 		t.Fatalf("unexpected defaults: %+v", config)
 	}
 }
@@ -44,6 +44,8 @@ func TestAgentConfigRejectsInvalidValues(t *testing.T) {
 		{"inverted fractions", func(config *AgentConfig) { config.CompactionKeepFraction = 0.9 }},
 		{"NaN fraction", func(config *AgentConfig) { config.CompactionKeepFraction = math.NaN() }},
 		{"zero retention", func(config *AgentConfig) { config.MessageRetentionLimit = 0 }},
+		{"retention below current window", func(config *AgentConfig) { config.MessageRetentionLimit = 10 }},
+		{"retention not chunk aligned", func(config *AgentConfig) { config.MessageRetentionLimit = 25 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -63,6 +65,7 @@ func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
 		target   json.Unmarshaler
 	}{
 		{name: "Agent status", typeName: "AgentStatus", target: new(AgentStatus)},
+		{name: "Agent interaction status", typeName: "AgentInteractionStatus", target: new(AgentInteractionStatus)},
 		{name: "Flow status", typeName: "FlowStatus", target: new(FlowStatus)},
 		{name: "Flow error type", typeName: "FlowErrorType", target: new(FlowErrorType)},
 	}

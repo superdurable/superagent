@@ -32,6 +32,12 @@ type Handler interface {
 	//
 	// GET /products/ai-agent/snapshot
 	GetAgentSnapshot(ctx context.Context, params GetAgentSnapshotParams) (GetAgentSnapshotRes, error)
+	// GetArchivedMessages implements getArchivedMessages operation.
+	//
+	// Read one exact archived ten-message chunk.
+	//
+	// GET /products/ai-agent/archived-messages
+	GetArchivedMessages(ctx context.Context, params GetArchivedMessagesParams) (GetArchivedMessagesRes, error)
 	// GetHealth implements getHealth operation.
 	//
 	// Report process liveness.
@@ -76,6 +82,12 @@ type Handler interface {
 	//
 	// POST /products/ai-agent/message-queue/steer
 	SteerQueuedMessage(ctx context.Context, req *QueueMutationRequest) (SteerQueuedMessageRes, error)
+	// WaitForAgentInteractionStatus implements waitForAgentInteractionStatus operation.
+	//
+	// Wait for one durable Agent interaction status.
+	//
+	// GET /products/ai-agent/interaction-status
+	WaitForAgentInteractionStatus(ctx context.Context, params WaitForAgentInteractionStatusParams) (WaitForAgentInteractionStatusRes, error)
 }
 
 // Server implements http server based on OpenAPI v3 specification and

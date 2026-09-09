@@ -8,6 +8,13 @@ alwaysApply: false
 
 - Run repository suites through Make targets and tee long output under `/tmp`.
 - Never skip, gate, weaken, or delete a failing assertion to make tests pass.
+- Every Agent behavior change or feature requires a released-Dex server
+  integration test and a full-stack browser E2E test.
+- Full-stack E2E uses the real HTTP API and asserts visible DOM state, focus,
+  keyboard behavior, and user interactions. Do not use route fulfillment or
+  stop at an HTTP success assertion.
+- Fix production code when a test exposes a discrepancy. Never preserve a bug
+  by changing the expected behavior.
 - Async tests use unique Flow IDs and deadline polling, not sleeps.
 - Test Worker replacement at durable waits and side-effect boundaries.
 - Default tests are deterministic. Only the explicit live OpenAI target loads

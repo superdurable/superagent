@@ -110,6 +110,7 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
             history: { messages: [], nextBeforeSequence: null },
             description: {
               status: "waiting_for_message",
+              interactionStatus: "waiting",
               model: "mock/reliable",
               systemPrompt: "Be helpful.",
               firstRetainedSequence: 1,
@@ -131,6 +132,7 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
         });
         return;
       case "/products/ai-agent/events":
+      case "/products/ai-agent/interaction-status":
         await route.fulfill({
           status: 504,
           headers,

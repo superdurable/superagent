@@ -9,6 +9,7 @@
   command after each turn
 - Command RPCs: `SendMessage`, `SteerMessage`, `ApproveTool`, and `ExecutePlan`
 - Read RPC: `Snapshot`
+- Browser synchronization Attribute: `AgentInteractionStatus`
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic
 commit. Provider and MCP calls are external effects and are not part of a Dex
@@ -71,8 +72,10 @@ application history, and makes the model replan.
 |---|---|---|
 | `AgentConfig` | Attribute | Immutable execution configuration |
 | `AgentState` | Attribute | Sequence range, mode, status, plan revision, and pending-call cursor |
+| `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
 | `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
-| `AgentMessages` | AttributeMap | Provider-neutral application history keyed by monotonic sequence |
+| `CurrentMessages` | AttributeMap | Recent provider-neutral messages keyed by sequence |
+| `ArchivedMessages` | AttributeMap | Ten-message chunks keyed by first sequence |
 | `AgentPlan` | Attribute | Atomically replaced short plan |
 | `PendingApproval` | Attribute | Reloadable approval request |
 | `PendingTimer` | Attribute | Reloadable durable wait description |
@@ -83,28 +86,33 @@ application history, and makes the model replan.
 | `PlanExecutions` | ChannelMap | Execution request partitioned by plan revision |
 | `ReasoningSummary` | buffered Stream | Provider-authored reasoning summaries only |
 | `AssistantText` | buffered Stream | Visible response deltas |
-| `AgentActivity` | Stream | Complete lifecycle and tool activity events |
+| `AgentActivity` | Stream | Latest bounded single-line lifecycle summary |
 
 Channels are delivery mechanisms, not storage. A queued message enters
-`AgentMessages` only after a Step consumes it. Stream loss never changes durable
-truth.
+application history only after a Step consumes it. Stream loss never changes
+durable truth.
 
 ## Application history
 
-Application history is the `AgentMessages` AttributeMap plus range metadata in
-`AgentState`. It is not Dex execution history.
+Application history is `CurrentMessages`, `ArchivedMessages`, and range metadata
+in `AgentState`. It is not Dex execution history.
 
 Sequence keys are fixed-width monotonic values. Context reconstruction reads
 known keys from the retained range and does not enumerate an unbounded map.
 Compaction commits a cumulative summary with its exact covered sequence before
 deleting messages.
 
-`Snapshot` explicitly loads all `AgentMessages` entries and the pending values
+`Snapshot` explicitly loads all `CurrentMessages` entries and the pending values
 of `QueuedUserMessages` and `SteeredUserMessages`. Ordinary Attributes used for
 the description are available under the released RPC semantics. Loading is
 independent from locking and transactional execution: this RPC is read-only,
 does not lock the resources, and does not consume either Channel. Its history
-page is projected only from `AgentMessages` and `AgentState` retention metadata.
+page never includes archives. At twenty current messages, the oldest ten move
+atomically to one `ArchivedMessages` instance. The archive endpoint reads one
+exact chunk by sequence and top scrolling requests only the adjacent chunk.
+
+Retention is at least twenty and a multiple of ten. A complete archive chunk is
+deleted only after the cumulative compaction summary covers its full range.
 
 The RPC returns the invocation Run ID from Dex context. Consecutive reads retain
 Channel FIFO order, values, and stable message IDs. Closed Flows follow the SDK

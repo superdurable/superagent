@@ -68,6 +68,14 @@ export const AgentStatus = {
 
 export type AgentStatus = typeof AgentStatus[keyof typeof AgentStatus];
 
+export const AgentInteractionStatus = { SUBMITTED: 'submitted', WAITING: 'waiting' } as const;
+
+export type AgentInteractionStatus = typeof AgentInteractionStatus[keyof typeof AgentInteractionStatus];
+
+export type AgentInteractionState = {
+    status: AgentInteractionStatus;
+};
+
 export const MessageRole = {
     SYSTEM: 'system',
     USER: 'user',
@@ -248,6 +256,7 @@ export type UserMessage = {
 
 export type AgentDescription = {
     status: AgentStatus;
+    interactionStatus: AgentInteractionStatus;
     model: string;
     systemPrompt: string;
     firstRetainedSequence: number;
@@ -492,8 +501,6 @@ export type GetAgentSnapshotData = {
     path?: never;
     query: {
         flowId: FlowId;
-        beforeSequence?: Sequence;
-        limit?: number;
     };
     url: '/products/ai-agent/snapshot';
 };
@@ -523,6 +530,86 @@ export type GetAgentSnapshotResponses = {
 };
 
 export type GetAgentSnapshotResponse = GetAgentSnapshotResponses[keyof GetAgentSnapshotResponses];
+
+export type GetArchivedMessagesData = {
+    body?: never;
+    path?: never;
+    query: {
+        flowId: FlowId;
+        beforeSequence: Sequence;
+    };
+    url: '/products/ai-agent/archived-messages';
+};
+
+export type GetArchivedMessagesErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type GetArchivedMessagesError = GetArchivedMessagesErrors[keyof GetArchivedMessagesErrors];
+
+export type GetArchivedMessagesResponses = {
+    /**
+     * The archived chunk immediately before the boundary.
+     */
+    200: HistoryPage;
+};
+
+export type GetArchivedMessagesResponse = GetArchivedMessagesResponses[keyof GetArchivedMessagesResponses];
+
+export type WaitForAgentInteractionStatusData = {
+    body?: never;
+    path?: never;
+    query: {
+        flowId: FlowId;
+        expectedStatus: AgentInteractionStatus;
+    };
+    url: '/products/ai-agent/interaction-status';
+};
+
+export type WaitForAgentInteractionStatusErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    409: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+    /**
+     * The expected status was not observed before the bounded poll expired.
+     */
+    504: PollTimeout;
+};
+
+export type WaitForAgentInteractionStatusError = WaitForAgentInteractionStatusErrors[keyof WaitForAgentInteractionStatusErrors];
+
+export type WaitForAgentInteractionStatusResponses = {
+    /**
+     * The expected durable interaction status was observed.
+     */
+    200: AgentInteractionState;
+};
+
+export type WaitForAgentInteractionStatusResponse = WaitForAgentInteractionStatusResponses[keyof WaitForAgentInteractionStatusResponses];
 
 export type DeleteQueuedMessageData = {
     body: QueueMutationRequest;

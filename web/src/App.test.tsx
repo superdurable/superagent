@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import {
+  AgentInteractionStatus,
   AgentStatus,
   FlowStatus,
   Provider,
@@ -24,6 +25,7 @@ import {
   sendMessage,
   startAgent,
   steerQueuedMessage,
+  waitForAgentInteractionStatus,
   type AgentSnapshot,
   type AgentDescription,
   type Portal,
@@ -43,6 +45,7 @@ vi.mock("./api/generated", async (importOriginal) => {
     sendMessage: vi.fn(),
     startAgent: vi.fn(),
     steerQueuedMessage: vi.fn(),
+    waitForAgentInteractionStatus: vi.fn(),
   };
 });
 
@@ -71,6 +74,7 @@ const portal: Portal = {
 
 const activeDescription: AgentDescription = {
   status: AgentStatus.WAITING_FOR_MESSAGE,
+  interactionStatus: AgentInteractionStatus.WAITING,
   model: "mock/reliable",
   systemPrompt: "Be helpful.",
   firstRetainedSequence: 1,
@@ -105,6 +109,18 @@ describe("App", () => {
     vi.mocked(getPortal).mockResolvedValue(portal);
     vi.mocked(getAgentSnapshot).mockResolvedValue(snapshot);
     vi.mocked(readEvent).mockImplementation(
+      ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    vi.mocked(waitForAgentInteractionStatus).mockImplementation(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
           signal?.addEventListener(
@@ -230,16 +246,15 @@ describe("App", () => {
     });
   });
 
-  it("reconciles the durable Snapshot when the window regains focus", async () => {
+  it("does not duplicate the Snapshot when the window regains focus", async () => {
     window.history.replaceState({}, "", "/?flowId=flow-existing");
     render(<App />);
     await screen.findByRole("heading", { name: "SuperAgent" });
 
     fireEvent.focus(window);
 
-    await waitFor(() => {
-      expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
-    });
+    await Promise.resolve();
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it("shows a terminal Flow result without opening live subscriptions", async () => {

@@ -14,16 +14,16 @@ var (
 	rn3AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn17AllowedHeaders = map[string]string{
+	rn18AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn13AllowedHeaders = map[string]string{
+	rn14AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
 	rn4AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn15AllowedHeaders = map[string]string{
+	rn16AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
 	rn1AllowedHeaders = map[string]string{
@@ -118,6 +118,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				switch elem[0] {
+				case 'a': // Prefix: "archived-messages"
+
+					if l := len("archived-messages"); len(elem) >= l && elem[0:l] == "archived-messages" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetArchivedMessagesRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
 				case 'e': // Prefix: "events"
 
 					if l := len("events"); len(elem) >= l && elem[0:l] == "events" {
@@ -131,6 +156,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						switch r.Method {
 						case "GET":
 							s.handleReadEventRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				case 'i': // Prefix: "interaction-status"
+
+					if l := len("interaction-status"); len(elem) >= l && elem[0:l] == "interaction-status" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleWaitForAgentInteractionStatusRequest([0]string{}, elemIsEscaped, w, r)
 						default:
 							s.notAllowed(w, r, notAllowedParams{
 								allowedMethods: "GET",
@@ -208,7 +258,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								default:
 									s.notAllowed(w, r, notAllowedParams{
 										allowedMethods: "POST",
-										allowedHeaders: rn17AllowedHeaders,
+										allowedHeaders: rn18AllowedHeaders,
 										acceptPost:     "application/json",
 										acceptPatch:    "",
 									})
@@ -235,7 +285,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "POST",
-									allowedHeaders: rn13AllowedHeaders,
+									allowedHeaders: rn14AllowedHeaders,
 									acceptPost:     "application/json",
 									acceptPatch:    "",
 								})
@@ -363,7 +413,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "POST",
-									allowedHeaders: rn15AllowedHeaders,
+									allowedHeaders: rn16AllowedHeaders,
 									acceptPost:     "application/json",
 									acceptPatch:    "",
 								})
@@ -563,6 +613,31 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 					break
 				}
 				switch elem[0] {
+				case 'a': // Prefix: "archived-messages"
+
+					if l := len("archived-messages"); len(elem) >= l && elem[0:l] == "archived-messages" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetArchivedMessagesOperation
+							r.summary = "Read one exact archived ten-message chunk"
+							r.operationID = "getArchivedMessages"
+							r.operationGroup = ""
+							r.pathPattern = "/products/ai-agent/archived-messages"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
 				case 'e': // Prefix: "events"
 
 					if l := len("events"); len(elem) >= l && elem[0:l] == "events" {
@@ -580,6 +655,31 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 							r.operationID = "readEvent"
 							r.operationGroup = ""
 							r.pathPattern = "/products/ai-agent/events"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 'i': // Prefix: "interaction-status"
+
+					if l := len("interaction-status"); len(elem) >= l && elem[0:l] == "interaction-status" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = WaitForAgentInteractionStatusOperation
+							r.summary = "Wait for one durable Agent interaction status"
+							r.operationID = "waitForAgentInteractionStatus"
+							r.operationGroup = ""
+							r.pathPattern = "/products/ai-agent/interaction-status"
 							r.args = args
 							r.count = 0
 							return r, true

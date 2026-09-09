@@ -2,7 +2,7 @@
 	check-generated copyright-check flow-visualize format-check fuzz generate \
 	generate-go generate-web governance-check install-dexcli install-osv-scanner install-temporal lint lint-go lint-web lint-workflows \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
-	test-race test-web vet vulnerability-check
+	test-full-stack-e2e test-integration test-race test-server-integration test-web vet vulnerability-check
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./cmd/... ./internal/...
@@ -89,7 +89,8 @@ vet:
 
 lint-go:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) $(GO_PACKAGES)
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run $(GO_PACKAGES)
+	@GOCACHE=$(GO_BUILD_CACHE) GOLANGCI_LINT_CACHE=$(CURDIR)/.cache/golangci-lint GOWORK=off \
+		go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run $(GO_PACKAGES)
 
 lint-web:
 	@npm --prefix web run typecheck
@@ -112,6 +113,15 @@ test-agent:
 test-dex-integration:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 \
 		-run '$(INTEGRATION_TEST_RUN)' -timeout '$(INTEGRATION_TEST_TIMEOUT)' ./internal/agent
+
+test-server-integration:
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 \
+		-run '$(INTEGRATION_TEST_RUN)' -timeout '$(INTEGRATION_TEST_TIMEOUT)' ./internal/agent ./internal/api
+
+test-full-stack-e2e: build-api build-web
+	@sh script/test-full-stack-e2e.sh
+
+test-integration: test-server-integration test-full-stack-e2e
 
 test-api:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/api
