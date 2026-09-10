@@ -272,9 +272,6 @@ button.secondary {
   align-items: center;
 }
 .conversation-header {
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
   margin-bottom: 20px;
 }
 .conversation-header > div:first-child {
@@ -306,14 +303,56 @@ button.secondary {
   overflow-wrap: anywhere;
 }
 .status-stack {
+  position: fixed;
+  z-index: 11;
+  bottom: calc(var(--composer-height) + 32px);
+  left: max(16px, calc((100vw - 1220px) / 2));
+  display: flex;
+  max-width: min(360px, calc(100vw - 32px));
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid #dce2ea;
+  border-radius: 14px;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 10px 30px rgb(34 45 66 / 14%);
+  backdrop-filter: blur(10px);
+}
+.status-copy {
   display: grid;
-  flex: 0 0 auto;
-  justify-items: end;
-  gap: 4px;
-  text-align: right;
+  min-width: 0;
+  gap: 1px;
+}
+.status-copy strong,
+.status-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .status-stack small {
   color: #667085;
+}
+.jump-to-latest {
+  position: fixed;
+  z-index: 12;
+  bottom: calc(var(--composer-height) + 34px);
+  left: 50%;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #d5dbea;
+  border-radius: 50%;
+  color: #344054;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 10px 28px rgb(34 45 66 / 18%);
+  transform: translateX(-50%);
+  font-size: 22px;
+  line-height: 1;
+}
+.jump-to-latest:hover {
+  background: #f7f8ff;
 }
 .connection-pill {
   padding: 5px 9px;
@@ -913,21 +952,21 @@ pre {
     padding-bottom: calc(var(--composer-height) + 28px);
   }
   .conversation-header {
-    display: grid;
-    gap: 12px;
+    display: block;
   }
   .conversation-header h1 {
     font-size: 25px;
   }
   .status-stack {
-    display: flex;
-    width: fit-content;
-    max-width: none;
-    align-items: center;
-    justify-self: start;
-    justify-content: flex-start;
-    gap: 8px;
-    text-align: left;
+    bottom: calc(var(--composer-height) + 26px);
+    left: 10px;
+    max-width: calc(100vw - 20px);
+  }
+  .jump-to-latest {
+    right: 10px;
+    bottom: calc(var(--composer-height) + 94px);
+    left: auto;
+    transform: none;
   }
   .conversation-grid {
     grid-template-columns: 1fr;

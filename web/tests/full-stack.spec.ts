@@ -30,26 +30,24 @@ test("renders chronological transient activity and durable queue interactions", 
   await startAgent(page);
   expect(snapshots).toEqual([200]);
 
-  const headerBox = await page.locator(".conversation-header").boundingBox();
+  const shellBox = await page.locator(".conversation-shell").boundingBox();
   const statusBox = await page
     .getByRole("group", { name: "Agent status" })
     .boundingBox();
-  expect(headerBox).not.toBeNull();
+  const composerCardBox = await page.locator(".composer-card").boundingBox();
+  expect(shellBox).not.toBeNull();
   expect(statusBox).not.toBeNull();
+  expect(composerCardBox).not.toBeNull();
+  await expect(page.getByRole("group", { name: "Agent status" })).toHaveCSS(
+    "position",
+    "fixed",
+  );
   expect(
-    Math.abs(
-      (headerBox?.y ?? 0) +
-        (headerBox?.height ?? 0) -
-        ((statusBox?.y ?? 0) + (statusBox?.height ?? 0)),
-    ),
+    Math.abs((shellBox?.x ?? 0) - (statusBox?.x ?? 0)),
   ).toBeLessThanOrEqual(1);
-  expect(
-    Math.abs(
-      (headerBox?.x ?? 0) +
-        (headerBox?.width ?? 0) -
-        ((statusBox?.x ?? 0) + (statusBox?.width ?? 0)),
-    ),
-  ).toBeLessThanOrEqual(1);
+  expect((statusBox?.y ?? 0) + (statusBox?.height ?? 0)).toBeLessThan(
+    composerCardBox?.y ?? 0,
+  );
 
   const composer = page.getByRole("textbox", { name: "Message" });
   await composer.fill("/reason Checked the constraints | Durable answer");
@@ -246,11 +244,11 @@ test("recovers an initial Snapshot network failure through the real API", async 
   await expect(page.getByRole("textbox", { name: "Message" })).toBeEnabled();
 });
 
-test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll", async ({
+test("preserves a reading position and jumps to new content on a narrow screen", async ({
   page,
   request,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const flowId = `archive-ui-${String(Date.now())}`;
   const start = await request.post(`${apiOrigin}/products/ai-agent/start`, {
     data: {
@@ -301,6 +299,20 @@ test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll"
   await page.goto(`/?flowId=${flowId}`);
   await expect(page.locator(".message-bubble")).toHaveCount(10);
   expect(archiveRequests).toHaveLength(0);
+  await expect(
+    page.getByRole("button", { name: "Jump to latest message" }),
+  ).toHaveCount(0);
+
+  const status = page.getByRole("group", { name: "Agent status" });
+  const initialStatusBox = await status.boundingBox();
+  const initialComposerBox = await page.locator(".composer-card").boundingBox();
+  expect(initialStatusBox).not.toBeNull();
+  expect(initialComposerBox).not.toBeNull();
+  await expect(status).toHaveCSS("position", "fixed");
+  expect(initialStatusBox?.x).toBe(10);
+  expect(
+    (initialStatusBox?.y ?? 0) + (initialStatusBox?.height ?? 0),
+  ).toBeLessThan(initialComposerBox?.y ?? 0);
 
   await page.evaluate(() => {
     window.scrollTo(0, 0);
@@ -325,6 +337,86 @@ test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll"
   await expect(page.locator(".message-bubble")).toHaveCount(20);
   await expect(page.getByText("archive ui 06", { exact: true })).toHaveCount(1);
   expect(archiveRequests).toHaveLength(1);
+
+  const readingPosition = scrollPosition.top;
+  const sentWhileReading = await request.post(
+    `${apiOrigin}/products/ai-agent/messages`,
+    {
+      data: {
+        flowId,
+        content: "new content while reading history",
+        planMode: false,
+      },
+    },
+  );
+  expect(sentWhileReading.status()).toBe(202);
+  await expect(
+    page.getByRole("button", { name: "Jump to latest message" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".message-bubble.assistant").filter({
+      hasText: "Local demo response: new content while reading history",
+    }),
+  ).toHaveCount(1);
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBe(readingPosition);
+
+  const statusWhileReadingBox = await status.boundingBox();
+  const composerWhileReadingBox = await page
+    .locator(".composer-card")
+    .boundingBox();
+  expect(statusWhileReadingBox).not.toBeNull();
+  expect(composerWhileReadingBox).not.toBeNull();
+  expect(statusWhileReadingBox?.x).toBe(10);
+  expect(
+    (statusWhileReadingBox?.y ?? 0) + (statusWhileReadingBox?.height ?? 0),
+  ).toBeLessThan(composerWhileReadingBox?.y ?? 0);
+
+  await page.getByRole("button", { name: "Jump to latest message" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollHeight -
+          window.scrollY -
+          window.innerHeight,
+      ),
+    )
+    .toBeLessThanOrEqual(12);
+  await expect(
+    page.getByRole("button", { name: "Jump to latest message" }),
+  ).toHaveCount(0);
+
+  const sentWhileFollowing = await request.post(
+    `${apiOrigin}/products/ai-agent/messages`,
+    {
+      data: {
+        flowId,
+        content: "follow this newer content",
+        planMode: false,
+      },
+    },
+  );
+  expect(sentWhileFollowing.status()).toBe(202);
+  await expect(
+    page
+      .locator(".message-bubble.assistant")
+      .filter({ hasText: "Local demo response: follow this newer content" }),
+  ).toHaveCount(1);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollHeight -
+          window.scrollY -
+          window.innerHeight,
+      ),
+    )
+    .toBeLessThanOrEqual(12);
+  await expect(
+    page.getByRole("button", { name: "Jump to latest message" }),
+  ).toHaveCount(0);
 });
 
 test("renders Plan progress, clears an accepted input, and shows safe tool activity", async ({

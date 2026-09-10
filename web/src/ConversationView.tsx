@@ -38,6 +38,7 @@ import {
   type ActiveConversationState,
 } from "./conversation-state";
 import { buildConversationTimeline } from "./conversation-timeline";
+import { useTimelineFollow } from "./useTimelineFollow";
 
 const MarkdownContent = lazy(() => import("./MarkdownContent"));
 
@@ -94,11 +95,21 @@ export function ConversationView({
     state.activities,
     state.assistant,
   );
-  const liveContentVersion =
-    state.activities.length +
-    (state.assistant?.value.length ?? 0) +
-    state.reasoning.reduce((total, entry) => total + entry.value.length, 0);
-  useAutoScroll(description.lastSequence, liveContentVersion);
+  const liveContentVersion = [
+    String(state.activities.length),
+    state.activities.at(-1)?.resumeToken ?? "",
+    state.assistant === null
+      ? ""
+      : `${state.assistant.source}:${String(state.assistant.value.length)}:${String(state.assistant.isComplete)}`,
+    ...state.reasoning.map(
+      (entry) =>
+        `${entry.source}:${String(entry.value.length)}:${String(entry.isComplete)}`,
+    ),
+  ].join("|");
+  const { hasUnseenContent, jumpToLatest } = useTimelineFollow({
+    flowRunKey: `${flowId}:${snapshot.runId}`,
+    contentVersion: `${String(description.lastSequence)}:${liveContentVersion}`,
+  });
   useArchiveScroll(
     snapshot.history.nextBeforeSequence,
     state.historyRequest !== null,
@@ -136,14 +147,28 @@ export function ConversationView({
             Flow <code>{flowId}</code> · Run <code>{snapshot.runId}</code>
           </p>
         </div>
-        <div className="status-stack" role="group" aria-label="Agent status">
-          <span className={`connection-pill ${state.connection}`}>
-            {connectionLabel(state.connection)}
-          </span>
+      </header>
+
+      <div className="status-stack" role="group" aria-label="Agent status">
+        <span className={`connection-pill ${state.connection}`}>
+          {connectionLabel(state.connection)}
+        </span>
+        <span className="status-copy">
           <strong>{statusLabel(description.status)}</strong>
           <small>{description.model}</small>
-        </div>
-      </header>
+        </span>
+      </div>
+
+      {hasUnseenContent && (
+        <button
+          type="button"
+          className="jump-to-latest"
+          aria-label="Jump to latest message"
+          onClick={jumpToLatest}
+        >
+          <span aria-hidden="true">…</span>
+        </button>
+      )}
 
       {state.error !== null && (
         <div className="error conversation-error" role="alert">
@@ -994,40 +1019,6 @@ function useArchiveScroll(
       window.scrollBy({ top: addedHeight, behavior: "auto" });
     previousHeight.current = null;
   }, [isLoading, messageCount]);
-}
-
-function useAutoScroll(lastSequence: number, liveContentVersion: number) {
-  const shouldStickToBottom = useRef(true);
-  const scrollToBottom = () => {
-    window.scrollTo({
-      top: document.documentElement.scrollHeight,
-      behavior: "auto",
-    });
-  };
-  useEffect(() => {
-    const update = () => {
-      const distance =
-        document.documentElement.scrollHeight -
-        window.scrollY -
-        window.innerHeight;
-      shouldStickToBottom.current = distance <= 160;
-    };
-    const keepBottomVisible = () => {
-      if (!shouldStickToBottom.current) return;
-      window.requestAnimationFrame(scrollToBottom);
-    };
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", keepBottomVisible);
-    update();
-    return () => {
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", keepBottomVisible);
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (!shouldStickToBottom.current) return;
-    scrollToBottom();
-  }, [lastSequence, liveContentVersion]);
 }
 
 function revealOpenedDetails(event: SyntheticEvent<HTMLDetailsElement>) {

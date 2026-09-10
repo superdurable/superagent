@@ -104,6 +104,12 @@ refresh starts from an empty token, so Dex may replay events from its retained
 head. Events removed by Stream retention are not reconstructed. Completed-source
 tracking prevents replayed text from duplicating durable assistant messages and
 keeps replayed reasoning summaries in a completed state.
+The timeline follows new content only while the reader is at its bottom. Manual
+upward scrolling pauses that behavior. Later message, reasoning, or activity
+content exposes an explicit jump-to-latest control instead of moving the
+viewport. Archive prepends preserve the reading position and do not count as
+new timeline content. Agent status remains fixed above the composer so it stays
+visible while the timeline scrolls.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot
