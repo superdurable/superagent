@@ -11,7 +11,7 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill. Confirm APIs
 against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
-Snapshot code targets Dex Go SDK `v0.2.12`. Recheck the installed SDK source and
+Snapshot code targets Dex Go SDK `v0.4.0`. Recheck the installed SDK source and
 the installed skill before changing its resource projection or errors. Never
 infer an API from a design screenshot or unreleased branch.
 

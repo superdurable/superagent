@@ -157,11 +157,13 @@ func (client *Client) resolveSnapshotLifecycle(
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, snapshotActiveProbe)
 	defer cancel()
-	err := client.sdk.WaitForAttributeEqual(
+	var matched AgentInteractionStatus
+	err := client.sdk.WaitForAttributeMatch(
 		probeCtx,
 		string(flowID),
 		agentInteractionStatusAttribute,
-		snapshot.Description.InteractionStatus,
+		dex.AttributeMatchEqual(snapshot.Description.InteractionStatus),
+		&matched,
 	)
 	if err == nil || errors.Is(err, context.DeadlineExceeded) {
 		return snapshot, nil
@@ -228,11 +230,13 @@ func (client *Client) WaitForInteractionStatus(
 	if err := expected.Validate(); err != nil {
 		return err
 	}
-	return client.sdk.WaitForAttributeEqual(
+	var matched AgentInteractionStatus
+	return client.sdk.WaitForAttributeMatch(
 		ctx,
 		string(flowID),
 		agentInteractionStatusAttribute,
-		expected,
+		dex.AttributeMatchEqual(expected),
+		&matched,
 	)
 }
 
