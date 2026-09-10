@@ -96,7 +96,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
 
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if approval.ToolName != integrationToolName {
 		t.Fatalf("pending tool = %q", approval.ToolName)
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	recoveredApproval := waitForPendingApproval(t, environment, flowID)
 	if recoveredApproval.CallID != approval.CallID || recoveredApproval.Arguments != approval.Arguments {
 		t.Fatalf("approval changed across Worker replacement: got %#v, want %#v", recoveredApproval, approval)
@@ -167,7 +167,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingInput := waitForPendingUserInput(t, environment, flowID)
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPendingTimer(t, environment, flowID)
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	stateBeforeQueue := readAgentState(t, environment, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "queued message"}); err != nil {
 		t.Fatal(err)
@@ -379,7 +379,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		!strings.Contains(secondResult.Message.Content, string(toolErrorSupersededByUserInput)) {
 		t.Fatalf("multi-call results = %#v / %#v", firstResult, secondResult)
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	rejectedMessage := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "September 12"})
 	var sendRejected *CommandRejectedError
 	if !errors.As(rejectedMessage, &sendRejected) || sendRejected.Command != CommandSendMessage {
@@ -462,7 +462,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
 	}}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
@@ -608,7 +608,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatalf("automatic Plan recovery responses = %d, want 2", count)
 	}
 
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	submitted := make(chan error, 1)
 	go func() {
 		submitted <- environment.agent.WaitForInteractionStatus(
@@ -982,12 +982,31 @@ func (environment *agentIntegrationEnvironment) startWorker(t *testing.T) {
 	waitForWorkerAddress(t, environment)
 }
 
-func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T) {
+func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T, flowID FlowID) {
 	t.Helper()
 	if err := environment.stopWorker(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	environment.startWorker(t)
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(integrationWaitTimeout)
+	defer deadline.Stop()
+	var lastErr error
+	for {
+		if _, err := environment.agent.Snapshot(t.Context(), flowID); err == nil {
+			return
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("replacement Worker did not serve Agent RPCs: %v", lastErr)
+		case <-t.Context().Done():
+			t.Fatalf("wait for replacement Worker RPC: %v", t.Context().Err())
+		}
+	}
 }
 
 func (environment *agentIntegrationEnvironment) stopWorker(ctx context.Context) error {
