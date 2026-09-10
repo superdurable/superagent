@@ -40,7 +40,7 @@ import (
 
 const integrationToolName ToolName = "integration_tool"
 
-const integrationWaitTimeout = 30 * time.Second
+const integrationWaitTimeout = 60 * time.Second
 
 var integrationMessageSequence atomic.Uint64
 
@@ -114,7 +114,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
 
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	if _, err := environment.agent.SendMessage(
 		t.Context(),
 		flowID,
@@ -126,7 +126,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if approval.ToolName != integrationToolName {
 		t.Fatalf("pending tool = %q", approval.ToolName)
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	recoveredApproval := waitForPendingApproval(t, environment, flowID)
 	if recoveredApproval.CallID != approval.CallID || recoveredApproval.Arguments != approval.Arguments {
 		t.Fatalf("approval changed across Worker replacement: got %#v, want %#v", recoveredApproval, approval)
@@ -211,7 +211,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingInput := waitForPendingUserInput(t, environment, flowID)
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPendingTimer(t, environment, flowID)
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	stateBeforeQueue := readAgentState(t, environment, flowID)
 	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("queued message", false)); err != nil {
 		t.Fatal(err)
@@ -537,7 +537,7 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 	if strings.Contains(string(snapshotJSON), toolContext) {
 		t.Fatal("opaque application context leaked into the Agent Snapshot")
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, toolFlowID)
 	if _, err := environment.agent.ApproveTool(t.Context(), toolFlowID, ToolApprovalRequest{
 		RequestID: integrationRequestID("approve"),
 		CallID:    approval.CallID,
@@ -1444,7 +1444,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		!strings.Contains(secondResult.Message.Content, string(toolErrorSupersededByUserInput)) {
 		t.Fatalf("multi-call results = %#v / %#v", firstResult, secondResult)
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	_, rejectedMessage := environment.agent.SendMessage(
 		t.Context(),
 		flowID,
@@ -1531,7 +1531,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
 	})
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	type answerResult struct {
 		receipt MessageReceipt
 		err     error
@@ -2099,12 +2099,47 @@ func (environment *agentIntegrationEnvironment) startWorkerWithFlow(
 	waitForWorkerAddress(t, environment)
 }
 
-func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T) {
+func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T, flowID FlowID) {
 	t.Helper()
 	if err := environment.stopWorker(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	environment.startWorker(t)
+	waitForWorkerFlowRPC(t, environment, flowID)
+}
+
+// waitForWorkerFlowRPC waits for Dex Server's cached connection to the restarted
+// Worker to recover. A raw TCP probe only proves that the new listener is ready;
+// the server-side gRPC connection can remain in transient failure after the old
+// Worker stopped, especially on slower CI runners.
+func waitForWorkerFlowRPC(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+) {
+	t.Helper()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(integrationWaitTimeout)
+	defer deadline.Stop()
+	var lastErr error
+	for {
+		if _, err := environment.agent.Snapshot(t.Context(), flowID); err == nil {
+			return
+		} else {
+			lastErr = err
+		}
+		select {
+		case workerErr := <-environment.workerResult:
+			environment.workerResult <- workerErr
+			t.Fatalf("restarted integration Worker stopped: %v", workerErr)
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("Dex could not reach restarted integration Worker within %s: %v", integrationWaitTimeout, lastErr)
+		case <-t.Context().Done():
+			t.Fatalf("wait for restarted integration Worker: %v", t.Context().Err())
+		}
+	}
 }
 
 func (environment *agentIntegrationEnvironment) stopWorker(ctx context.Context) error {

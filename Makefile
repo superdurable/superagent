@@ -18,7 +18,7 @@ GOVULNCHECK_VERSION := v1.7.0
 ACTIONLINT_VERSION := v1.7.12
 FUZZ_TIME ?= 10s
 INTEGRATION_TEST_RUN ?= ^TestAgent.*Integration$$
-INTEGRATION_TEST_TIMEOUT ?= 2m
+INTEGRATION_TEST_TIMEOUT ?= 5m
 
 build-api:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go build -o bin/superagent ./cmd/superagent
