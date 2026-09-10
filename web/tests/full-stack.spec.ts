@@ -6,7 +6,8 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const apiOrigin = "http://127.0.0.1:8080";
+const apiOrigin =
+  process.env["SUPERAGENT_E2E_API_ORIGIN"] ?? "http://127.0.0.1:8080";
 
 test("renders chronological transient activity and durable queue interactions", async ({
   page,
@@ -33,7 +34,6 @@ test("renders chronological transient activity and durable queue interactions", 
   await composer.fill("/reason Checked the constraints | Durable answer");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Submitting…")).toBeVisible();
-  await expect(page.getByText("Queued", { exact: true })).toBeVisible();
 
   const history = page.getByRole("region", { name: "Conversation history" });
   await expect(history.getByText("Checked the constraints")).toBeVisible();
@@ -150,6 +150,79 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toHaveCount(1);
 });
 
+test("keeps mutations gated until the post-command Snapshot completes", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  let shouldHoldSnapshot = false;
+  let snapshotRequests = 0;
+  let releaseSnapshot: () => void = () => undefined;
+  const heldSnapshot = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve;
+  });
+  await page.route("**/products/ai-agent/snapshot?**", async (route) => {
+    snapshotRequests += 1;
+    if (shouldHoldSnapshot) {
+      shouldHoldSnapshot = false;
+      await heldSnapshot;
+    }
+    await route.continue();
+  });
+  await startAgent(page);
+  await page.waitForTimeout(9_000);
+  shouldHoldSnapshot = true;
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill("verify reconciliation gate");
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.status() === 202 &&
+      new URL(response.url()).pathname === "/products/ai-agent/messages",
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  await accepted;
+
+  await expect(page.getByRole("status")).toHaveText("Syncing durable state…");
+  const queue = page.getByRole("region", { name: "Message queue" });
+  await expect(queue.getByText("Queued", { exact: true })).toBeVisible();
+  await expect(queue.getByText("verify reconciliation gate")).toBeVisible();
+  await composer.fill("editable draft while syncing");
+  await expect(composer).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+  releaseSnapshot();
+  await expect.poll(() => snapshotRequests).toBeGreaterThanOrEqual(3);
+  await expect(page.getByText("Syncing durable state…")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+  const requestsAfterReconciliation = snapshotRequests;
+  await page.waitForTimeout(1_500);
+  expect(snapshotRequests).toBe(requestsAfterReconciliation);
+});
+
+test("recovers an initial Snapshot network failure through the real API", async ({
+  page,
+}) => {
+  let shouldAbortSnapshot = true;
+  await page.route("**/products/ai-agent/snapshot?**", async (route) => {
+    if (shouldAbortSnapshot) {
+      shouldAbortSnapshot = false;
+      await route.abort("failed");
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Start a SuperAgent" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Start agent" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Snapshot unavailable" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Retry Snapshot" }).click();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeEnabled();
+});
+
 test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll", async ({
   page,
   request,
@@ -236,18 +309,23 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
 }) => {
   test.setTimeout(120_000);
   const snapshotStatuses: number[] = [];
-  const messageBodies: unknown[] = [];
+  const answerStatuses: number[] = [];
+  const answerBodies: unknown[] = [];
   page.on("response", (response) => {
-    if (new URL(response.url()).pathname === "/products/ai-agent/snapshot") {
+    const path = new URL(response.url()).pathname;
+    if (path === "/products/ai-agent/snapshot") {
       snapshotStatuses.push(response.status());
+    }
+    if (path === "/products/ai-agent/questions/answer") {
+      answerStatuses.push(response.status());
     }
   });
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
-      new URL(request.url()).pathname === "/products/ai-agent/messages"
+      new URL(request.url()).pathname === "/products/ai-agent/questions/answer"
     ) {
-      messageBodies.push(request.postDataJSON());
+      answerBodies.push(request.postDataJSON());
     }
   });
 
@@ -283,43 +361,67 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
     activity.filter({ hasText: "Completed plan task 2." }),
   ).toBeVisible();
 
-  await composer.fill("/choose Region? | us-west | eu-central");
+  await composer.fill("/questions");
   await page.getByRole("button", { name: "Send" }).click();
   const inputCard = page.locator(".pending-input");
-  await expect(inputCard.getByText("Region?", { exact: true })).toBeVisible();
-  await inputCard.getByRole("button", { name: "us-west" }).click();
   await expect(
-    page.getByRole("textbox", { name: "Answer Agent question" }),
-  ).toHaveValue("us-west");
+    inputCard.getByText("Which region should I use?", { exact: true }),
+  ).toBeVisible();
+  await inputCard.getByRole("button", { name: /^US West/u }).click();
+  await expect(
+    inputCard.getByText("How quickly should I proceed?", { exact: true }),
+  ).toBeVisible();
+  await inputCard.getByRole("button", { name: /^Fast/u }).click();
+  await expect(
+    inputCard.getByText("Which output format should I use?", { exact: true }),
+  ).toBeVisible();
+  await inputCard.getByRole("button", { name: /^Other/u }).click();
+  await inputCard
+    .getByRole("textbox", { name: "Other answer for Format" })
+    .fill("Checklist");
+  await inputCard.getByRole("button", { name: /^Pace/u }).click();
+  await inputCard.getByRole("button", { name: /^Careful/u }).click();
+  await inputCard.getByRole("button", { name: /^Format/u }).click();
   const snapshotsBeforeAnswer = snapshotStatuses.length;
   const acceptedAnswer = page.waitForResponse(
     (response) =>
       response.status() === 202 &&
-      new URL(response.url()).pathname === "/products/ai-agent/messages",
+      new URL(response.url()).pathname ===
+        "/products/ai-agent/questions/answer",
   );
-  await page.getByRole("button", { name: "Submit answer" }).click();
+  await page.getByRole("button", { name: "Submit all" }).click();
   await acceptedAnswer;
   await expect(inputCard).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Submit answer" })).toHaveCount(
-    0,
-  );
-  expect(snapshotStatuses).toHaveLength(snapshotsBeforeAnswer);
+  await expect(page.getByRole("button", { name: "Submit all" })).toHaveCount(0);
+  await expect
+    .poll(() => snapshotStatuses.length)
+    .toBeGreaterThan(snapshotsBeforeAnswer);
+  expect(answerStatuses).toEqual([202]);
   expect(
-    messageBodies.filter(
+    answerBodies.filter(
       (body) =>
         typeof body === "object" &&
         body !== null &&
-        "content" in body &&
-        body.content === "us-west",
+        "answers" in body &&
+        JSON.stringify(body.answers) ===
+          JSON.stringify([
+            { questionId: "region", answer: "US West" },
+            { questionId: "pace", answer: "Careful" },
+            { questionId: "format", answer: "Checklist" },
+          ]) &&
+        "callId" in body &&
+        typeof body.callId === "string" &&
+        body.callId.length > 0,
     ),
   ).toHaveLength(1);
   await expect(
-    page.locator(".message-bubble.user").filter({ hasText: "us-west" }),
+    page.locator(".message-bubble.user").filter({ hasText: "Checklist" }),
   ).toHaveCount(1);
   await expect(
     page
       .locator(".message-bubble.assistant")
-      .filter({ hasText: "Local demo response: us-west" }),
+      .filter({ hasText: "Local demo response:" })
+      .filter({ hasText: "Checklist" }),
   ).toHaveCount(1);
 
   await composer.fill('/tool fixture__echo {"value":"approved"}');
@@ -391,6 +493,30 @@ test("shows a collapsed Plan above the conversation on a narrow screen", async (
   await expect(
     plan.getByText("Complete the objective: narrow layout objective"),
   ).toBeVisible();
+
+  await page.getByRole("button", { name: "Start another agent" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Start a SuperAgent" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Start agent" }).click();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
+  await composer.fill("/questions");
+  await composer.press("Control+Enter");
+  const questions = page.getByRole("region", { name: "Agent questions" });
+  await expect(questions).toBeVisible();
+  const firstChoice = questions.getByRole("button", { name: /^US West/u });
+  await firstChoice.focus();
+  await firstChoice.press("Enter");
+  await questions.getByRole("button", { name: /^Careful/u }).click();
+  await questions.getByRole("button", { name: /^Summary/u }).click();
+  const submit = questions.getByRole("button", { name: "Submit all" });
+  await submit.focus();
+  await expect(submit).toBeFocused();
+  await submit.press("Enter");
+  await expect(questions).toHaveCount(0);
+  await expect(
+    page.locator(".message-bubble.user").filter({ hasText: "Summary" }),
+  ).toHaveCount(1);
 });
 
 async function startAgent(page: Page): Promise<void> {

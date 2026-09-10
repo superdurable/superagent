@@ -24,7 +24,9 @@ import {
   type CallId,
   type FlowId,
   type PendingUserMessage,
+  type PendingUserInput,
   type ToolName,
+  type UserInputAnswer,
 } from "./api/generated";
 import {
   displayedPlanTaskStatus,
@@ -46,6 +48,7 @@ interface ConversationViewProps {
   onComposerChange: (value: string) => void;
   onPlanModeChange: (value: boolean) => void;
   onSubmit: () => void;
+  onSubmitAnswers: (callId: CallId, answers: UserInputAnswer[]) => void;
   onExecutePlan: (revision: number) => void;
   onApproveTool: (callId: CallId, approved: boolean) => void;
   onMutateQueue: (
@@ -64,6 +67,7 @@ export function ConversationView({
   onComposerChange,
   onPlanModeChange,
   onSubmit,
+  onSubmitAnswers,
   onExecutePlan,
   onApproveTool,
   onMutateQueue,
@@ -75,6 +79,7 @@ export function ConversationView({
   const { snapshot } = state;
   const description = snapshot.description;
   const isBusy = state.pendingCommand !== null;
+  const areMutationsDisabled = isBusy || state.reconciliation !== "open";
   const pendingMessageID = pendingQueueMessageID(state);
   const builtInToolNames = new Set(builtInTools);
   const hasSidebar =
@@ -148,6 +153,12 @@ export function ConversationView({
           >
             Reconcile now
           </button>
+        </div>
+      )}
+
+      {state.reconciliation === "syncing" && (
+        <div className="sync-status" role="status">
+          Syncing durable state…
         </div>
       )}
 
@@ -288,7 +299,7 @@ export function ConversationView({
                 <div className="button-row">
                   <button
                     type="button"
-                    disabled={isBusy}
+                    disabled={areMutationsDisabled}
                     onClick={() => {
                       const callId = description.pendingApproval?.callId;
                       if (callId !== undefined) onApproveTool(callId, true);
@@ -301,7 +312,7 @@ export function ConversationView({
                   <button
                     type="button"
                     className="danger-button"
-                    disabled={isBusy}
+                    disabled={areMutationsDisabled}
                     onClick={() => {
                       const callId = description.pendingApproval?.callId;
                       if (callId !== undefined) onApproveTool(callId, false);
@@ -327,7 +338,7 @@ export function ConversationView({
             {description.plan !== null && (
               <PlanPanel
                 state={state}
-                isBusy={isBusy}
+                areMutationsDisabled={areMutationsDisabled}
                 onExecutePlan={onExecutePlan}
               />
             )}
@@ -342,32 +353,18 @@ export function ConversationView({
       >
         <QueueTray
           state={state}
-          isBusy={isBusy}
+          areMutationsDisabled={areMutationsDisabled}
           pendingMessageID={pendingMessageID}
           onMutateQueue={onMutateQueue}
         />
         {description.pendingUserInput !== null && (
-          <div className="pending-input">
-            <p className="eyebrow">Agent needs your input</p>
-            <strong>{description.pendingUserInput.prompt}</strong>
-            {description.pendingUserInput.choices.length > 0 && (
-              <div className="choice-row">
-                {description.pendingUserInput.choices.map((choice) => (
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={isBusy}
-                    key={choice}
-                    onClick={() => {
-                      onComposerChange(choice);
-                    }}
-                  >
-                    {choice}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <QuestionsPanel
+            key={`${flowId}:${description.pendingUserInput.callId}`}
+            pendingInput={description.pendingUserInput}
+            disabled={areMutationsDisabled}
+            isSubmitting={state.pendingCommand?.command.kind === "answer"}
+            onSubmit={onSubmitAnswers}
+          />
         )}
         {description.pendingUserInput === null && (
           <label className="plan-mode">
@@ -382,43 +379,37 @@ export function ConversationView({
             Plan mode
           </label>
         )}
-        <div className="composer-row">
-          <textarea
-            ref={textareaRef}
-            aria-label={
-              description.pendingUserInput === null
-                ? "Message"
-                : "Answer Agent question"
-            }
-            value={state.composer}
-            disabled={isBusy}
-            placeholder={
-              description.pendingUserInput === null
-                ? state.isPlanMode
+        {description.pendingUserInput === null && (
+          <div className="composer-row">
+            <textarea
+              ref={textareaRef}
+              aria-label="Message"
+              value={state.composer}
+              disabled={isBusy}
+              placeholder={
+                state.isPlanMode
                   ? "Describe what you want the Agent to plan…"
                   : "Message the Agent…"
-                : "Type your answer…"
-            }
-            rows={3}
-            onChange={(event) => {
-              onComposerChange(event.target.value);
-            }}
-            onKeyDown={handleComposerKeyDown}
-          />
-          <button
-            type="button"
-            disabled={isBusy || state.composer.trim() === ""}
-            onClick={onSubmit}
-          >
-            {state.pendingCommand?.command.kind === "send"
-              ? "Sending…"
-              : description.pendingUserInput === null
-                ? state.isPlanMode
+              }
+              rows={3}
+              onChange={(event) => {
+                onComposerChange(event.target.value);
+              }}
+              onKeyDown={handleComposerKeyDown}
+            />
+            <button
+              type="button"
+              disabled={areMutationsDisabled || state.composer.trim() === ""}
+              onClick={onSubmit}
+            >
+              {state.pendingCommand?.command.kind === "send"
+                ? "Sending…"
+                : state.isPlanMode
                   ? "Create plan"
-                  : "Send"
-                : "Submit answer"}
-          </button>
-        </div>
+                  : "Send"}
+            </button>
+          </div>
+        )}
         <div className="composer-footer">
           <small>⌘/Ctrl/Alt + Enter sends · Enter adds a new line</small>
           <button
@@ -434,13 +425,186 @@ export function ConversationView({
   );
 }
 
+interface QuestionsPanelProps {
+  pendingInput: PendingUserInput;
+  disabled: boolean;
+  isSubmitting: boolean;
+  onSubmit: (callId: CallId, answers: UserInputAnswer[]) => void;
+}
+
+interface QuestionDraft {
+  answer: string;
+  isOther: boolean;
+}
+
+function QuestionsPanel({
+  pendingInput,
+  disabled,
+  isSubmitting,
+  onSubmit,
+}: QuestionsPanelProps) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({});
+  const question = pendingInput.questions[currentIndex];
+  if (question === undefined) return null;
+  const currentDraft = drafts[question.id];
+  const hasAllAnswers = pendingInput.questions.every(
+    ({ id }) => (drafts[id]?.answer.trim().length ?? 0) > 0,
+  );
+  const isLast = currentIndex === pendingInput.questions.length - 1;
+  const setAnswer = (answer: string, isOther: boolean) => {
+    setDrafts((current) => ({
+      ...current,
+      [question.id]: { answer, isOther },
+    }));
+  };
+  const chooseOption = (answer: string) => {
+    setAnswer(answer, false);
+    if (!isLast) setCurrentIndex((index) => index + 1);
+  };
+  const submit = () => {
+    if (!hasAllAnswers || disabled) return;
+    onSubmit(
+      pendingInput.callId,
+      pendingInput.questions.map(({ id }) => ({
+        questionId: id,
+        answer: drafts[id]?.answer.trim() ?? "",
+      })),
+    );
+  };
+
+  return (
+    <section className="pending-input" aria-label="Agent questions">
+      <div className="question-heading">
+        <div>
+          <p className="eyebrow">Agent needs your input</p>
+          <strong>
+            Question {String(currentIndex + 1)} of{" "}
+            {String(pendingInput.questions.length)}
+          </strong>
+        </div>
+        <div className="question-tabs" aria-label="Questions">
+          {pendingInput.questions.map((candidate, index) => (
+            <button
+              type="button"
+              className={index === currentIndex ? "active" : "secondary"}
+              aria-current={index === currentIndex ? "step" : undefined}
+              key={candidate.id}
+              onClick={() => {
+                setCurrentIndex(index);
+              }}
+            >
+              {candidate.header}
+              {(drafts[candidate.id]?.answer.trim().length ?? 0) > 0 && (
+                <span className="answered-mark" aria-label="Answered">
+                  ✓
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+      <fieldset className="question-content" disabled={disabled}>
+        <legend>{question.header}</legend>
+        <p>{question.question}</p>
+        <div className="choice-row">
+          {question.options.map((option) => (
+            <button
+              type="button"
+              className={
+                currentDraft?.isOther === false &&
+                currentDraft.answer === option.label
+                  ? "question-option selected"
+                  : "question-option secondary"
+              }
+              key={option.label}
+              onClick={() => {
+                chooseOption(option.label);
+              }}
+            >
+              <strong>{option.label}</strong>
+              <small>{option.description}</small>
+            </button>
+          ))}
+          <button
+            type="button"
+            className={
+              currentDraft?.isOther === true
+                ? "question-option selected"
+                : "question-option secondary"
+            }
+            onClick={() => {
+              setAnswer(
+                currentDraft?.isOther === true ? currentDraft.answer : "",
+                true,
+              );
+            }}
+          >
+            <strong>Other</strong>
+            <small>Enter a different answer.</small>
+          </button>
+        </div>
+        {currentDraft?.isOther === true && (
+          <label className="other-answer">
+            Other answer
+            <input
+              aria-label={`Other answer for ${question.header}`}
+              value={currentDraft.answer}
+              onChange={(event) => {
+                setAnswer(event.target.value, true);
+              }}
+            />
+          </label>
+        )}
+      </fieldset>
+      <div className="question-navigation">
+        <button
+          type="button"
+          className="secondary"
+          disabled={disabled || currentIndex === 0}
+          onClick={() => {
+            setCurrentIndex((index) => Math.max(0, index - 1));
+          }}
+        >
+          Previous
+        </button>
+        {!isLast && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={disabled || currentDraft?.answer.trim() === ""}
+            onClick={() => {
+              setCurrentIndex((index) => index + 1);
+            }}
+          >
+            Next
+          </button>
+        )}
+        {isLast && (
+          <button
+            type="button"
+            disabled={disabled || !hasAllAnswers}
+            onClick={submit}
+          >
+            {isSubmitting ? "Submitting answers…" : "Submit all"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 interface PlanPanelProps {
   state: ActiveConversationState;
-  isBusy: boolean;
+  areMutationsDisabled: boolean;
   onExecutePlan: (revision: number) => void;
 }
 
-function PlanPanel({ state, isBusy, onExecutePlan }: PlanPanelProps) {
+function PlanPanel({
+  state,
+  areMutationsDisabled,
+  onExecutePlan,
+}: PlanPanelProps) {
   const { description } = state.snapshot;
   const plan = description.plan;
   const isNarrow = useMediaQuery("(max-width: 620px)");
@@ -488,7 +652,9 @@ function PlanPanel({ state, isBusy, onExecutePlan }: PlanPanelProps) {
             {plan.status !== PlanStatus.COMPLETED && (
               <button
                 type="button"
-                disabled={isBusy || description.isPlanExecutionRequested}
+                disabled={
+                  areMutationsDisabled || description.isPlanExecutionRequested
+                }
                 onClick={() => {
                   onExecutePlan(plan.revision);
                 }}
@@ -540,7 +706,7 @@ function TaskStatusIndicator({ status }: { status: TaskStatus }) {
 
 interface QueueTrayProps {
   state: ActiveConversationState;
-  isBusy: boolean;
+  areMutationsDisabled: boolean;
   pendingMessageID: string | null;
   onMutateQueue: (
     message: PendingUserMessage,
@@ -550,7 +716,7 @@ interface QueueTrayProps {
 
 function QueueTray({
   state,
-  isBusy,
+  areMutationsDisabled,
   pendingMessageID,
   onMutateQueue,
 }: QueueTrayProps) {
@@ -561,8 +727,8 @@ function QueueTray({
     state.optimisticSubmissions.length > 0;
   const signature = [
     ...steered.map(({ messageId }) => `steered:${messageId}`),
-    ...state.optimisticSubmissions.map(({ localID }) => `local:${localID}`),
     ...queued.map(({ messageId }) => `queued:${messageId}`),
+    ...state.optimisticSubmissions.map(({ localID }) => `local:${localID}`),
   ].join("|");
   const [collapsedSignature, setCollapsedSignature] = useState<string | null>(
     null,
@@ -596,15 +762,6 @@ function QueueTray({
               <p>{message.value.content}</p>
             </div>
           ))}
-          {state.optimisticSubmissions.map((submission) => (
-            <div className="queue-message submitting" key={submission.localID}>
-              <strong>
-                {submission.phase === "submitting" ? "Submitting…" : "Queued"}
-              </strong>
-              <small>{submission.value.planMode ? "Plan" : "Chat"}</small>
-              <p>{submission.value.content}</p>
-            </div>
-          ))}
           {queued.map((message) => (
             <div className="queue-message" key={message.messageId}>
               <strong>{message.value.planMode ? "Plan" : "Chat"}</strong>
@@ -618,7 +775,7 @@ function QueueTray({
                         ? "queue-action steer-action"
                         : "queue-action text-button"
                     }
-                    disabled={isBusy}
+                    disabled={areMutationsDisabled}
                     key={action}
                     onClick={() => {
                       onMutateQueue(message, action);
@@ -637,6 +794,15 @@ function QueueTray({
                   </button>
                 ))}
               </div>
+            </div>
+          ))}
+          {state.optimisticSubmissions.map((submission) => (
+            <div className="queue-message submitting" key={submission.localID}>
+              <strong>
+                {submission.phase === "submitting" ? "Submitting…" : "Queued"}
+              </strong>
+              <small>{submission.value.planMode ? "Plan" : "Chat"}</small>
+              <p>{submission.value.content}</p>
             </div>
           ))}
         </div>

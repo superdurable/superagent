@@ -22,18 +22,27 @@ import {
 
 export type ActiveConnectionState = "live" | "reconnecting" | "stale";
 export type ConnectionState = ActiveConnectionState | "terminal";
+export type ReconciliationState = "open" | "syncing" | "stale";
 export type QueueCommandAction = "delete" | "steer" | "edit";
 
 export interface SendCommand {
   kind: "send";
   value: UserMessage;
-  pendingUserInputCallID: CallId | null;
+  submittedAfterSequence: Sequence;
+  knownMessageIDs: readonly MessageId[];
+}
+
+export interface AnswerCommand {
+  kind: "answer";
+  callID: CallId;
+  value: UserMessage;
   submittedAfterSequence: Sequence;
   knownMessageIDs: readonly MessageId[];
 }
 
 export type Command =
   | SendCommand
+  | AnswerCommand
   | { kind: "approve" }
   | { kind: "execute-plan" }
   | {
@@ -97,10 +106,10 @@ type TerminalSnapshot = AgentSnapshot & { description: null };
 
 interface ReadyConversationBase {
   kind: "ready";
-  snapshotRequest: number;
   subscriptionGeneration: number;
   historyRequest: HistoryRequest | null;
   pendingCommand: { id: number; command: Command } | null;
+  answeredUserInputCallID: CallId | null;
   optimisticSubmissions: OptimisticSubmission[];
   composer: string;
   isPlanMode: boolean;
@@ -108,6 +117,8 @@ interface ReadyConversationBase {
   reasoning: ReasoningEntry[];
   activities: ActivityEntry[];
   planProgress: PlanProgressHint | null;
+  reconciliation: ReconciliationState;
+  commandError: string | null;
   error: string | null;
 }
 
@@ -127,14 +138,18 @@ export type ReadyConversationState =
   ActiveConversationState | TerminalConversationState;
 
 export type ConversationState =
-  | { kind: "loading"; snapshotRequest: number }
-  | { kind: "failed"; snapshotRequest: number; message: string }
+  | { kind: "loading" }
+  | { kind: "failed"; message: string }
   | ReadyConversationState;
 
 export type ConversationAction =
   | { type: "snapshot-loaded"; snapshot: AgentSnapshot }
   | { type: "snapshot-failed"; message: string }
-  | { type: "request-snapshot"; connection: ActiveConnectionState }
+  | {
+      type: "snapshot-requested";
+      blocking: boolean;
+      connection: ActiveConnectionState;
+    }
   | { type: "older-requested"; id: number; beforeSequence: Sequence }
   | { type: "older-loaded"; id: number; page: HistoryPage }
   | { type: "older-failed"; id: number; message: string }
@@ -147,7 +162,7 @@ export type ConversationAction =
   | { type: "command-failed"; id: number; message: string };
 
 export function initialConversationState(): ConversationState {
-  return { kind: "loading", snapshotRequest: 0 };
+  return { kind: "loading" };
 }
 
 export function conversationReducer(
@@ -161,22 +176,26 @@ export function conversationReducer(
       if (state.kind !== "ready") {
         return {
           kind: "failed",
-          snapshotRequest: state.snapshotRequest,
           message: action.message,
         };
       }
       if (state.lifecycle === "terminal") return state;
-      return { ...state, connection: "stale", error: action.message };
-    case "request-snapshot":
+      return {
+        ...state,
+        connection: "stale",
+        reconciliation: "stale",
+        error: action.message,
+      };
+    case "snapshot-requested":
       if (state.kind === "ready") {
         if (state.lifecycle === "terminal") return state;
         return {
           ...state,
           connection: action.connection,
-          snapshotRequest: state.snapshotRequest + 1,
+          reconciliation: action.blocking ? "syncing" : state.reconciliation,
         };
       }
-      return { kind: "loading", snapshotRequest: state.snapshotRequest + 1 };
+      return { kind: "loading" };
     case "older-requested":
       return state.kind === "ready" && state.lifecycle === "active"
         ? {
@@ -209,7 +228,6 @@ export function conversationReducer(
       return {
         ...state,
         connection: "reconnecting",
-        snapshotRequest: state.snapshotRequest + 1,
         error: action.message,
       };
     case "composer-changed":
@@ -254,9 +272,23 @@ function reconcileSnapshot(
     state.kind === "ready" && state.lifecycle === "active" ? state : null;
   const previousRun =
     previous?.snapshot.runId === snapshot.runId ? previous : null;
+  const previousAnsweredUserInputCallID =
+    previousRun?.answeredUserInputCallID ?? null;
+  const answeredUserInputCallID =
+    previousAnsweredUserInputCallID !== null &&
+    snapshot.description.pendingUserInput?.callId ===
+      previousAnsweredUserInputCallID
+      ? previousAnsweredUserInputCallID
+      : null;
   const activeSnapshot = {
     ...snapshot,
-    description: snapshot.description,
+    description: {
+      ...snapshot.description,
+      pendingUserInput:
+        answeredUserInputCallID === null
+          ? snapshot.description.pendingUserInput
+          : null,
+    },
     history:
       previousRun !== null
         ? reconcileHistory(
@@ -278,13 +310,13 @@ function reconcileSnapshot(
     lifecycle: "active",
     snapshot: activeSnapshot,
     connection: "live",
-    snapshotRequest: state.snapshotRequest,
     subscriptionGeneration:
       previousRun?.connection === "reconnecting"
         ? previousRun.subscriptionGeneration + 1
         : (previousRun?.subscriptionGeneration ?? 0),
     historyRequest: null,
     pendingCommand: previousRun?.pendingCommand ?? null,
+    answeredUserInputCallID,
     optimisticSubmissions: reconcileOptimisticSubmissions(
       previousRun?.optimisticSubmissions ?? [],
       activeSnapshot,
@@ -300,7 +332,9 @@ function reconcileSnapshot(
       : (previousRun?.reasoning ?? []),
     activities: previousRun?.activities ?? [],
     planProgress: null,
-    error: null,
+    reconciliation: "open",
+    commandError: previousRun?.commandError ?? null,
+    error: previousRun?.commandError ?? null,
   };
 }
 
@@ -314,10 +348,11 @@ function terminalState(
     lifecycle: "terminal",
     snapshot,
     connection: "terminal",
-    snapshotRequest: previous.snapshotRequest,
+    reconciliation: "open",
     subscriptionGeneration: priorReady?.subscriptionGeneration ?? 0,
     historyRequest: null,
     pendingCommand: null,
+    answeredUserInputCallID: null,
     optimisticSubmissions: [],
     composer: priorReady?.composer ?? "",
     isPlanMode: priorReady?.isPlanMode ?? false,
@@ -325,6 +360,7 @@ function terminalState(
     reasoning: completeReasoning(priorReady?.reasoning ?? []),
     activities: priorReady?.activities ?? [],
     planProgress: null,
+    commandError: null,
     error: snapshot.errorMessage,
   };
 }
@@ -351,7 +387,7 @@ function mergeOlderHistory(
       },
     },
     historyRequest: null,
-    error: null,
+    error: state.commandError,
   };
 }
 
@@ -360,11 +396,11 @@ function beginCommand(
   id: number,
   command: Command,
 ): ActiveConversationState {
-  if (command.kind === "send") {
+  if (isSubmissionCommand(command)) {
     return {
       ...state,
-      composer: "",
-      isPlanMode: false,
+      composer: command.kind === "send" ? "" : state.composer,
+      isPlanMode: command.kind === "send" ? false : state.isPlanMode,
       optimisticSubmissions: [
         ...state.optimisticSubmissions,
         {
@@ -376,11 +412,17 @@ function beginCommand(
         },
       ],
       pendingCommand: { id, command },
+      commandError: null,
       error: null,
     };
   }
   if (command.kind !== "queue") {
-    return { ...state, pendingCommand: { id, command }, error: null };
+    return {
+      ...state,
+      pendingCommand: { id, command },
+      commandError: null,
+      error: null,
+    };
   }
   const queued = state.snapshot.queued.filter(
     (message) => message.messageId !== command.message.messageId,
@@ -410,6 +452,7 @@ function beginCommand(
         ? command.message.value.planMode
         : state.isPlanMode,
     pendingCommand: { id, command },
+    commandError: null,
     error: null,
   };
 }
@@ -420,21 +463,21 @@ function completeCommand(
 ): ActiveConversationState {
   if (state.pendingCommand?.id !== id) return state;
   const command = state.pendingCommand.command;
-  if (command.kind === "send") {
-    const pendingUserInput =
-      command.pendingUserInputCallID !== null &&
-      state.snapshot.description.pendingUserInput?.callId ===
-        command.pendingUserInputCallID
-        ? null
-        : state.snapshot.description.pendingUserInput;
+  if (isSubmissionCommand(command)) {
+    const isAnswer = command.kind === "answer";
     return {
       ...state,
       pendingCommand: null,
+      answeredUserInputCallID: isAnswer
+        ? command.callID
+        : state.answeredUserInputCallID,
       snapshot: {
         ...state.snapshot,
         description: {
           ...state.snapshot.description,
-          pendingUserInput,
+          pendingUserInput: isAnswer
+            ? null
+            : state.snapshot.description.pendingUserInput,
         },
       },
       optimisticSubmissions: state.optimisticSubmissions.map((submission) =>
@@ -525,16 +568,21 @@ function failCommand(
     composer: command.kind === "send" ? command.value.content : state.composer,
     isPlanMode:
       command.kind === "send" ? command.value.planMode : state.isPlanMode,
-    optimisticSubmissions:
-      command.kind === "send"
-        ? state.optimisticSubmissions.filter(
-            (submission) => submission.localID !== `submitting-${String(id)}`,
-          )
-        : state.optimisticSubmissions,
+    optimisticSubmissions: isSubmissionCommand(command)
+      ? state.optimisticSubmissions.filter(
+          (submission) => submission.localID !== `submitting-${String(id)}`,
+        )
+      : state.optimisticSubmissions,
     pendingCommand: null,
-    snapshotRequest: state.snapshotRequest + 1,
+    commandError: message,
     error: message,
   };
+}
+
+function isSubmissionCommand(
+  command: Command,
+): command is SendCommand | AnswerCommand {
+  return command.kind === "send" || command.kind === "answer";
 }
 
 function reconcileOptimisticSubmissions(

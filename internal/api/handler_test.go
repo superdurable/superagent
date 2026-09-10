@@ -77,6 +77,45 @@ func TestCommandRejectionMapsToConflict(t *testing.T) {
 	}
 }
 
+func TestAnswerQuestionsMapsExactPendingBatch(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.AnswerQuestions(context.Background(), &transportapi.AnswerQuestionsRequest{
+		FlowId: "flow-1", CallId: "call-1", Answers: []transportapi.UserInputAnswer{{
+			QuestionId: "environment", Answer: "Production",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response.(*transportapi.Accepted); !ok {
+		t.Fatalf("response type = %T", response)
+	}
+	if service.answeredFlowID != "flow-1" || service.answer.CallID != "call-1" ||
+		len(service.answer.Answers) != 1 || service.answer.Answers[0].QuestionID != "environment" ||
+		service.answer.Answers[0].Answer != "Production" {
+		t.Fatalf("answer = %q / %#v", service.answeredFlowID, service.answer)
+	}
+}
+
+func TestAnswerQuestionsRejectionMapsToConflict(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{answerErr: &agent.CommandRejectedError{Command: agent.CommandAnswerQuestions}}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.AnswerQuestions(context.Background(), &transportapi.AnswerQuestionsRequest{
+		FlowId: "flow-1", CallId: "stale-call", Answers: []transportapi.UserInputAnswer{{
+			QuestionId: "environment", Answer: "Production",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response.(*transportapi.AnswerQuestionsConflict); !ok {
+		t.Fatalf("response type = %T", response)
+	}
+}
+
 func TestReadEventMapsTypedActivity(t *testing.T) {
 	t.Parallel()
 	callID := agent.CallID("call-1")
@@ -436,6 +475,9 @@ type fakeAgentService struct {
 	started          agent.AgentConfig
 	startCalls       int
 	sendErr          error
+	answeredFlowID   agent.FlowID
+	answer           agent.AnswerQuestionsRequest
+	answerErr        error
 	snapshot         agent.AgentSnapshot
 	snapshotErr      error
 	archived         agent.HistoryPage
@@ -460,6 +502,16 @@ func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, config
 
 func (service *fakeAgentService) SendMessage(context.Context, agent.FlowID, agent.UserMessage) error {
 	return service.sendErr
+}
+
+func (service *fakeAgentService) AnswerQuestions(
+	_ context.Context,
+	flowID agent.FlowID,
+	request agent.AnswerQuestionsRequest,
+) error {
+	service.answeredFlowID = flowID
+	service.answer = request
+	return service.answerErr
 }
 
 func (service *fakeAgentService) Snapshot(

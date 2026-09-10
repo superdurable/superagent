@@ -24,9 +24,10 @@ func (s *Accepted) SetAccepted(val AcceptedAccepted) {
 	s.Accepted = val
 }
 
-func (*Accepted) approveToolRes() {}
-func (*Accepted) executePlanRes() {}
-func (*Accepted) sendMessageRes() {}
+func (*Accepted) answerQuestionsRes() {}
+func (*Accepted) approveToolRes()     {}
+func (*Accepted) executePlanRes()     {}
+func (*Accepted) sendMessageRes()     {}
 
 type AcceptedAccepted bool
 
@@ -798,6 +799,59 @@ func (s *AgentStatus) UnmarshalText(data []byte) error {
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
+
+type AnswerQuestionsBadRequest Problem
+
+func (*AnswerQuestionsBadRequest) answerQuestionsRes() {}
+
+type AnswerQuestionsConflict Problem
+
+func (*AnswerQuestionsConflict) answerQuestionsRes() {}
+
+type AnswerQuestionsNotFound Problem
+
+func (*AnswerQuestionsNotFound) answerQuestionsRes() {}
+
+// Ref: #/components/schemas/AnswerQuestionsRequest
+type AnswerQuestionsRequest struct {
+	FlowId  FlowID            `json:"flowId"`
+	CallId  CallID            `json:"callId"`
+	Answers []UserInputAnswer `json:"answers"`
+}
+
+// GetFlowId returns the value of FlowId.
+func (s *AnswerQuestionsRequest) GetFlowId() FlowID {
+	return s.FlowId
+}
+
+// GetCallId returns the value of CallId.
+func (s *AnswerQuestionsRequest) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetAnswers returns the value of Answers.
+func (s *AnswerQuestionsRequest) GetAnswers() []UserInputAnswer {
+	return s.Answers
+}
+
+// SetFlowId sets the value of FlowId.
+func (s *AnswerQuestionsRequest) SetFlowId(val FlowID) {
+	s.FlowId = val
+}
+
+// SetCallId sets the value of CallId.
+func (s *AnswerQuestionsRequest) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetAnswers sets the value of Answers.
+func (s *AnswerQuestionsRequest) SetAnswers(val []UserInputAnswer) {
+	s.Answers = val
+}
+
+type AnswerQuestionsServiceUnavailable Problem
+
+func (*AnswerQuestionsServiceUnavailable) answerQuestionsRes() {}
 
 type ApproveToolBadRequest Problem
 
@@ -2478,9 +2532,8 @@ func (s *PendingTimer) SetReason(val string) {
 
 // Ref: #/components/schemas/PendingUserInput
 type PendingUserInput struct {
-	CallId  CallID   `json:"callId"`
-	Prompt  string   `json:"prompt"`
-	Choices []string `json:"choices"`
+	CallId    CallID              `json:"callId"`
+	Questions []UserInputQuestion `json:"questions"`
 }
 
 // GetCallId returns the value of CallId.
@@ -2488,14 +2541,9 @@ func (s *PendingUserInput) GetCallId() CallID {
 	return s.CallId
 }
 
-// GetPrompt returns the value of Prompt.
-func (s *PendingUserInput) GetPrompt() string {
-	return s.Prompt
-}
-
-// GetChoices returns the value of Choices.
-func (s *PendingUserInput) GetChoices() []string {
-	return s.Choices
+// GetQuestions returns the value of Questions.
+func (s *PendingUserInput) GetQuestions() []UserInputQuestion {
+	return s.Questions
 }
 
 // SetCallId sets the value of CallId.
@@ -2503,14 +2551,9 @@ func (s *PendingUserInput) SetCallId(val CallID) {
 	s.CallId = val
 }
 
-// SetPrompt sets the value of Prompt.
-func (s *PendingUserInput) SetPrompt(val string) {
-	s.Prompt = val
-}
-
-// SetChoices sets the value of Choices.
-func (s *PendingUserInput) SetChoices(val []string) {
-	s.Choices = val
+// SetQuestions sets the value of Questions.
+func (s *PendingUserInput) SetQuestions(val []UserInputQuestion) {
+	s.Questions = val
 }
 
 // Ref: #/components/schemas/PendingUserMessage
@@ -3651,6 +3694,106 @@ func (s *ToolCall) SetArgumentsJson(val string) {
 }
 
 type ToolName string
+
+// Ref: #/components/schemas/UserInputAnswer
+type UserInputAnswer struct {
+	QuestionId string `json:"questionId"`
+	Answer     string `json:"answer"`
+}
+
+// GetQuestionId returns the value of QuestionId.
+func (s *UserInputAnswer) GetQuestionId() string {
+	return s.QuestionId
+}
+
+// GetAnswer returns the value of Answer.
+func (s *UserInputAnswer) GetAnswer() string {
+	return s.Answer
+}
+
+// SetQuestionId sets the value of QuestionId.
+func (s *UserInputAnswer) SetQuestionId(val string) {
+	s.QuestionId = val
+}
+
+// SetAnswer sets the value of Answer.
+func (s *UserInputAnswer) SetAnswer(val string) {
+	s.Answer = val
+}
+
+// Ref: #/components/schemas/UserInputOption
+type UserInputOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// GetLabel returns the value of Label.
+func (s *UserInputOption) GetLabel() string {
+	return s.Label
+}
+
+// GetDescription returns the value of Description.
+func (s *UserInputOption) GetDescription() string {
+	return s.Description
+}
+
+// SetLabel sets the value of Label.
+func (s *UserInputOption) SetLabel(val string) {
+	s.Label = val
+}
+
+// SetDescription sets the value of Description.
+func (s *UserInputOption) SetDescription(val string) {
+	s.Description = val
+}
+
+// Ref: #/components/schemas/UserInputQuestion
+type UserInputQuestion struct {
+	ID       string            `json:"id"`
+	Header   string            `json:"header"`
+	Question string            `json:"question"`
+	Options  []UserInputOption `json:"options"`
+}
+
+// GetID returns the value of ID.
+func (s *UserInputQuestion) GetID() string {
+	return s.ID
+}
+
+// GetHeader returns the value of Header.
+func (s *UserInputQuestion) GetHeader() string {
+	return s.Header
+}
+
+// GetQuestion returns the value of Question.
+func (s *UserInputQuestion) GetQuestion() string {
+	return s.Question
+}
+
+// GetOptions returns the value of Options.
+func (s *UserInputQuestion) GetOptions() []UserInputOption {
+	return s.Options
+}
+
+// SetID sets the value of ID.
+func (s *UserInputQuestion) SetID(val string) {
+	s.ID = val
+}
+
+// SetHeader sets the value of Header.
+func (s *UserInputQuestion) SetHeader(val string) {
+	s.Header = val
+}
+
+// SetQuestion sets the value of Question.
+func (s *UserInputQuestion) SetQuestion(val string) {
+	s.Question = val
+}
+
+// SetOptions sets the value of Options.
+func (s *UserInputQuestion) SetOptions(val []UserInputOption) {
+	s.Options = val
+}
 
 // Ref: #/components/schemas/UserMessage
 type UserMessage struct {

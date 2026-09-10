@@ -76,6 +76,9 @@ The server integration suite uses a released Dex server, a real Worker, and the
 real generated HTTP server. The full-stack suite adds the separately served Web
 artifact and asserts visible DOM and interaction results, not only HTTP status.
 Neither suite may replace API responses with browser route fulfillment.
+Set `SUPERAGENT_E2E_HTTP_ADDRESS`, `SUPERAGENT_E2E_WEB_ADDRESS`, and
+`SUPERAGENT_E2E_WORKER_ADDRESS` to isolate a local full-stack run from an
+already running development Agent.
 
 The integration suite reads private resources through the Dex Client only. It
 must not add an HTTP read endpoint or exported descriptor getter to make tests

@@ -44,11 +44,14 @@ mode, status, pending tool cursor, and plan revision. Plans, pending approvals,
 timers, input prompts, and cumulative context summaries are separate typed
 Attributes.
 
-Queued and steered user messages use distinct Channels. A queued message enters
-application history only after a Step consumes it. Steering is consumed only at
+Queued messages and validated question answers use `QueuedUserMessages`.
+Steering uses its own Channel. A queued message enters application history only
+after a Step consumes it. Steering is consumed only at
 explicit safe Step boundaries, so it cannot claim to cancel an in-flight model
-or MCP side effect. Approval and plan execution use ChannelMaps keyed by typed
-call ID and plan revision.
+or MCP side effect. `AnswerQuestions` verifies all answers for the exact pending
+one-to-three-question batch, deletes it, publishes one ordered answer message,
+and writes `submitted` in one locked RPC commit. Approval and plan execution use
+ChannelMaps keyed by typed call ID and plan revision.
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit
 boundary. Waiting state is written in the `WaitFor` that establishes the wait.
@@ -79,9 +82,13 @@ reasoning summary before that assistant message when timestamps tie or are
 unavailable. Unanchored reasoning retains its own chronological position.
 `AgentInteractionStatus` alternates between `submitted` and `waiting`. The
 browser long-polls those durable values and reads Snapshot after a real durable
-wait. Server errors, explicit reconcile, and a visible-page ten-second
-lifecycle fallback also reconcile. Commands and ordinary Stream events do not.
-Terminal reconciliation stops Streams, Attribute waits, and fallback polling.
+wait. Every mutation result immediately requests another Snapshot. Mutation
+controls remain disabled from a waiting boundary or mutation result until that
+Snapshot succeeds. Server errors and explicit reconcile also close this gate.
+Ordinary Stream events do not request Snapshot. A visible-page ten-second
+single-shot freshness timer starts only after the prior Snapshot finishes, so
+an intervening read resets the complete delay. Terminal reconciliation stops
+Streams, Attribute waits, Snapshot work, and the timer.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Activity events are independent timeline rows keyed by resume token. A page
@@ -89,12 +96,17 @@ refresh starts from an empty token, so Dex may replay events from its retained
 head. Events removed by Stream retention are not reconstructed. Completed-source
 tracking prevents replayed text from duplicating durable assistant messages and
 keeps replayed reasoning summaries in a completed state.
-Every poll, Snapshot, and command owns cancellation and rejects stale responses.
+Every poll, Snapshot, and command owns cancellation. Snapshot reads are
+single-flight and coalesce new triggers into at most one trailing read. A
+mutation increments an epoch, so a response started before that mutation cannot
+replace newer durable state.
 Message send displays one local, non-actionable `Submitting` item and changes it
 to `Queued` after HTTP acceptance. Failure restores its composer text and plan
-mode. An accepted answer immediately hides only its matching pending input;
-Snapshot can restore it if the durable state disagrees. Queue edit, delete, and
-steer optimistically remove one stable message ID.
+mode. Pending input uses the dedicated `answerQuestions` operation. The browser
+collects every answer locally, permits review, and submits the complete batch.
+HTTP acceptance means the server has durably removed that exact batch and
+queued one normal answer message. Queue edit, delete, and steer optimistically
+remove one stable message ID.
 The backend resolves a steer value from the loaded
 Channel snapshot; the browser cannot replace the queued content during that
 operation.

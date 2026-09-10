@@ -35,6 +35,7 @@ var supportedPaths = []string{
 	"/products/ai-agent/messages",
 	"/products/ai-agent/plans/execute",
 	"/products/ai-agent/portal",
+	"/products/ai-agent/questions/answer",
 	"/products/ai-agent/snapshot",
 	"/products/ai-agent/start",
 	"/products/ai-agent/tool-approvals",

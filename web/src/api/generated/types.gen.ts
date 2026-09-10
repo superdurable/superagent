@@ -166,6 +166,17 @@ export type SendMessageRequest = {
     planMode: boolean;
 };
 
+export type AnswerQuestionsRequest = {
+    flowId: FlowId;
+    callId: CallId;
+    answers: Array<UserInputAnswer>;
+};
+
+export type UserInputAnswer = {
+    questionId: string;
+    answer: string;
+};
+
 export type ExecutePlanRequest = {
     flowId: FlowId;
     revision: number;
@@ -288,8 +299,19 @@ export type PendingTimer = {
 
 export type PendingUserInput = {
     callId: CallId;
-    prompt: string;
-    choices: Array<string>;
+    questions: Array<UserInputQuestion>;
+};
+
+export type UserInputQuestion = {
+    id: string;
+    header: string;
+    question: string;
+    options: Array<UserInputOption>;
+};
+
+export type UserInputOption = {
+    label: string;
+    description: string;
 };
 
 export type AgentPlan = {
@@ -512,6 +534,43 @@ export type SendMessageResponses = {
 };
 
 export type SendMessageResponse = SendMessageResponses[keyof SendMessageResponses];
+
+export type AnswerQuestionsData = {
+    body: AnswerQuestionsRequest;
+    path?: never;
+    query?: never;
+    url: '/products/ai-agent/questions/answer';
+};
+
+export type AnswerQuestionsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    409: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type AnswerQuestionsError = AnswerQuestionsErrors[keyof AnswerQuestionsErrors];
+
+export type AnswerQuestionsResponses = {
+    /**
+     * The answers were durably accepted and the input batch was closed.
+     */
+    202: Accepted;
+};
+
+export type AnswerQuestionsResponse = AnswerQuestionsResponses[keyof AnswerQuestionsResponses];
 
 export type GetAgentSnapshotData = {
     body?: never;

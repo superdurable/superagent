@@ -84,14 +84,84 @@ func (client *Client) SendMessage(ctx context.Context, flowID FlowID, message Us
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
-	var accepted bool
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, message, &accepted, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-	}); err != nil {
+	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, message, accepted, dex.InvokeOptions{
+			Timeout:        client.commandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+		})
+	})
+	if err != nil {
 		return err
 	}
 	return ensureAccepted(accepted, CommandSendMessage)
+}
+
+// AnswerQuestions invokes the durable command for one exact pending input batch.
+func (client *Client) AnswerQuestions(
+	ctx context.Context,
+	flowID FlowID,
+	request AnswerQuestionsRequest,
+) error {
+	if err := validateFlowID(flowID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(request.CallID)) == "" {
+		return errors.New("call ID must not be empty")
+	}
+	if len(request.Answers) == 0 || len(request.Answers) > maximumUserInputQuestions {
+		return fmt.Errorf("answers must contain 1-%d values", maximumUserInputQuestions)
+	}
+	seen := make(map[UserInputQuestionID]struct{}, len(request.Answers))
+	for _, answer := range request.Answers {
+		if strings.TrimSpace(string(answer.QuestionID)) == "" || strings.TrimSpace(answer.Answer) == "" {
+			return errors.New("answers require question ID and answer")
+		}
+		if _, found := seen[answer.QuestionID]; found {
+			return fmt.Errorf("question %q was answered more than once", answer.QuestionID)
+		}
+		seen[answer.QuestionID] = struct{}{}
+	}
+	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
+			Timeout:        client.commandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return ensureAccepted(accepted, CommandAnswerQuestions)
+}
+
+func invokeLockedCommand(
+	ctx context.Context,
+	timeout time.Duration,
+	invoke func(context.Context, *bool) error,
+) (bool, error) {
+	const initialRetryDelay = 5 * time.Millisecond
+	const maximumRetryDelay = 100 * time.Millisecond
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	retryDelay := initialRetryDelay
+	for {
+		var accepted bool
+		err := invoke(ctx, &accepted)
+		if err == nil {
+			return accepted, nil
+		}
+		var conflict *dex.RPCLockConflictError
+		if !errors.As(err, &conflict) {
+			return false, err
+		}
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+		retryDelay = min(retryDelay*2, maximumRetryDelay)
+	}
 }
 
 // SteerMessage invokes the durable SteerMessage command.

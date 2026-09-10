@@ -743,8 +743,9 @@ type ContextSummary struct {
 
 // UserMessage is a queued or steered user request.
 type UserMessage struct {
-	Content  string `json:"content"`
-	PlanMode bool   `json:"plan_mode"`
+	Content             string  `json:"content"`
+	PlanMode            bool    `json:"plan_mode"`
+	AnsweredInputCallID *CallID `json:"answered_input_call_id,omitempty"`
 }
 
 // SteerMessageRequest atomically moves one queued message into steering.
@@ -795,11 +796,39 @@ type PendingTimer struct {
 	Reason          string `json:"reason"`
 }
 
-// PendingUserInput describes a durable prompt awaiting a message.
+// UserInputQuestionID identifies one question within a pending input batch.
+type UserInputQuestionID string
+
+// UserInputOption describes one suggested answer.
+type UserInputOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// UserInputQuestion describes one question within a pending input batch.
+type UserInputQuestion struct {
+	ID       UserInputQuestionID `json:"id"`
+	Header   string              `json:"header"`
+	Question string              `json:"question"`
+	Options  []UserInputOption   `json:"options"`
+}
+
+// PendingUserInput describes one durable batch awaiting answers.
 type PendingUserInput struct {
-	CallID  CallID   `json:"call_id"`
-	Prompt  string   `json:"prompt"`
-	Choices []string `json:"choices"`
+	CallID    CallID              `json:"call_id"`
+	Questions []UserInputQuestion `json:"questions"`
+}
+
+// AnswerQuestionsRequest identifies and answers one pending batch.
+type AnswerQuestionsRequest struct {
+	CallID  CallID            `json:"call_id"`
+	Answers []UserInputAnswer `json:"answers"`
+}
+
+// UserInputAnswer answers one question in a pending input batch.
+type UserInputAnswer struct {
+	QuestionID UserInputQuestionID `json:"question_id"`
+	Answer     string              `json:"answer"`
 }
 
 // AgentEvent is emitted to the best-effort activity Stream.
@@ -830,10 +859,11 @@ type StreamEvent struct {
 type Command string
 
 const (
-	CommandSendMessage Command = "send_message"
-	CommandSteer       Command = "steer_message"
-	CommandApproveTool Command = "approve_tool"
-	CommandExecutePlan Command = "execute_plan"
+	CommandSendMessage     Command = "send_message"
+	CommandAnswerQuestions Command = "answer_questions"
+	CommandSteer           Command = "steer_message"
+	CommandApproveTool     Command = "approve_tool"
+	CommandExecutePlan     Command = "execute_plan"
 )
 
 // CommandRejectedError reports a valid command that does not match current durable state.

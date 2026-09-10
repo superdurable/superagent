@@ -108,6 +108,18 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 			request.WriteActivity,
 		)
 	}
+	if strings.EqualFold(userRequest, "/questions") && hasTool(available, agent.ToolNameRequestUserInput) {
+		arguments, err := userInputQuestionsObject(mockQuestionBatch())
+		if err != nil {
+			return agent.ModelReply{}, err
+		}
+		return calls.toolReply(
+			"I need three details before I continue.",
+			agent.ToolNameRequestUserInput,
+			arguments,
+			request.WriteActivity,
+		)
+	}
 	if strings.HasPrefix(strings.ToLower(userRequest), "/ask-many ") &&
 		hasTool(available, agent.ToolNameRequestUserInput) && hasTool(available, agent.ToolNameDurableWait) {
 		prompt := strings.TrimSpace(userRequest[len("/ask-many "):])
@@ -329,14 +341,58 @@ func writeTodosObject(tasks []agent.PlanTask) (agent.JSONObject, error) {
 }
 
 func userInputObject(prompt string, choices []string) (agent.JSONObject, error) {
+	if len(choices) == 0 {
+		choices = []string{"Yes", "No"}
+	}
+	options := make([]agent.UserInputOption, 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, agent.UserInputOption{
+			Label:       choice,
+			Description: "Choose " + choice + ".",
+		})
+	}
+	return userInputQuestionsObject([]agent.UserInputQuestion{{
+		ID:       "answer",
+		Header:   "Details",
+		Question: prompt,
+		Options:  options,
+	}})
+}
+
+func userInputQuestionsObject(questions []agent.UserInputQuestion) (agent.JSONObject, error) {
 	encoded, err := json.Marshal(struct {
-		Prompt  string   `json:"prompt"`
-		Choices []string `json:"choices,omitempty"`
-	}{Prompt: prompt, Choices: choices})
+		Questions []agent.UserInputQuestion `json:"questions"`
+	}{Questions: questions})
 	if err != nil {
 		return "", fmt.Errorf("encode mock user-input arguments: %w", err)
 	}
 	return agent.ParseJSONObject(string(encoded))
+}
+
+func mockQuestionBatch() []agent.UserInputQuestion {
+	return []agent.UserInputQuestion{
+		{
+			ID: "region", Header: "Region", Question: "Which region should I use?",
+			Options: []agent.UserInputOption{
+				{Label: "US West", Description: "Use the western US region."},
+				{Label: "EU Central", Description: "Use the central EU region."},
+			},
+		},
+		{
+			ID: "pace", Header: "Pace", Question: "How quickly should I proceed?",
+			Options: []agent.UserInputOption{
+				{Label: "Fast", Description: "Prioritize speed."},
+				{Label: "Careful", Description: "Prioritize verification."},
+			},
+		},
+		{
+			ID: "format", Header: "Format", Question: "Which output format should I use?",
+			Options: []agent.UserInputOption{
+				{Label: "Summary", Description: "Return a short summary."},
+				{Label: "Detailed", Description: "Return a detailed response."},
+			},
+		},
+	}
 }
 
 func durableWaitObject(durationSeconds int64, reason string) (agent.JSONObject, error) {

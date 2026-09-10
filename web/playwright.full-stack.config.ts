@@ -7,6 +7,8 @@
 import { defineConfig } from "@playwright/test";
 
 const testLogDirectory = process.env["TEST_LOG_DIR"];
+const webOrigin =
+  process.env["SUPERAGENT_E2E_WEB_ORIGIN"] ?? "http://127.0.0.1:4173";
 
 export default defineConfig({
   testDir: "./tests",
@@ -21,7 +23,7 @@ export default defineConfig({
   reporter: "line",
   timeout: 60_000,
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: webOrigin,
     browserName: "chromium",
     trace: "retain-on-failure",
   },

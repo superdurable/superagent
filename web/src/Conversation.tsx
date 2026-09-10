@@ -16,6 +16,7 @@ import {
   AgentInteractionStatus,
   EventStream,
   PollTimeoutReason,
+  answerQuestions,
   approveTool,
   deleteQueuedMessage,
   executePlan,
@@ -31,6 +32,7 @@ import {
   type ResumeToken,
   type StreamEvent,
   type ToolName,
+  type UserInputAnswer,
 } from "./api/generated";
 import {
   conversationReducer,
@@ -41,6 +43,10 @@ import {
   type QueueCommandAction,
 } from "./conversation-state";
 import { ConversationView } from "./ConversationView";
+import {
+  SnapshotCoordinator,
+  type SnapshotTrigger,
+} from "./snapshot-coordinator";
 
 const eventStreams = [
   EventStream.REASONING,
@@ -70,31 +76,9 @@ export function Conversation({
     [EventStream.ACTIVITY]: undefined,
   });
   const nextHistoryRequestID = useRef(1);
-  const runCommand = useCommandRunner(dispatch);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let isCurrent = true;
-    void getAgentSnapshot({
-      query: { flowId },
-      signal: controller.signal,
-    })
-      .then((snapshot) => {
-        if (isCurrent) dispatch({ type: "snapshot-loaded", snapshot });
-      })
-      .catch((reason: unknown) => {
-        if (isCurrent && !controller.signal.aborted) {
-          dispatch({
-            type: "snapshot-failed",
-            message: errorMessage(reason),
-          });
-        }
-      });
-    return () => {
-      isCurrent = false;
-      controller.abort();
-    };
-  }, [flowId, state.snapshotRequest]);
+  const isTerminal = state.kind === "ready" && state.lifecycle === "terminal";
+  const requestSnapshot = useSnapshotCoordinator(flowId, dispatch, isTerminal);
+  const runCommand = useCommandRunner(dispatch, requestSnapshot);
 
   const historyRequest = state.kind === "ready" ? state.historyRequest : null;
   useEffect(() => {
@@ -167,6 +151,7 @@ export function Conversation({
             type: "stream-failed",
             message: `Live updates disconnected: ${errorMessage(reason)}`,
           });
+          requestSnapshot({ blocking: true, connection: "reconnecting" });
         }
       }
     };
@@ -175,7 +160,7 @@ export function Conversation({
       isCurrent = false;
       controller.abort();
     };
-  }, [flowId, activeRunID, subscriptionGeneration]);
+  }, [flowId, activeRunID, subscriptionGeneration, requestSnapshot]);
 
   const interactionStatus =
     state.kind === "ready" && state.lifecycle === "active"
@@ -201,7 +186,7 @@ export function Conversation({
               ? AgentInteractionStatus.SUBMITTED
               : AgentInteractionStatus.WAITING;
           if (result.status === AgentInteractionStatus.WAITING) {
-            dispatch({ type: "request-snapshot", connection: "live" });
+            requestSnapshot({ blocking: true });
           }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
@@ -213,6 +198,7 @@ export function Conversation({
             type: "stream-failed",
             message: `Durable status disconnected: ${errorMessage(reason)}`,
           });
+          requestSnapshot({ blocking: true, connection: "reconnecting" });
           return;
         }
       }
@@ -222,20 +208,7 @@ export function Conversation({
       isCurrent = false;
       controller.abort();
     };
-  }, [flowId, interactionStatus, subscriptionGeneration]);
-
-  const isActive = state.kind === "ready" && state.lifecycle === "active";
-  useEffect(() => {
-    if (!isActive) return;
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        dispatch({ type: "request-snapshot", connection: "live" });
-      }
-    }, 10_000);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [isActive]);
+  }, [flowId, interactionStatus, subscriptionGeneration, requestSnapshot]);
 
   if (state.kind === "loading") {
     return (
@@ -251,7 +224,7 @@ export function Conversation({
         title="Snapshot unavailable"
         detail={state.message}
         action={() => {
-          dispatch({ type: "request-snapshot", connection: "stale" });
+          requestSnapshot({ blocking: true, connection: "stale" });
         }}
       />
     );
@@ -271,42 +244,67 @@ export function Conversation({
   }
 
   const isBusy = state.pendingCommand !== null;
+  const areMutationsDisabled = isBusy || state.reconciliation !== "open";
   const submitMessage = () => {
     const content = state.composer.trim();
-    if (content === "" || isBusy) return;
+    if (content === "" || areMutationsDisabled) return;
     const value = {
       content,
-      planMode:
-        state.snapshot.description.pendingUserInput === null &&
-        state.isPlanMode,
+      planMode: state.isPlanMode,
     };
-    runCommand(
-      {
-        kind: "send",
-        value,
-        pendingUserInputCallID:
-          state.snapshot.description.pendingUserInput?.callId ?? null,
-        submittedAfterSequence: state.snapshot.description.lastSequence,
-        knownMessageIDs: [
-          ...state.snapshot.queued.map((message) => message.messageId),
-          ...state.snapshot.steered.map((message) => message.messageId),
-        ],
-      },
-      (signal) =>
-        sendMessage({
-          body: {
-            flowId,
-            ...value,
-          },
-          signal,
-        }),
+    const submission = {
+      value,
+      submittedAfterSequence: state.snapshot.description.lastSequence,
+      knownMessageIDs: [
+        ...state.snapshot.queued.map((message) => message.messageId),
+        ...state.snapshot.steered.map((message) => message.messageId),
+      ],
+    };
+    runCommand({ kind: "send", ...submission }, (signal) =>
+      sendMessage({
+        body: {
+          flowId,
+          ...value,
+        },
+        signal,
+      }),
+    );
+  };
+  const submitAnswers = (callID: CallId, answers: UserInputAnswer[]) => {
+    if (areMutationsDisabled) return;
+    const pendingInput = state.snapshot.description.pendingUserInput;
+    if (pendingInput?.callId !== callID) return;
+    const answersByQuestion = new Map(
+      answers.map((answer) => [answer.questionId, answer.answer]),
+    );
+    const value = {
+      content: pendingInput.questions
+        .map(
+          (question) =>
+            `**${question.header}**: ${answersByQuestion.get(question.id) ?? ""}`,
+        )
+        .join("\n\n"),
+      planMode: false,
+    };
+    const command: Command = {
+      kind: "answer",
+      callID,
+      value,
+      submittedAfterSequence: state.snapshot.description.lastSequence,
+      knownMessageIDs: [
+        ...state.snapshot.queued.map((message) => message.messageId),
+        ...state.snapshot.steered.map((message) => message.messageId),
+      ],
+    };
+    runCommand(command, (signal) =>
+      answerQuestions({ body: { flowId, callId: callID, answers }, signal }),
     );
   };
   const mutateQueue = (
     message: PendingUserMessage,
     action: QueueCommandAction,
   ) => {
-    if (isBusy) return;
+    if (areMutationsDisabled) return;
     const command: Command = { kind: "queue", action, message };
     const body = { flowId, messageId: message.messageId };
     runCommand(command, (signal) =>
@@ -322,7 +320,7 @@ export function Conversation({
       builtInTools={builtInTools}
       state={state}
       onRetrySnapshot={() => {
-        dispatch({ type: "request-snapshot", connection: "stale" });
+        requestSnapshot({ blocking: true, connection: "stale" });
       }}
       onLoadOlder={(beforeSequence) => {
         dispatch({
@@ -338,6 +336,7 @@ export function Conversation({
         dispatch({ type: "plan-mode-changed", value });
       }}
       onSubmit={submitMessage}
+      onSubmitAnswers={submitAnswers}
       onExecutePlan={(revision) => {
         runCommand({ kind: "execute-plan" }, (signal) =>
           executePlan({ body: { flowId, revision }, signal }),
@@ -380,7 +379,54 @@ function ConversationStatus({
   );
 }
 
-function useCommandRunner(dispatch: Dispatch<ConversationAction>) {
+function useSnapshotCoordinator(
+  flowId: FlowId,
+  dispatch: Dispatch<ConversationAction>,
+  isTerminal: boolean,
+) {
+  const coordinator = useRef<SnapshotCoordinator | null>(null);
+  useEffect(() => {
+    const current = new SnapshotCoordinator({
+      load: (signal) =>
+        getAgentSnapshot({
+          query: { flowId },
+          signal,
+        }),
+      requested: (trigger) => {
+        dispatch({ type: "snapshot-requested", ...trigger });
+      },
+      loaded: (snapshot) => {
+        dispatch({ type: "snapshot-loaded", snapshot });
+      },
+      failed: (message) => {
+        dispatch({ type: "snapshot-failed", message });
+      },
+    });
+    coordinator.current = current;
+    const handleVisibilityChange = () => {
+      current.setVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    current.start();
+    current.setVisible(document.visibilityState === "visible");
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      current.stop();
+      if (coordinator.current === current) coordinator.current = null;
+    };
+  }, [dispatch, flowId]);
+  useEffect(() => {
+    if (isTerminal) coordinator.current?.stop();
+  }, [isTerminal]);
+  return useCallback((trigger: SnapshotTrigger) => {
+    coordinator.current?.request(trigger);
+  }, []);
+}
+
+function useCommandRunner(
+  dispatch: Dispatch<ConversationAction>,
+  requestSnapshot: (trigger: SnapshotTrigger) => void,
+) {
   const nextID = useRef(1);
   const activeController = useRef<AbortController | null>(null);
   useEffect(
@@ -403,6 +449,7 @@ function useCommandRunner(dispatch: Dispatch<ConversationAction>) {
         .then(() => {
           if (!controller.signal.aborted) {
             dispatch({ type: "command-succeeded", id });
+            requestSnapshot({ blocking: true });
           }
         })
         .catch((reason: unknown) => {
@@ -412,6 +459,7 @@ function useCommandRunner(dispatch: Dispatch<ConversationAction>) {
               id,
               message: errorMessage(reason),
             });
+            requestSnapshot({ blocking: true, connection: "stale" });
           }
         })
         .finally(() => {
@@ -420,7 +468,7 @@ function useCommandRunner(dispatch: Dispatch<ConversationAction>) {
           }
         });
     },
-    [dispatch],
+    [dispatch, requestSnapshot],
   );
 }
 

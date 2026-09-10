@@ -7,7 +7,8 @@
 - Start input: typed `AgentConfig`
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
-- Command RPCs: `SendMessage`, `SteerMessage`, `ApproveTool`, and `ExecutePlan`
+- Command RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
+  and `ExecutePlan`
 - Read RPC: `Snapshot`
 - Browser synchronization Attribute: `AgentInteractionStatus`
 
@@ -57,7 +58,7 @@ application history, and makes the model replan.
 | Step | `WaitFor` | `Execute` and transition |
 |---|---|---|
 | `Init` | none | Validate and persist config/state, then `AwaitUser` |
-| `AwaitUser` | steered batch, one queued message, or current plan execution | Persist waiting status beside the wait; consume exactly one normal message or the selected durable command |
+| `AwaitUser` | steered batch, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected durable command |
 | `CompactContext` | none | Call the summary provider, commit covered range and summary, then trim only already summarized retained messages |
 | `CallModel` | none | Rebuild provider-neutral context, stream buffered deltas, commit the complete assistant message and pending calls |
 | `CheckSteered` | bounded steered batch | Apply steering at a safe boundary or route the explicit continuation |
@@ -79,7 +80,7 @@ application history, and makes the model replan.
 | `AgentPlan` | Attribute | Atomically replaced short plan |
 | `PendingApproval` | Attribute | Reloadable approval request |
 | `PendingTimer` | Attribute | Reloadable durable wait description |
-| `PendingUserInput` | Attribute | Reloadable user question and choices |
+| `PendingUserInput` | Attribute | Reloadable batch of one to three structured questions |
 | `QueuedUserMessages` | Channel | FIFO messages that do not interrupt active work |
 | `SteeredUserMessages` | Channel | Messages consumed only at safe boundaries |
 | `ToolApprovals` | ChannelMap | Approval decision partitioned by call ID |
@@ -91,6 +92,14 @@ application history, and makes the model replan.
 Channels are delivery mechanisms, not storage. A queued message enters
 application history only after a Step consumes it. Stream loss never changes
 durable truth.
+
+`SendMessage` rejects while `PendingUserInput` exists. `AnswerQuestions` locks
+that Attribute and requires exactly one non-empty answer for each current
+question ID. It deletes the batch, publishes one ordered `UserMessage` to
+`QueuedUserMessages`, and writes `submitted` in one RPC commit. The message
+retains the answered call ID internally so an active Plan resumes execution.
+A stale, duplicate, partial, or mismatched batch commits no changes. Later model
+turns may create further batches after the current batch resolves.
 
 Each observed `AgentActivity` event is a separate transient timeline row. The
 Stream may also carry revision-scoped Plan task status hints. Activity is never

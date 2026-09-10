@@ -53,19 +53,51 @@ func TestPlanTasksValidatesStatusAndTrimsContent(t *testing.T) {
 	}
 }
 
-func TestUserInputChoicesEnforcesBoundsAndUniqueness(t *testing.T) {
-	choices, err := validateUserInputChoices([]string{" yes ", "no"})
-	if err != nil || len(choices) != 2 || choices[0] != "yes" {
-		t.Fatalf("userInputChoices() = %v, %v", choices, err)
+func TestUserInputQuestionsEnforceBatchShape(t *testing.T) {
+	questions, err := validateUserInputQuestions([]UserInputQuestion{{
+		ID:       " region ",
+		Header:   " Region ",
+		Question: " Where? ",
+		Options: []UserInputOption{
+			{Label: " West ", Description: " Use west. "},
+			{Label: " East ", Description: " Use east. "},
+		},
+	}})
+	if err != nil || len(questions) != 1 || questions[0].ID != "region" || questions[0].Options[0].Label != "West" {
+		t.Fatalf("validateUserInputQuestions() = %#v, %v", questions, err)
 	}
-	for _, invalid := range [][]string{
-		{"only"},
-		{"same", "same"},
-		{"", "valid"},
-	} {
-		if _, err := validateUserInputChoices(invalid); err == nil {
-			t.Fatalf("validateUserInputChoices(%v) error = nil", invalid)
-		}
+	invalid := []UserInputQuestion{{
+		ID:       "region",
+		Header:   "Header longer than twelve",
+		Question: "Where?",
+		Options:  []UserInputOption{{Label: "West", Description: "Use west."}},
+	}}
+	if _, err := validateUserInputQuestions(invalid); err == nil {
+		t.Fatal("validateUserInputQuestions() error = nil")
+	}
+}
+
+func TestAnsweredUserMessageRequiresExactQuestionSet(t *testing.T) {
+	pending := PendingUserInput{
+		CallID: "call-1",
+		Questions: []UserInputQuestion{
+			{ID: "region", Header: "Region"},
+			{ID: "pace", Header: "Pace"},
+		},
+	}
+	message, err := answeredUserMessage(pending, []UserInputAnswer{
+		{QuestionID: "pace", Answer: "Relaxed"},
+		{QuestionID: "region", Answer: "West"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Content != "**Region**: West\n\n**Pace**: Relaxed" ||
+		message.AnsweredInputCallID == nil || *message.AnsweredInputCallID != "call-1" {
+		t.Fatalf("answered message = %#v", message)
+	}
+	if _, err := answeredUserMessage(pending, []UserInputAnswer{{QuestionID: "region", Answer: "West"}}); err == nil {
+		t.Fatal("missing answer error = nil")
 	}
 }
 

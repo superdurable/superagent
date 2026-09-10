@@ -24,6 +24,13 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode/utf8"
+)
+
+const (
+	maximumUserInputQuestions = 3
+	maximumUserInputOptions   = 3
+	maximumUserMessageLength  = 1_000_000
 )
 
 const (
@@ -41,6 +48,7 @@ const (
 	toolErrorInvalidPlan           toolErrorCode    = "invalid_todos"
 	toolErrorInvalidDuration       toolErrorCode    = "invalid_duration_seconds"
 	toolErrorInvalidUserInput      toolErrorCode    = "invalid_user_input"
+	toolErrorUserInputPending      toolErrorCode    = "user_input_already_pending"
 	toolErrorRejectedByUser        toolErrorCode    = "rejected_by_user"
 	toolErrorSupersededBySteering  toolErrorCode    = "superseded_by_steered_user_message"
 	toolErrorSupersededByUserInput toolErrorCode    = "superseded_by_user_input"
@@ -65,24 +73,22 @@ type durableWaitArguments struct {
 }
 
 type userInputArguments struct {
-	Prompt  string   `json:"prompt"`
-	Choices []string `json:"choices,omitempty"`
+	Questions []UserInputQuestion `json:"questions"`
 }
 
 type toolResultPayload struct {
-	Status          toolResultStatus `json:"status"`
-	Error           toolErrorCode    `json:"error,omitempty"`
-	Message         string           `json:"message,omitempty"`
-	Tool            ToolName         `json:"tool,omitempty"`
-	Outcome         ToolOutcome      `json:"outcome,omitempty"`
-	ErrorType       string           `json:"error_type,omitempty"`
-	Reason          string           `json:"reason,omitempty"`
-	Revision        PlanRevision     `json:"revision,omitempty"`
-	TaskCount       int              `json:"task_count,omitempty"`
-	Prompt          string           `json:"prompt,omitempty"`
-	Choices         []string         `json:"choices,omitempty"`
-	DurationSeconds int64            `json:"duration_seconds,omitempty"`
-	Attempts        int              `json:"attempts,omitempty"`
+	Status          toolResultStatus    `json:"status"`
+	Error           toolErrorCode       `json:"error,omitempty"`
+	Message         string              `json:"message,omitempty"`
+	Tool            ToolName            `json:"tool,omitempty"`
+	Outcome         ToolOutcome         `json:"outcome,omitempty"`
+	ErrorType       string              `json:"error_type,omitempty"`
+	Reason          string              `json:"reason,omitempty"`
+	Revision        PlanRevision        `json:"revision,omitempty"`
+	TaskCount       int                 `json:"task_count,omitempty"`
+	Questions       []UserInputQuestion `json:"questions,omitempty"`
+	DurationSeconds int64               `json:"duration_seconds,omitempty"`
+	Attempts        int                 `json:"attempts,omitempty"`
 }
 
 func writeTodosDefinition() ToolDefinition {
@@ -136,10 +142,37 @@ func requestUserInputDefinition() ToolDefinition {
 		InputSchema: MustJSONObject(`{
 			"type":"object",
 			"properties":{
-				"prompt":{"type":"string","minLength":1,"description":"One concise question for the user."},
-				"choices":{"type":"array","items":{"type":"string","minLength":1},"minItems":2,"maxItems":8,"uniqueItems":true,"description":"Known valid answers. Omit for free-form input."}
+				"questions":{
+					"type":"array",
+					"minItems":1,
+					"maxItems":3,
+					"items":{
+						"type":"object",
+						"properties":{
+							"id":{"type":"string","minLength":1,"description":"Stable identifier unique within this batch."},
+							"header":{"type":"string","minLength":1,"maxLength":12,"description":"Short label for navigation."},
+							"question":{"type":"string","minLength":1,"description":"One concise question for the user."},
+							"options":{
+								"type":"array",
+								"minItems":2,
+								"maxItems":3,
+								"items":{
+									"type":"object",
+									"properties":{
+										"label":{"type":"string","minLength":1},
+										"description":{"type":"string","minLength":1}
+									},
+									"required":["label","description"],
+									"additionalProperties":false
+								}
+							}
+						},
+						"required":["id","header","question","options"],
+						"additionalProperties":false
+					}
+				}
 			},
-			"required":["prompt"],
+			"required":["questions"],
 			"additionalProperties":false
 		}`),
 		MaximumAttempts: 1,
@@ -189,15 +222,11 @@ func userInputArgumentsFor(call ToolCall) (userInputArguments, error) {
 	if err != nil {
 		return userInputArguments{}, err
 	}
-	arguments.Prompt = strings.TrimSpace(arguments.Prompt)
-	if arguments.Prompt == "" {
-		return userInputArguments{}, errors.New("prompt must not be empty")
-	}
-	choices, err := validateUserInputChoices(arguments.Choices)
+	questions, err := validateUserInputQuestions(arguments.Questions)
 	if err != nil {
 		return userInputArguments{}, err
 	}
-	arguments.Choices = choices
+	arguments.Questions = questions
 	return arguments, nil
 }
 
@@ -218,24 +247,98 @@ func decodeStrictToolObject(call ToolCall, decode func(*json.Decoder) error) err
 	return nil
 }
 
-func validateUserInputChoices(values []string) ([]string, error) {
-	if len(values) == 1 || len(values) > 8 {
-		return nil, errors.New("choices must contain either zero or 2-8 values")
+func validateUserInputQuestions(values []UserInputQuestion) ([]UserInputQuestion, error) {
+	if len(values) == 0 || len(values) > maximumUserInputQuestions {
+		return nil, fmt.Errorf("questions must contain 1-%d values", maximumUserInputQuestions)
 	}
-	choices := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	questions := make([]UserInputQuestion, 0, len(values))
+	seenIDs := make(map[UserInputQuestionID]struct{}, len(values))
+	for index, value := range values {
+		value.ID = UserInputQuestionID(strings.TrimSpace(string(value.ID)))
+		value.Header = strings.TrimSpace(value.Header)
+		value.Question = strings.TrimSpace(value.Question)
+		if value.ID == "" || value.Header == "" || value.Question == "" {
+			return nil, fmt.Errorf("question %d requires id, header, and question", index+1)
+		}
+		if utf8.RuneCountInString(value.Header) > 12 {
+			return nil, fmt.Errorf("question %d header must contain at most 12 characters", index+1)
+		}
+		if _, found := seenIDs[value.ID]; found {
+			return nil, fmt.Errorf("question IDs must be unique: %q", value.ID)
+		}
+		seenIDs[value.ID] = struct{}{}
+		options, err := validateUserInputOptions(value.Options, index)
+		if err != nil {
+			return nil, err
+		}
+		value.Options = options
+		questions = append(questions, value)
+	}
+	return questions, nil
+}
+
+func validateUserInputOptions(values []UserInputOption, questionIndex int) ([]UserInputOption, error) {
+	if len(values) < 2 || len(values) > maximumUserInputOptions {
+		return nil, fmt.Errorf("question %d options must contain 2-%d values", questionIndex+1, maximumUserInputOptions)
+	}
+	options := make([]UserInputOption, 0, len(values))
+	seenLabels := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		choice := strings.TrimSpace(value)
-		if choice == "" {
-			return nil, errors.New("choices must not contain empty values")
+		value.Label = strings.TrimSpace(value.Label)
+		value.Description = strings.TrimSpace(value.Description)
+		if value.Label == "" || value.Description == "" {
+			return nil, fmt.Errorf("question %d options require label and description", questionIndex+1)
 		}
-		if _, found := seen[choice]; found {
-			return nil, errors.New("choices must be unique")
+		if _, found := seenLabels[value.Label]; found {
+			return nil, fmt.Errorf("question %d option labels must be unique", questionIndex+1)
 		}
-		seen[choice] = struct{}{}
-		choices = append(choices, choice)
+		seenLabels[value.Label] = struct{}{}
+		options = append(options, value)
 	}
-	return choices, nil
+	return options, nil
+}
+
+func answeredUserMessage(pending PendingUserInput, answers []UserInputAnswer) (UserMessage, error) {
+	if len(answers) != len(pending.Questions) {
+		return UserMessage{}, errors.New("answers must contain exactly one value for every question")
+	}
+	byQuestion := make(map[UserInputQuestionID]string, len(answers))
+	for _, answer := range answers {
+		answer.QuestionID = UserInputQuestionID(strings.TrimSpace(string(answer.QuestionID)))
+		answer.Answer = strings.TrimSpace(answer.Answer)
+		if answer.QuestionID == "" || answer.Answer == "" {
+			return UserMessage{}, errors.New("answers require question_id and answer")
+		}
+		if _, found := byQuestion[answer.QuestionID]; found {
+			return UserMessage{}, fmt.Errorf("question %q was answered more than once", answer.QuestionID)
+		}
+		byQuestion[answer.QuestionID] = answer.Answer
+	}
+	var content strings.Builder
+	for index, question := range pending.Questions {
+		answer, found := byQuestion[question.ID]
+		if !found {
+			return UserMessage{}, fmt.Errorf("question %q is missing an answer", question.ID)
+		}
+		delete(byQuestion, question.ID)
+		if index > 0 {
+			content.WriteString("\n\n")
+		}
+		fmt.Fprintf(&content, "**%s**: %s", question.Header, answer)
+	}
+	if len(byQuestion) > 0 {
+		return UserMessage{}, errors.New("answers contain an unknown question ID")
+	}
+	if content.Len() > maximumUserMessageLength {
+		return UserMessage{}, fmt.Errorf("combined answer exceeds %d characters", maximumUserMessageLength)
+	}
+	callID := pending.CallID
+	return UserMessage{Content: content.String(), AnsweredInputCallID: &callID}, nil
+}
+
+func acceptedAnsweredUserMessage(pending PendingUserInput, answers []UserInputAnswer) (UserMessage, bool) {
+	message, err := answeredUserMessage(pending, answers)
+	return message, err == nil
 }
 
 func encodeToolResult(payload toolResultPayload, outcome ToolOutcome, isError bool) (ToolExecutionResult, error) {

@@ -339,6 +339,13 @@ button.secondary {
   gap: 14px;
   margin-bottom: 16px;
 }
+.sync-status {
+  margin-bottom: 12px;
+  color: #4353c7;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+}
 .conversation-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
@@ -775,6 +782,63 @@ pre {
   padding: 10px;
   border-radius: 10px;
   background: #fff7df;
+}
+.question-heading,
+.question-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.question-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.question-tabs button {
+  padding: 6px 9px;
+}
+.question-tabs button.active,
+.question-option.selected {
+  color: #fff;
+  background: #3541a9;
+}
+.answered-mark {
+  margin-left: 5px;
+}
+.question-content {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+}
+.question-content legend {
+  font-weight: 800;
+}
+.question-content > p {
+  margin: 5px 0 0;
+}
+.question-option {
+  display: grid;
+  gap: 2px;
+  min-width: 140px;
+}
+.question-option small {
+  color: inherit;
+  font-weight: 500;
+}
+.other-answer {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.other-answer input {
+  width: 100%;
+}
+.question-navigation {
+  justify-content: flex-end;
 }
 .pending-input .choice-row {
   margin-top: 9px;
