@@ -68,6 +68,8 @@ var (
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) (agent.CommandReceipt, error)        = (*agent.Client).SteerMessage
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.DeleteQueuedMessageRequest) (agent.CommandReceipt, error) = (*agent.Client).DeleteQueuedMessage
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.RequestID) (agent.CancellationReceipt, error)             = (*agent.Client).Cancel
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.CancelRequest) (agent.CancellationReceipt, error)         = (*agent.Client).EnsureCanceled
+	_ func(*agent.Client, context.Context, agent.FlowID, string) (agent.AgentIdentity, error)                            = (*agent.Client).VerifyIdentity
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence, int) (agent.ForwardHistoryPage, error)          = (*agent.Client).MessagesAfter
 )
 
@@ -87,6 +89,16 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	invocation := agent.ToolInvocation{ApplicationContext: `{"sandbox_id":"sandbox-1"}`}
 	if invocation.ApplicationContext == "" {
 		t.Fatal("public ToolInvocation application context is empty")
+	}
+	revision := agent.MutationRevision(1)
+	request := agent.SendMessageRequest{ExpectedRevision: &revision}
+	if request.ExpectedRevision == nil || *request.ExpectedRevision != revision {
+		t.Fatal("public mutation revision precondition is unavailable")
+	}
+	if agent.MaximumPendingMessageCount != 200 ||
+		agent.MaximumPendingMessageContentBytes != 256<<10 ||
+		agent.MaximumUserMessageContentBytes != 256<<10 {
+		t.Fatal("public Agent admission limits are unavailable")
 	}
 }
 

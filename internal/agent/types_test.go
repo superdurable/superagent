@@ -153,7 +153,7 @@ func TestNewUserMessageValidationProtectsCallerIdentityAndBodyBounds(t *testing.
 		{name: "blank content", mutate: func(message *UserMessage) { message.Content = " \n" }},
 		{name: "NUL content", mutate: func(message *UserMessage) { message.Content = "hello\x00world" }},
 		{name: "oversized content", mutate: func(message *UserMessage) {
-			message.Content = strings.Repeat("x", maximumUserMessageBytes+1)
+			message.Content = strings.Repeat("x", MaximumUserMessageContentBytes+1)
 		}},
 	}
 	for _, test := range tests {
@@ -164,6 +164,69 @@ func TestNewUserMessageValidationProtectsCallerIdentityAndBodyBounds(t *testing.
 				t.Fatal("validation error = nil")
 			}
 		})
+	}
+}
+
+func TestUserMessageContentAllowsExactly256KiB(t *testing.T) {
+	t.Parallel()
+	message := UserMessage{
+		MessageID: "message-at-limit",
+		Content:   strings.Repeat("x", MaximumUserMessageContentBytes),
+	}
+	if err := validateNewUserMessage(message); err != nil {
+		t.Fatalf("message at content limit: %v", err)
+	}
+	message.Content += "x"
+	if err := validateNewUserMessage(message); err == nil {
+		t.Fatal("message beyond content limit was accepted")
+	}
+}
+
+func TestMutationPreconditionAndCancellationValidation(t *testing.T) {
+	t.Parallel()
+	negative := MutationRevision(-1)
+	if err := validateExpectedRevision(&negative); err == nil {
+		t.Fatal("negative expected revision was accepted")
+	}
+	zero := MutationRevision(0)
+	if err := validateExpectedRevision(&zero); err != nil {
+		t.Fatalf("zero expected revision: %v", err)
+	}
+	valid := CancelRequest{RequestID: "cancel-1", Reason: "requested by caller"}
+	if err := validateCancelRequest(valid); err != nil {
+		t.Fatalf("valid cancellation: %v", err)
+	}
+	for _, candidate := range []CancelRequest{
+		{Reason: valid.Reason},
+		{RequestID: valid.RequestID},
+		{RequestID: valid.RequestID, Reason: "reason\x00value"},
+		{RequestID: valid.RequestID, Reason: strings.Repeat("x", maximumCancelReasonBytes+1)},
+	} {
+		if err := validateCancelRequest(candidate); err == nil {
+			t.Fatalf("invalid cancellation was accepted: %#v", candidate)
+		}
+	}
+}
+
+func TestCancelFingerprintIncludesReason(t *testing.T) {
+	t.Parallel()
+	request := CancelRequest{RequestID: "cancel-1", Reason: "first reason"}
+	fingerprint, err := request.fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Reason = "second reason"
+	changed, err := request.fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == fingerprint {
+		t.Fatal("cancellation reason did not change the fingerprint")
+	}
+	flowID := FlowID("cancel-reservation-flow")
+	if cancellationReservationStartRequestID(flowID, changed) ==
+		cancellationReservationStartRequestID(flowID, fingerprint) {
+		t.Fatal("cancellation reason did not change the reservation start request ID")
 	}
 }
 

@@ -37,6 +37,12 @@ const (
 	DefaultForwardHistoryLimit = agentinternal.DefaultForwardHistoryLimit
 	// MaximumForwardHistoryLimit bounds one canonical forward-history read.
 	MaximumForwardHistoryLimit = agentinternal.MaximumForwardHistoryLimit
+	// MaximumUserMessageContentBytes bounds one user-message body.
+	MaximumUserMessageContentBytes = agentinternal.MaximumUserMessageContentBytes
+	// MaximumPendingMessageCount bounds queued and steered messages together.
+	MaximumPendingMessageCount = agentinternal.MaximumPendingMessageCount
+	// MaximumPendingMessageContentBytes bounds queued and steered content together.
+	MaximumPendingMessageContentBytes = agentinternal.MaximumPendingMessageContentBytes
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
 	DefaultSystemPrompt = agentinternal.DefaultSystemPrompt
 
@@ -152,13 +158,14 @@ type (
 	Flow   = agentinternal.Flow
 	Client = agentinternal.Client
 
-	FlowID      = agentinternal.FlowID
-	RunID       = agentinternal.RunID
-	RequestID   = agentinternal.RequestID
-	CallID      = agentinternal.CallID
-	MessageID   = agentinternal.MessageID
-	Sequence    = agentinternal.Sequence
-	ResumeToken = agentinternal.ResumeToken
+	FlowID           = agentinternal.FlowID
+	RunID            = agentinternal.RunID
+	RequestID        = agentinternal.RequestID
+	CallID           = agentinternal.CallID
+	MessageID        = agentinternal.MessageID
+	Sequence         = agentinternal.Sequence
+	MutationRevision = agentinternal.MutationRevision
+	ResumeToken      = agentinternal.ResumeToken
 
 	EventStream     = agentinternal.EventStream
 	StreamEventKind = agentinternal.StreamEventKind
@@ -181,6 +188,10 @@ type (
 
 	EnumValidationError             = agentinternal.EnumValidationError
 	CommandRejectedError            = agentinternal.CommandRejectedError
+	StaleMutationRevisionError      = agentinternal.StaleMutationRevisionError
+	PendingMessageCapacityError     = agentinternal.PendingMessageCapacityError
+	AgentIdentityMismatchError      = agentinternal.AgentIdentityMismatchError
+	AgentIdentityNotFoundError      = agentinternal.AgentIdentityNotFoundError
 	PendingMessageNotFoundError     = agentinternal.PendingMessageNotFoundError
 	MessageIdempotencyConflictError = agentinternal.MessageIdempotencyConflictError
 	CommandIdempotencyConflictError = agentinternal.CommandIdempotencyConflictError
@@ -194,6 +205,7 @@ type (
 	AgentConfig                     = agentinternal.AgentConfig
 	EnsureStartRequest              = agentinternal.EnsureStartRequest
 	StartReceipt                    = agentinternal.StartReceipt
+	CancelRequest                   = agentinternal.CancelRequest
 	CancellationReceipt             = agentinternal.CancellationReceipt
 	ToolCall                        = agentinternal.ToolCall
 	ProviderContextItem             = agentinternal.ProviderContextItem
@@ -204,6 +216,7 @@ type (
 	PendingUserMessage              = agentinternal.PendingUserMessage
 	AgentDescription                = agentinternal.AgentDescription
 	AgentSnapshot                   = agentinternal.AgentSnapshot
+	AgentIdentity                   = agentinternal.AgentIdentity
 	UserMessage                     = agentinternal.UserMessage
 	SendMessageRequest              = agentinternal.SendMessageRequest
 	MessageReceipt                  = agentinternal.MessageReceipt

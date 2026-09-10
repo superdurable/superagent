@@ -355,8 +355,24 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if first.IsReplay || first.RunID == "" || first.AcceptedAt.IsZero() || first.InitialMessage == nil ||
-		first.InitialMessage.IsReplay || first.InitialMessage.MessageID != messageID {
+		first.MutationRevision != 1 || first.InitialMessage.IsReplay ||
+		first.InitialMessage.MessageID != messageID || first.InitialMessage.MutationRevision != 2 {
 		t.Fatalf("first EnsureStarted receipt = %#v", first)
+	}
+	identity, err := environment.agent.VerifyIdentity(t.Context(), flowID, request.ApplicationContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.FlowID != flowID || identity.RunID != first.RunID || identity.IsTerminalReservation {
+		t.Fatalf("active Agent identity = %#v", identity)
+	}
+	wrongContext := `{"session_id":"wrong-session"}`
+	_, mismatchErr := environment.agent.VerifyIdentity(t.Context(), flowID, wrongContext)
+	var identityMismatch *AgentIdentityMismatchError
+	if !errors.As(mismatchErr, &identityMismatch) || identityMismatch.FlowID != flowID ||
+		strings.Contains(mismatchErr.Error(), request.ApplicationContext) ||
+		strings.Contains(mismatchErr.Error(), wrongContext) {
+		t.Fatalf("Agent identity mismatch = %T %v", mismatchErr, mismatchErr)
 	}
 	waitForPendingTimer(t, environment, flowID)
 
@@ -445,13 +461,29 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 	if canceled.IsReplay || canceled.FlowStatus != FlowStatusCanceled || canceled.AcceptedAt.IsZero() {
 		t.Fatalf("first cancellation receipt = %#v", canceled)
 	}
+	if canceled.MutationRevision != steerReceipt.MutationRevision+1 {
+		t.Fatalf("cancellation revision = %d, want %d", canceled.MutationRevision, steerReceipt.MutationRevision+1)
+	}
 	replayedCancellation, err := environment.agent.Cancel(t.Context(), flowID, cancelRequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !replayedCancellation.IsReplay || replayedCancellation.FlowStatus != FlowStatusCanceled ||
-		replayedCancellation.AcceptedAt != canceled.AcceptedAt {
+		replayedCancellation.AcceptedAt != canceled.AcceptedAt ||
+		replayedCancellation.MutationRevision != canceled.MutationRevision {
 		t.Fatalf("replayed cancellation = %#v; first = %#v", replayedCancellation, canceled)
+	}
+	terminalIdentity, err := environment.agent.VerifyIdentity(t.Context(), flowID, request.ApplicationContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminalIdentity != identity {
+		t.Fatalf("terminal Agent identity = %#v, active = %#v", terminalIdentity, identity)
+	}
+	terminalSnapshot := readSnapshot(t, environment, flowID)
+	if terminalSnapshot.FlowStatus != FlowStatusCanceled ||
+		terminalSnapshot.MutationRevision != canceled.MutationRevision {
+		t.Fatalf("terminal Agent Snapshot = %#v", terminalSnapshot)
 	}
 	terminalStartReplay, err := environment.agent.EnsureStarted(t.Context(), flowID, request)
 	if err != nil {
@@ -739,6 +771,374 @@ func TestAgentMessageIdempotencyIntegration(t *testing.T) {
 	}
 }
 
+func TestAgentMutationRevisionAndPendingAdmissionIntegration(t *testing.T) {
+	modelClient := newBlockingIntegrationModel()
+	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
+	t.Cleanup(modelClient.release)
+	flowID := FlowID("agent-mutation-revision-" + randomLocalID(t))
+	startRequest := EnsureStartRequest{
+		RequestID: integrationRequestID("revision-start"),
+		Config:    NewAgentConfig(),
+	}
+	started, err := environment.agent.EnsureStarted(t.Context(), flowID, startRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.MutationRevision != 1 {
+		t.Fatalf("start mutation revision = %d, want 1", started.MutationRevision)
+	}
+	initialSnapshot := readSnapshot(t, environment, flowID)
+	if initialSnapshot.MutationRevision != started.MutationRevision {
+		t.Fatalf("initial Snapshot revision = %d, want %d", initialSnapshot.MutationRevision, started.MutationRevision)
+	}
+
+	blockRequest := integrationUserMessage("/block", false)
+	blockRequest.ExpectedRevision = mutationRevisionPointer(initialSnapshot.MutationRevision)
+	blocked, err := environment.agent.SendMessage(t.Context(), flowID, blockRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.MutationRevision != 2 {
+		t.Fatalf("blocking message revision = %d, want 2", blocked.MutationRevision)
+	}
+	modelClient.waitUntilBlocked(t)
+
+	staleRequest := integrationUserMessage("stale mutation", false)
+	staleRequest.ExpectedRevision = mutationRevisionPointer(initialSnapshot.MutationRevision)
+	_, staleErr := environment.agent.SendMessage(t.Context(), flowID, staleRequest)
+	var staleRevision *StaleMutationRevisionError
+	if !errors.As(staleErr, &staleRevision) || staleRevision.Command != CommandSendMessage ||
+		staleRevision.Expected != 1 || staleRevision.Actual != 2 {
+		t.Fatalf("stale mutation error = %T %v", staleErr, staleErr)
+	}
+
+	replayed, err := environment.agent.SendMessage(t.Context(), flowID, blockRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.IsReplay || replayed.MutationRevision != blocked.MutationRevision {
+		t.Fatalf("replayed message = %#v, first = %#v", replayed, blocked)
+	}
+
+	queuedRequest := integrationUserMessage("move to steering", false)
+	queuedRequest.ExpectedRevision = mutationRevisionPointer(blocked.MutationRevision)
+	queuedReceipt, err := environment.agent.SendMessage(t.Context(), flowID, queuedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steerRequest := SteerMessageRequest{
+		RequestID:        integrationRequestID("revision-steer"),
+		MessageID:        queuedRequest.Message.MessageID,
+		ExpectedRevision: mutationRevisionPointer(queuedReceipt.MutationRevision),
+	}
+	steeredReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steeredReceipt.MutationRevision != queuedReceipt.MutationRevision+1 {
+		t.Fatalf("steer revision = %d, want %d", steeredReceipt.MutationRevision, queuedReceipt.MutationRevision+1)
+	}
+
+	directMessages := make([]any, MaximumPendingMessageCount-2)
+	for index := range directMessages {
+		directMessages[index] = UserMessage{
+			MessageID:  MessageID(fmt.Sprintf("capacity-fixture-%03d", index)),
+			Content:    "capacity fixture",
+			AcceptedAt: time.Now().UTC(),
+		}
+	}
+	if err := environment.sdk.PublishToChannel(
+		t.Context(),
+		string(flowID),
+		queuedUserMessagesChannel,
+		directMessages...,
+	); err != nil {
+		t.Fatal(err)
+	}
+	waitForPendingMessageTotal(t, environment, flowID, MaximumPendingMessageCount-1)
+
+	raceRequests := []SendMessageRequest{
+		integrationUserMessage("capacity race one", false),
+		integrationUserMessage("capacity race two", false),
+	}
+	races := invokeConcurrentMessages(t, environment, flowID, raceRequests)
+	acceptedCount := 0
+	var retryRequest *SendMessageRequest
+	for index := range races {
+		if races[index].err == nil {
+			acceptedCount++
+			continue
+		}
+		var capacity *PendingMessageCapacityError
+		var lockConflict *dex.RPCLockConflictError
+		if !errors.As(races[index].err, &capacity) && !errors.As(races[index].err, &lockConflict) {
+			t.Fatalf("capacity race error = %T %v", races[index].err, races[index].err)
+		}
+		retryRequest = &raceRequests[index]
+	}
+	if acceptedCount != 1 {
+		t.Fatalf("capacity race accepted %d messages, want 1", acceptedCount)
+	}
+	waitForPendingMessageTotal(t, environment, flowID, MaximumPendingMessageCount)
+	if retryRequest == nil {
+		extra := integrationUserMessage("capacity rejection", false)
+		retryRequest = &extra
+	}
+	_, capacityErr := environment.agent.SendMessage(t.Context(), flowID, *retryRequest)
+	var capacity *PendingMessageCapacityError
+	if !errors.As(capacityErr, &capacity) || capacity.Pending != MaximumPendingMessageCount ||
+		capacity.Limit != MaximumPendingMessageCount {
+		t.Fatalf("capacity error = %T %v", capacityErr, capacityErr)
+	}
+	fullSnapshot := readSnapshot(t, environment, flowID)
+	if len(fullSnapshot.Queued)+len(fullSnapshot.Steered) != MaximumPendingMessageCount ||
+		fullSnapshot.MutationRevision != steeredReceipt.MutationRevision+1 {
+		t.Fatalf("full pending Snapshot = revision %d, queued %d, steered %d", fullSnapshot.MutationRevision, len(fullSnapshot.Queued), len(fullSnapshot.Steered))
+	}
+
+	_, staleReplayErr := environment.agent.SendMessage(t.Context(), flowID, staleRequest)
+	var staleReplay *StaleMutationRevisionError
+	if !errors.As(staleReplayErr, &staleReplay) || staleReplay.Actual != staleRevision.Actual {
+		t.Fatalf("stale command replay = %T %v", staleReplayErr, staleReplayErr)
+	}
+	modelClient.release()
+}
+
+func TestAgentPendingMessageContentAdmissionIntegration(t *testing.T) {
+	modelClient := newBlockingIntegrationModel()
+	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
+	t.Cleanup(modelClient.release)
+	flowID := FlowID("agent-pending-content-" + randomLocalID(t))
+	if _, err := environment.agent.EnsureStarted(t.Context(), flowID, EnsureStartRequest{
+		RequestID: integrationRequestID("content-start"),
+		Config:    NewAgentConfig(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.agent.SendMessage(
+		t.Context(),
+		flowID,
+		integrationUserMessage("/block", false),
+	); err != nil {
+		t.Fatal(err)
+	}
+	modelClient.waitUntilBlocked(t)
+
+	largeRequest := integrationUserMessage(
+		strings.Repeat("x", MaximumPendingMessageContentBytes-1),
+		false,
+	)
+	largeReceipt, err := environment.agent.SendMessage(t.Context(), flowID, largeRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steeredReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+		RequestID:        integrationRequestID("content-steer"),
+		MessageID:        largeRequest.Message.MessageID,
+		ExpectedRevision: mutationRevisionPointer(largeReceipt.MutationRevision),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raceRequests := []SendMessageRequest{
+		integrationUserMessage("a", false),
+		integrationUserMessage("b", false),
+	}
+	races := invokeConcurrentMessages(t, environment, flowID, raceRequests)
+	acceptedCount := 0
+	var retryRequest *SendMessageRequest
+	for index := range races {
+		if races[index].err == nil {
+			acceptedCount++
+			continue
+		}
+		var capacity *PendingMessageCapacityError
+		var lockConflict *dex.RPCLockConflictError
+		if !errors.As(races[index].err, &capacity) && !errors.As(races[index].err, &lockConflict) {
+			t.Fatalf("content capacity race error = %T %v", races[index].err, races[index].err)
+		}
+		retryRequest = &raceRequests[index]
+	}
+	if acceptedCount != 1 || retryRequest == nil {
+		t.Fatalf("content capacity race accepted %d messages; results = %#v", acceptedCount, races)
+	}
+	_, capacityErr := environment.agent.SendMessage(t.Context(), flowID, *retryRequest)
+	var capacity *PendingMessageCapacityError
+	if !errors.As(capacityErr, &capacity) || capacity.Pending != 2 ||
+		capacity.Limit != MaximumPendingMessageCount ||
+		capacity.PendingContentBytes != MaximumPendingMessageContentBytes ||
+		capacity.RequestedContentBytes != 1 ||
+		capacity.ContentByteLimit != MaximumPendingMessageContentBytes {
+		t.Fatalf("content capacity error = %T %#v", capacityErr, capacity)
+	}
+	snapshot := readSnapshot(t, environment, flowID)
+	if len(snapshot.Queued) != 1 || len(snapshot.Steered) != 1 ||
+		pendingSnapshotContentBytes(snapshot) != MaximumPendingMessageContentBytes ||
+		snapshot.MutationRevision != steeredReceipt.MutationRevision+1 {
+		t.Fatalf(
+			"bounded content Snapshot: queued %d, steered %d, bytes %d, revision %d",
+			len(snapshot.Queued),
+			len(snapshot.Steered),
+			pendingSnapshotContentBytes(snapshot),
+			snapshot.MutationRevision,
+		)
+	}
+}
+
+func pendingSnapshotContentBytes(snapshot AgentSnapshot) int {
+	contentBytes := 0
+	for _, message := range snapshot.Queued {
+		contentBytes += len(message.Value.Content)
+	}
+	for _, message := range snapshot.Steered {
+		contentBytes += len(message.Value.Content)
+	}
+	return contentBytes
+}
+
+func TestAgentCancelBeforeStartReservesIdentityIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-cancel-before-start-" + randomLocalID(t))
+	missingFlowID := FlowID("agent-identity-absent-" + randomLocalID(t))
+	_, missingErr := environment.agent.VerifyIdentity(t.Context(), missingFlowID, "")
+	var identityNotFound *AgentIdentityNotFoundError
+	if !errors.As(missingErr, &identityNotFound) || identityNotFound.FlowID != missingFlowID {
+		t.Fatalf("absent Agent identity = %T %v", missingErr, missingErr)
+	}
+	request := CancelRequest{
+		RequestID: integrationRequestID("cancel-before-start"),
+		Reason:    "session was deleted before the Agent started",
+	}
+	first, err := environment.agent.EnsureCanceled(t.Context(), flowID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.IsReplay || first.FlowStatus != FlowStatusCanceled || first.MutationRevision != 1 {
+		t.Fatalf("first cancellation reservation = %#v", first)
+	}
+	reservedIdentity, err := environment.agent.VerifyIdentity(t.Context(), flowID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reservedIdentity.FlowID != flowID || reservedIdentity.RunID == "" || !reservedIdentity.IsTerminalReservation {
+		t.Fatalf("reserved Agent identity = %#v", reservedIdentity)
+	}
+	_, reservedMismatchErr := environment.agent.VerifyIdentity(t.Context(), flowID, `{"session_id":"not-reserved"}`)
+	var reservedMismatch *AgentIdentityMismatchError
+	if !errors.As(reservedMismatchErr, &reservedMismatch) {
+		t.Fatalf("reserved Agent identity mismatch = %T %v", reservedMismatchErr, reservedMismatchErr)
+	}
+	replayed, err := environment.agent.EnsureCanceled(t.Context(), flowID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.IsReplay || replayed.AcceptedAt != first.AcceptedAt ||
+		replayed.MutationRevision != first.MutationRevision {
+		t.Fatalf("replayed cancellation reservation = %#v, first = %#v", replayed, first)
+	}
+
+	conflicting := request
+	conflicting.Reason = "different reason"
+	_, conflictErr := environment.agent.EnsureCanceled(t.Context(), flowID, conflicting)
+	var conflict *CommandIdempotencyConflictError
+	if !errors.As(conflictErr, &conflict) || conflict.Command != CommandCancel {
+		t.Fatalf("cancellation reservation conflict = %T %v", conflictErr, conflictErr)
+	}
+	_, startErr := environment.agent.EnsureStarted(t.Context(), flowID, EnsureStartRequest{
+		RequestID: integrationRequestID("start-after-cancel"),
+		Config:    NewAgentConfig(),
+	})
+	var terminal *AgentAlreadyTerminalError
+	if !errors.As(startErr, &terminal) || terminal.Status != FlowStatusCanceled {
+		t.Fatalf("start after cancellation reservation = %T %v", startErr, startErr)
+	}
+	snapshot := readSnapshot(t, environment, flowID)
+	if snapshot.FlowStatus != FlowStatusCanceled || snapshot.MutationRevision != first.MutationRevision {
+		t.Fatalf("reserved terminal Snapshot = %#v", snapshot)
+	}
+	history, err := environment.agent.MessagesAfter(t.Context(), flowID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Messages) != 0 || history.NextAfterSequence != nil ||
+		history.FirstRetainedSequence != 0 || history.LastSequence != 0 || history.IsTruncated {
+		t.Fatalf("reserved terminal history = %#v", history)
+	}
+
+	raceFlowID := FlowID("agent-start-cancel-race-" + randomLocalID(t))
+	raceStart := EnsureStartRequest{
+		RequestID: integrationRequestID("racing-start"),
+		Config:    NewAgentConfig(),
+	}
+	raceCancel := CancelRequest{
+		RequestID: integrationRequestID("racing-cancel"),
+		Reason:    "concurrent lifecycle cleanup",
+	}
+	gate := make(chan struct{})
+	startResult := make(chan error, 1)
+	cancelResult := make(chan error, 1)
+	go func() {
+		<-gate
+		_, startErr := environment.agent.EnsureStarted(t.Context(), raceFlowID, raceStart)
+		startResult <- startErr
+	}()
+	go func() {
+		<-gate
+		_, cancelErr := environment.agent.EnsureCanceled(t.Context(), raceFlowID, raceCancel)
+		cancelResult <- cancelErr
+	}()
+	close(gate)
+	if err := <-cancelResult; err != nil {
+		t.Fatalf("racing cancellation: %v", err)
+	}
+	_ = <-startResult
+	raceSnapshot := readSnapshot(t, environment, raceFlowID)
+	if raceSnapshot.FlowStatus != FlowStatusCanceled {
+		t.Fatalf("racing lifecycle Snapshot = %#v", raceSnapshot)
+	}
+}
+
+type concurrentMessageResult struct {
+	index   int
+	receipt MessageReceipt
+	err     error
+}
+
+func invokeConcurrentMessages(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	requests []SendMessageRequest,
+) []concurrentMessageResult {
+	t.Helper()
+	gate := make(chan struct{})
+	results := make(chan concurrentMessageResult, len(requests))
+	var waitGroup sync.WaitGroup
+	for index, request := range requests {
+		request := request
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-gate
+			receipt, err := environment.agent.SendMessage(t.Context(), flowID, request)
+			results <- concurrentMessageResult{index: index, receipt: receipt, err: err}
+		}()
+	}
+	close(gate)
+	waitGroup.Wait()
+	close(results)
+	collected := make([]concurrentMessageResult, len(requests))
+	for result := range results {
+		collected[result.index] = result
+	}
+	return collected
+}
+
+func mutationRevisionPointer(revision MutationRevision) *MutationRevision {
+	return &revision
+}
+
 func TestAgentConcurrentDomainCommandFencingIntegration(t *testing.T) {
 	toolRegistry := newIntegrationToolRegistry()
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, toolRegistry)
@@ -795,11 +1195,13 @@ func TestAgentConcurrentDomainCommandFencingIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminalApproval, err := environment.agent.ApproveTool(t.Context(), flowID, approvalRequests[0])
-	if err != nil || !terminalApproval.IsReplay || terminalApproval.AcceptedAt != approvalReceipts[0].AcceptedAt {
+	if err != nil || !terminalApproval.IsReplay || terminalApproval.AcceptedAt != approvalReceipts[0].AcceptedAt ||
+		terminalApproval.MutationRevision != approvalReceipts[0].MutationRevision {
 		t.Fatalf("terminal approval replay = %#v, %v", terminalApproval, err)
 	}
 	terminalPlan, err := environment.agent.ExecutePlan(t.Context(), flowID, planRequests[0])
-	if err != nil || !terminalPlan.IsReplay || terminalPlan.AcceptedAt != planReceipts[0].AcceptedAt {
+	if err != nil || !terminalPlan.IsReplay || terminalPlan.AcceptedAt != planReceipts[0].AcceptedAt ||
+		terminalPlan.MutationRevision != planReceipts[0].MutationRevision {
 		t.Fatalf("terminal plan replay = %#v, %v", terminalPlan, err)
 	}
 }
@@ -894,7 +1296,8 @@ func invokeConcurrentPlanExecutions(
 
 func assertOneDomainAcceptance(t *testing.T, receipts []CommandReceipt) {
 	t.Helper()
-	if len(receipts) != 2 || receipts[0].AcceptedAt.IsZero() || receipts[0].AcceptedAt != receipts[1].AcceptedAt {
+	if len(receipts) != 2 || receipts[0].AcceptedAt.IsZero() || receipts[0].AcceptedAt != receipts[1].AcceptedAt ||
+		receipts[0].MutationRevision <= 0 || receipts[0].MutationRevision != receipts[1].MutationRevision {
 		t.Fatalf("fenced command receipts = %#v", receipts)
 	}
 	replayCount := 0
@@ -1850,6 +2253,36 @@ func waitForQueuedMessages(
 	return messages
 }
 
+func waitForPendingMessageTotal(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	count int,
+) {
+	t.Helper()
+	waitUntil(t, environment, "pending message total", func() (bool, error) {
+		var queued []dex.ChannelMessage[UserMessage]
+		if err := environment.sdk.GetChannelMessages(
+			t.Context(),
+			string(flowID),
+			queuedUserMessagesChannel,
+			&queued,
+		); err != nil {
+			return false, err
+		}
+		var steered []dex.ChannelMessage[UserMessage]
+		if err := environment.sdk.GetChannelMessages(
+			t.Context(),
+			string(flowID),
+			steeredUserMessagesChannel,
+			&steered,
+		); err != nil {
+			return false, err
+		}
+		return len(queued)+len(steered) == count, nil
+	})
+}
+
 func waitUntil(
 	t *testing.T,
 	environment *agentIntegrationEnvironment,
@@ -2155,6 +2588,62 @@ func (integrationModel) CountTokens(_ Model, messages []AgentMessage) int {
 		total += max(1, len(message.Content)/4)
 	}
 	return total
+}
+
+type blockingIntegrationModel struct {
+	started       chan struct{}
+	releaseSignal chan struct{}
+	startOnce     sync.Once
+	releaseOnce   sync.Once
+}
+
+var _ ModelClient = (*blockingIntegrationModel)(nil)
+
+func newBlockingIntegrationModel() *blockingIntegrationModel {
+	return &blockingIntegrationModel{
+		started:       make(chan struct{}),
+		releaseSignal: make(chan struct{}),
+	}
+}
+
+func (model *blockingIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	if integrationLastUserContent(request.Messages) != "/block" {
+		return (integrationModel{}).Complete(ctx, request)
+	}
+	model.startOnce.Do(func() { close(model.started) })
+	select {
+	case <-model.releaseSignal:
+	case <-ctx.Done():
+		return ModelReply{}, ctx.Err()
+	}
+	content := "integration block released"
+	if err := request.WriteAssistant(content); err != nil {
+		return ModelReply{}, err
+	}
+	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
+}
+
+func (*blockingIntegrationModel) Summarize(ctx context.Context, request SummarizeRequest) (string, error) {
+	return (integrationModel{}).Summarize(ctx, request)
+}
+
+func (*blockingIntegrationModel) CountTokens(model Model, messages []AgentMessage) int {
+	return (integrationModel{}).CountTokens(model, messages)
+}
+
+func (model *blockingIntegrationModel) waitUntilBlocked(t *testing.T) {
+	t.Helper()
+	select {
+	case <-model.started:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("blocking model did not start")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+}
+
+func (model *blockingIntegrationModel) release() {
+	model.releaseOnce.Do(func() { close(model.releaseSignal) })
 }
 
 func integrationToolReply(request ModelRequest, name ToolName, arguments JSONObject, content string) (ModelReply, error) {

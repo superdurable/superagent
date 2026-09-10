@@ -51,11 +51,17 @@ store. Embedders can use it without importing SuperAgent internals.
 Cloud control planes can call `Client.EnsureStarted` with a stable request ID,
 configuration, opaque application context, and optional initial message. Every
 message and mutation has caller-stable identity and durable exact-replay
-receipts. `Client.MessagesAfter` provides bounded forward canonical-history
-pagination, and `Client.Cancel` records a durable cancellation request before
-using the released Dex lifecycle API. Trusted tools receive the opaque
-application context to recover workspace or sandbox routing after Worker
-replacement; providers and browser snapshots never receive it.
+receipts. Receipts and Snapshots expose one monotonic `MutationRevision`.
+Send and Steer may use it as an optimistic precondition. Pending queued and
+steered input is capped at 200 messages and 256 KiB of aggregate content, with
+the same 256 KiB upper bound on one message.
+`Client.MessagesAfter` provides bounded forward canonical-history pagination.
+`Client.EnsureCanceled` also reserves an absent Flow ID so a delayed start
+cannot resurrect a canceled Agent. `Client.VerifyIdentity` compares the
+immutable application context supplied by a trusted caller without returning
+the persisted value. Trusted tools receive that context to recover integration
+routing after Worker replacement; providers and browser snapshots never
+receive it.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph

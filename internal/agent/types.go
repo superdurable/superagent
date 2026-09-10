@@ -32,11 +32,17 @@ import (
 )
 
 const (
-	archiveMessageChunkSize = 10
-	currentMessageLimit     = 2 * archiveMessageChunkSize
-	maximumMessageIDBytes   = 256
-	maximumUserMessageBytes = 128 << 10
-	maximumAppContextBytes  = 16 << 10
+	archiveMessageChunkSize  = 10
+	currentMessageLimit      = 2 * archiveMessageChunkSize
+	maximumMessageIDBytes    = 256
+	maximumAppContextBytes   = 16 << 10
+	maximumCancelReasonBytes = 4 << 10
+	// MaximumUserMessageContentBytes bounds one user-message body.
+	MaximumUserMessageContentBytes = 256 << 10
+	// MaximumPendingMessageCount bounds queued and steered messages together.
+	MaximumPendingMessageCount = 200
+	// MaximumPendingMessageContentBytes bounds queued and steered content together.
+	MaximumPendingMessageContentBytes = 256 << 10
 	// DefaultForwardHistoryLimit is used when MessagesAfter receives a zero limit.
 	DefaultForwardHistoryLimit = 100
 	// MaximumForwardHistoryLimit bounds one canonical forward-history read.
@@ -71,6 +77,9 @@ type MessageID string
 
 // Sequence orders durable application-history messages.
 type Sequence int64
+
+// MutationRevision orders accepted external mutations for one Agent.
+type MutationRevision int64
 
 // ResumeToken resumes a best-effort event subscription.
 type ResumeToken string
@@ -629,12 +638,13 @@ func (request EnsureStartRequest) identityFingerprint() (string, error) {
 
 // StartReceipt identifies the established durable Agent and optional first message acceptance.
 type StartReceipt struct {
-	RequestID      RequestID       `json:"request_id"`
-	FlowID         FlowID          `json:"flow_id"`
-	RunID          RunID           `json:"run_id"`
-	AcceptedAt     time.Time       `json:"accepted_at"`
-	IsReplay       bool            `json:"is_replay"`
-	InitialMessage *MessageReceipt `json:"initial_message,omitempty"`
+	RequestID        RequestID        `json:"request_id"`
+	FlowID           FlowID           `json:"flow_id"`
+	RunID            RunID            `json:"run_id"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
+	IsReplay         bool             `json:"is_replay"`
+	InitialMessage   *MessageReceipt  `json:"initial_message,omitempty"`
 }
 
 // NewAgentConfig returns deterministic local defaults.
@@ -803,14 +813,22 @@ type AgentDescription struct {
 
 // AgentSnapshot is one atomic durable application view.
 type AgentSnapshot struct {
-	RunID        RunID                `json:"run_id"`
-	FlowStatus   FlowStatus           `json:"flow_status"`
-	ErrorType    *FlowErrorType       `json:"error_type,omitempty"`
-	ErrorMessage *string              `json:"error_message,omitempty"`
-	History      HistoryPage          `json:"history"`
-	Description  *AgentDescription    `json:"description,omitempty"`
-	Queued       []PendingUserMessage `json:"queued"`
-	Steered      []PendingUserMessage `json:"steered"`
+	RunID            RunID                `json:"run_id"`
+	FlowStatus       FlowStatus           `json:"flow_status"`
+	MutationRevision MutationRevision     `json:"mutation_revision"`
+	ErrorType        *FlowErrorType       `json:"error_type,omitempty"`
+	ErrorMessage     *string              `json:"error_message,omitempty"`
+	History          HistoryPage          `json:"history"`
+	Description      *AgentDescription    `json:"description,omitempty"`
+	Queued           []PendingUserMessage `json:"queued"`
+	Steered          []PendingUserMessage `json:"steered"`
+}
+
+// AgentIdentity identifies a verified trusted-application binding without exposing its context.
+type AgentIdentity struct {
+	FlowID                FlowID `json:"flow_id"`
+	RunID                 RunID  `json:"run_id"`
+	IsTerminalReservation bool   `json:"is_terminal_reservation"`
 }
 
 // NewAgentState returns the initial durable state.
@@ -843,8 +861,9 @@ type UserMessage struct {
 
 // SendMessageRequest idempotently submits one caller-identified user message.
 type SendMessageRequest struct {
-	RequestID RequestID   `json:"request_id"`
-	Message   UserMessage `json:"message"`
+	RequestID        RequestID         `json:"request_id"`
+	Message          UserMessage       `json:"message"`
+	ExpectedRevision *MutationRevision `json:"expected_revision,omitempty"`
 }
 
 func (request SendMessageRequest) fingerprint() (string, error) {
@@ -857,36 +876,55 @@ func (request SendMessageRequest) fingerprint() (string, error) {
 
 // MessageReceipt proves the first durable acceptance of one caller message identity.
 type MessageReceipt struct {
-	RequestID  RequestID `json:"request_id"`
-	MessageID  MessageID `json:"message_id"`
-	AcceptedAt time.Time `json:"accepted_at"`
-	IsReplay   bool      `json:"is_replay"`
+	RequestID        RequestID        `json:"request_id"`
+	MessageID        MessageID        `json:"message_id"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
+	IsReplay         bool             `json:"is_replay"`
 }
 
 // CommandReceipt proves the first durable acceptance of one mutation request.
 type CommandReceipt struct {
-	RequestID  RequestID `json:"request_id"`
-	AcceptedAt time.Time `json:"accepted_at"`
-	IsReplay   bool      `json:"is_replay"`
+	RequestID        RequestID        `json:"request_id"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
+	IsReplay         bool             `json:"is_replay"`
+}
+
+// CancelRequest idempotently requests terminal cancellation of one Agent identity.
+type CancelRequest struct {
+	RequestID RequestID `json:"request_id"`
+	Reason    string    `json:"reason"`
+}
+
+func (request CancelRequest) fingerprint() (string, error) {
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("encode Cancel request fingerprint: %w", err)
+	}
+	return encodedFingerprint(encoded), nil
 }
 
 // CancellationReceipt proves one durable cancellation request and terminal outcome.
 type CancellationReceipt struct {
-	RequestID  RequestID  `json:"request_id"`
-	AcceptedAt time.Time  `json:"accepted_at"`
-	FlowStatus FlowStatus `json:"flow_status"`
-	IsReplay   bool       `json:"is_replay"`
+	RequestID        RequestID        `json:"request_id"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
+	FlowStatus       FlowStatus       `json:"flow_status"`
+	IsReplay         bool             `json:"is_replay"`
 }
 
 type acceptedUserMessage struct {
-	MessageID   MessageID `json:"message_id"`
-	Fingerprint string    `json:"fingerprint"`
-	AcceptedAt  time.Time `json:"accepted_at"`
+	MessageID        MessageID        `json:"message_id"`
+	Fingerprint      string           `json:"fingerprint"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
 }
 
 type agentStartIdentity struct {
-	Version     int    `json:"version"`
-	Fingerprint string `json:"fingerprint"`
+	Version          int              `json:"version"`
+	Fingerprint      string           `json:"fingerprint"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
 }
 
 type agentBootstrap struct {
@@ -897,33 +935,50 @@ type agentBootstrap struct {
 }
 
 type acceptedToolApproval struct {
-	CallID     CallID    `json:"call_id"`
-	Approved   bool      `json:"approved"`
-	AcceptedAt time.Time `json:"accepted_at"`
+	CallID           CallID           `json:"call_id"`
+	Approved         bool             `json:"approved"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
 }
 
 type acceptedPlanExecution struct {
-	Revision   PlanRevision `json:"revision"`
-	AcceptedAt time.Time    `json:"accepted_at"`
+	Revision         PlanRevision     `json:"revision"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
+}
+
+type terminalReservation struct {
+	RequestID        RequestID        `json:"request_id"`
+	Fingerprint      string           `json:"fingerprint"`
+	Reason           string           `json:"reason"`
+	AcceptedAt       time.Time        `json:"accepted_at"`
+	MutationRevision MutationRevision `json:"mutation_revision"`
 }
 
 type durableCommandOutcome string
 
 const (
-	durableCommandAccepted        durableCommandOutcome = "accepted"
-	durableCommandRejected        durableCommandOutcome = "rejected"
-	durableCommandNotFound        durableCommandOutcome = "not_found"
-	durableCommandMessageConflict durableCommandOutcome = "message_idempotency_conflict"
+	durableCommandAccepted         durableCommandOutcome = "accepted"
+	durableCommandRejected         durableCommandOutcome = "rejected"
+	durableCommandNotFound         durableCommandOutcome = "not_found"
+	durableCommandMessageConflict  durableCommandOutcome = "message_idempotency_conflict"
+	durableCommandStaleRevision    durableCommandOutcome = "stale_revision"
+	durableCommandCapacityExceeded durableCommandOutcome = "pending_message_capacity_exceeded"
 )
 
 type durableCommandRecord struct {
-	RequestID      RequestID             `json:"request_id"`
-	Command        Command               `json:"command"`
-	Fingerprint    string                `json:"fingerprint"`
-	RecordedAt     time.Time             `json:"recorded_at"`
-	Outcome        durableCommandOutcome `json:"outcome"`
-	IsEffectReplay bool                  `json:"is_effect_replay"`
-	IsBootstrap    bool                  `json:"is_bootstrap,omitempty"`
+	RequestID                    RequestID             `json:"request_id"`
+	Command                      Command               `json:"command"`
+	Fingerprint                  string                `json:"fingerprint"`
+	RecordedAt                   time.Time             `json:"recorded_at"`
+	MutationRevision             MutationRevision      `json:"mutation_revision"`
+	ExpectedRevision             *MutationRevision     `json:"expected_revision,omitempty"`
+	PendingMessageCount          int                   `json:"pending_message_count,omitempty"`
+	PendingMessageContentBytes   int                   `json:"pending_message_content_bytes,omitempty"`
+	RequestedMessageContentBytes int                   `json:"requested_message_content_bytes,omitempty"`
+	Outcome                      durableCommandOutcome `json:"outcome"`
+	IsEffectReplay               bool                  `json:"is_effect_replay"`
+	IsBootstrap                  bool                  `json:"is_bootstrap,omitempty"`
 }
 
 type durableCommandDisposition string
@@ -951,8 +1006,9 @@ type confirmStartRequest struct {
 
 // SteerMessageRequest atomically moves one queued message into steering.
 type SteerMessageRequest struct {
-	RequestID RequestID `json:"request_id"`
-	MessageID MessageID `json:"message_id"`
+	RequestID        RequestID         `json:"request_id"`
+	MessageID        MessageID         `json:"message_id"`
+	ExpectedRevision *MutationRevision `json:"expected_revision,omitempty"`
 }
 
 func (request SteerMessageRequest) fingerprint() (string, error) {
@@ -1118,6 +1174,73 @@ type CommandRejectedError struct {
 
 var _ error = (*CommandRejectedError)(nil)
 
+// StaleMutationRevisionError reports a failed optimistic mutation precondition.
+type StaleMutationRevisionError struct {
+	Command  Command
+	Expected MutationRevision
+	Actual   MutationRevision
+}
+
+var _ error = (*StaleMutationRevisionError)(nil)
+
+// Error describes the failed revision precondition.
+func (err *StaleMutationRevisionError) Error() string {
+	return fmt.Sprintf(
+		"agent command %q expected mutation revision %d, but current revision is %d",
+		err.Command,
+		err.Expected,
+		err.Actual,
+	)
+}
+
+// PendingMessageCapacityError reports rejection at the combined queue limit.
+type PendingMessageCapacityError struct {
+	Pending               int
+	Limit                 int
+	PendingContentBytes   int
+	RequestedContentBytes int
+	ContentByteLimit      int
+}
+
+var _ error = (*PendingMessageCapacityError)(nil)
+
+// Error describes the bounded pending-message admission failure.
+func (err *PendingMessageCapacityError) Error() string {
+	if err.PendingContentBytes+err.RequestedContentBytes > err.ContentByteLimit {
+		return fmt.Sprintf(
+			"agent has %d pending content bytes and the message adds %d bytes; the limit is %d",
+			err.PendingContentBytes,
+			err.RequestedContentBytes,
+			err.ContentByteLimit,
+		)
+	}
+	return fmt.Sprintf("agent has %d pending messages; the limit is %d", err.Pending, err.Limit)
+}
+
+// AgentIdentityMismatchError reports a failed trusted-application identity check.
+type AgentIdentityMismatchError struct {
+	FlowID FlowID
+}
+
+var _ error = (*AgentIdentityMismatchError)(nil)
+
+// Error describes the mismatch without exposing either application context.
+func (err *AgentIdentityMismatchError) Error() string {
+	return fmt.Sprintf("agent %q application identity does not match", err.FlowID)
+}
+
+// AgentIdentityNotFoundError reports that no Agent owns the requested Flow ID.
+type AgentIdentityNotFoundError struct {
+	FlowID FlowID
+}
+
+var _ error = (*AgentIdentityNotFoundError)(nil)
+
+// Error identifies only the absent Flow ID.
+func (err *AgentIdentityNotFoundError) Error() string {
+	return fmt.Sprintf("agent Flow %q has no searchable run", err.FlowID)
+}
+
 // PendingMessageNotFoundError reports a queue ID that is no longer pending.
 type PendingMessageNotFoundError struct {
 	MessageID MessageID
@@ -1221,6 +1344,32 @@ func (err *CommandRejectedError) Error() string {
 	return fmt.Sprintf("agent command %q was rejected by current durable state", err.Command)
 }
 
+func validateExpectedRevision(revision *MutationRevision) error {
+	if revision != nil && *revision < 0 {
+		return errors.New("expected revision must not be negative")
+	}
+	return nil
+}
+
+func validateCancelRequest(request CancelRequest) error {
+	if err := validateRequestID(request.RequestID); err != nil {
+		return err
+	}
+	if !utf8.ValidString(request.Reason) {
+		return errors.New("cancellation reason must be valid UTF-8")
+	}
+	if strings.ContainsRune(request.Reason, '\x00') {
+		return errors.New("cancellation reason must not contain NUL")
+	}
+	if strings.TrimSpace(request.Reason) == "" {
+		return errors.New("cancellation reason must not be empty")
+	}
+	if len(request.Reason) > maximumCancelReasonBytes {
+		return fmt.Errorf("cancellation reason exceeds %d bytes", maximumCancelReasonBytes)
+	}
+	return nil
+}
+
 func validateNewUserMessage(message UserMessage) error {
 	if err := validateMessageID(message.MessageID); err != nil {
 		return err
@@ -1237,8 +1386,8 @@ func validateNewUserMessage(message UserMessage) error {
 	if strings.TrimSpace(message.Content) == "" {
 		return errors.New("content must not be empty")
 	}
-	if len(message.Content) > maximumUserMessageBytes {
-		return fmt.Errorf("content exceeds %d bytes", maximumUserMessageBytes)
+	if len(message.Content) > MaximumUserMessageContentBytes {
+		return fmt.Errorf("content exceeds %d bytes", MaximumUserMessageContentBytes)
 	}
 	return nil
 }

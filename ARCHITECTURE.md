@@ -62,18 +62,38 @@ timers, input prompts, and cumulative context summaries are separate typed
 Attributes.
 
 Every mutation carries a caller-stable request ID. `DurableCommands` stores a
-small fingerprint, first acceptance timestamp, and outcome for each
+small fingerprint, first acceptance timestamp, mutation revision, and outcome for each
 `(command, request ID)`. An equal replay returns the original result; a
 different payload returns a typed idempotency conflict. `AcceptedUserMessages`
 independently deduplicates application message IDs without copying message
 content. Dex Channel UUIDs remain internal and queue mutations resolve the
 application message ID against a loaded Channel snapshot.
 
+`AgentMutationRevision` serializes external mutations and advances only for a
+new accepted effect. Send and Steer can compare an optional expected revision
+inside the same transaction. Exact command and message-effect replays are
+resolved before that comparison and retain their original revision. Send also
+loads both pending Channels and rejects a new message when their combined count
+would exceed 200 or their aggregate content would exceed 256 KiB.
+
 The starting Step commits the start receipt, optional initial-message ledger,
 and optional initial-message publish in one Dex commit. A retry against a closed
 Flow reconstructs any already committed command receipt from Attributes and
 never invents acceptance. Per-call approval and per-revision plan-execution
 ledgers fence concurrent request IDs before either Channel effect is published.
+
+`EnsureCanceled` races `EnsureStarted` through Dex's non-reusable Flow ID. When
+no Agent exists, it starts the same Flow type with an initial terminal
+reservation and cancellation command, then cancels it. `Init` detects the
+reservation and performs no Agent work. If the caller fails between reservation
+and stop, either a later cancellation or start finishes the cancellation; the
+Flow ID can never be started as a new Agent.
+
+`Client.VerifyIdentity` lets a trusted embedding application compare its
+canonical application context after process replacement. It hashes both values
+before a constant-time equality check and never returns the persisted context.
+Its result distinguishes a normal Agent from a cancel-before-start terminal
+reservation. The browser Snapshot continues to exclude application context.
 
 Flows created before global start identity existed have an explicit migration
 boundary. Only an exact start request recorded by the preceding lifecycle
