@@ -10,6 +10,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,8 +18,12 @@ import App from "./App";
 import {
   AgentInteractionStatus,
   AgentStatus,
+  EventKind,
+  EventStream,
   FlowStatus,
+  PlanStatus,
   Provider,
+  TaskStatus,
   getAgentSnapshot,
   getPortal,
   readEvent,
@@ -295,6 +300,141 @@ describe("App", () => {
     expect(composer).toHaveValue("");
   });
 
+  it("renders every Activity event inside the chronological conversation", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      history: {
+        messages: [
+          message(1, "user", "Start work", "2026-09-03T00:00:00Z"),
+          message(2, "assistant", "Finished", "2026-09-03T00:04:00Z"),
+        ],
+        nextBeforeSequence: null,
+      },
+    });
+    const activityEvents = [
+      activityEvent(
+        "activity-1",
+        EventKind.MODEL_STARTED,
+        "Calling mock/reliable.",
+        "2026-09-03T00:01:00Z",
+      ),
+      activityEvent(
+        "activity-2",
+        EventKind.TOOL_PROGRESS,
+        "Running local-tools.search.",
+        "2026-09-03T00:02:00Z",
+        "local-tools.search",
+      ),
+    ];
+    let activityIndex = 0;
+    let sentReasoning = false;
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY) {
+        const event = activityEvents[activityIndex];
+        activityIndex++;
+        if (event !== undefined) return Promise.resolve(event);
+      }
+      if (query.stream === EventStream.REASONING && !sentReasoning) {
+        sentReasoning = true;
+        return Promise.resolve({
+          kind: "reasoning_summary",
+          value: "Checked the available tools.",
+          resumeToken: "reasoning-1",
+          createdAt: "2026-09-03T00:03:00Z",
+          source: "model-1",
+        });
+      }
+      return pendingStream(signal);
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const history = await screen.findByLabelText("Conversation history");
+    await within(history).findByText("Running local-tools.search.");
+    const content = history.textContent;
+    expect(content.indexOf("Start work")).toBeLessThan(
+      content.indexOf("Calling mock/reliable."),
+    );
+    expect(content.indexOf("Calling mock/reliable.")).toBeLessThan(
+      content.indexOf("Running local-tools.search."),
+    );
+    expect(content.indexOf("Running local-tools.search.")).toBeLessThan(
+      content.indexOf("Checked the available tools."),
+    );
+    expect(content.indexOf("Checked the available tools.")).toBeLessThan(
+      content.indexOf("Finished"),
+    );
+    expect(screen.queryByLabelText("Agent activity")).not.toBeInTheDocument();
+  });
+
+  it("shows queued messages above the composer and streams Plan task progress", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        interactionStatus: AgentInteractionStatus.SUBMITTED,
+        pendingQueuedMessageCount: 1,
+        plan: {
+          revision: 4,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Implement the UI", status: TaskStatus.PENDING }],
+        },
+      },
+      queued: [
+        {
+          messageId: "queued-1",
+          value: { content: "Follow up", planMode: false },
+        },
+      ],
+    });
+    let sentPlanEvent = false;
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY && !sentPlanEvent) {
+        sentPlanEvent = true;
+        return Promise.resolve({
+          ...activityEvent(
+            "plan-task-1",
+            EventKind.PLAN_TASK_UPDATED,
+            "Started plan task 1.",
+            "2026-09-03T00:01:00Z",
+          ),
+          value: {
+            kind: EventKind.PLAN_TASK_UPDATED,
+            message: "Started plan task 1.",
+            callId: null,
+            toolName: null,
+            messageSequence: null,
+            planBaseRevision: 4,
+            planRevision: 5,
+            planTaskIndex: 0,
+            planTaskStatus: TaskStatus.IN_PROGRESS,
+          },
+        });
+      }
+      return pendingStream(signal);
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const composer = await screen.findByLabelText("Message composer");
+    const queue = within(composer).getByLabelText("Message queue");
+    expect(within(queue).getByText("Follow up")).toBeInTheDocument();
+    const plan = screen.getByLabelText("Agent plan");
+    expect(plan.closest("aside")).not.toBeNull();
+    expect(
+      await within(plan).findByLabelText("In progress"),
+    ).toBeInTheDocument();
+    expect(within(plan).getByText("Implement the UI")).toBeInTheDocument();
+
+    const toggle = within(queue).getByRole("button", { name: /Message queue/ });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(queue).queryByText("Follow up")).not.toBeInTheDocument();
+  });
+
   it("fills the composer from a durable input choice", async () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       ...snapshot,
@@ -369,3 +509,56 @@ describe("App", () => {
     expect(screen.queryByText(/Tool request/)).not.toBeInTheDocument();
   });
 });
+
+function pendingStream(signal: AbortSignal | null | undefined): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    signal?.addEventListener(
+      "abort",
+      () => {
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+function activityEvent(
+  resumeToken: string,
+  kind: EventKind,
+  summary: string,
+  createdAt: string,
+  toolName: string | null = null,
+) {
+  return {
+    kind: "activity" as const,
+    value: {
+      kind,
+      message: summary,
+      callId: null,
+      toolName,
+      messageSequence: null,
+    },
+    resumeToken,
+    createdAt,
+    source: "model-1",
+  };
+}
+
+function message(
+  sequence: number,
+  role: "user" | "assistant",
+  content: string,
+  createdAt: string,
+) {
+  return {
+    sequence,
+    message: {
+      role,
+      content,
+      toolCalls: [],
+      toolCallId: null,
+      toolName: null,
+      createdAt,
+    },
+  };
+}

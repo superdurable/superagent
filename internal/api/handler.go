@@ -860,12 +860,36 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 	} else {
 		messageSequence.SetTo(transportapi.Sequence(*event.MessageSequence))
 	}
+	planBaseRevision := transportapi.OptNilInt64{}
+	if event.PlanBaseRevision != nil {
+		planBaseRevision.SetTo(int64(*event.PlanBaseRevision))
+	}
+	planRevision := transportapi.OptNilInt64{}
+	if event.PlanRevision != nil {
+		planRevision.SetTo(int64(*event.PlanRevision))
+	}
+	planTaskIndex := transportapi.OptNilInt{}
+	if event.PlanTaskIndex != nil {
+		planTaskIndex.SetTo(int(*event.PlanTaskIndex))
+	}
+	planTaskStatus := transportapi.OptNilTaskStatus{}
+	if event.PlanTaskStatus != nil {
+		status, statusErr := transportTaskStatus(*event.PlanTaskStatus)
+		if statusErr != nil {
+			return transportapi.AgentEvent{}, statusErr
+		}
+		planTaskStatus.SetTo(status)
+	}
 	return transportapi.AgentEvent{
-		Kind:            kind,
-		Message:         event.Message,
-		CallId:          callID,
-		ToolName:        toolName,
-		MessageSequence: messageSequence,
+		Kind:             kind,
+		Message:          event.Message,
+		CallId:           callID,
+		ToolName:         toolName,
+		MessageSequence:  messageSequence,
+		PlanBaseRevision: planBaseRevision,
+		PlanRevision:     planRevision,
+		PlanTaskIndex:    planTaskIndex,
+		PlanTaskStatus:   planTaskStatus,
 	}, nil
 }
 
@@ -875,6 +899,8 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindPlanStarted, nil
 	case agent.EventKindPlanUpdated:
 		return transportapi.EventKindPlanUpdated, nil
+	case agent.EventKindPlanTaskUpdated:
+		return transportapi.EventKindPlanTaskUpdated, nil
 	case agent.EventKindSteeringApplied:
 		return transportapi.EventKindSteeringApplied, nil
 	case agent.EventKindCompactionFailed:

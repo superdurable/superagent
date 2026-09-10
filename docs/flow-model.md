@@ -86,11 +86,16 @@ application history, and makes the model replan.
 | `PlanExecutions` | ChannelMap | Execution request partitioned by plan revision |
 | `ReasoningSummary` | buffered Stream | Provider-authored reasoning summaries only |
 | `AssistantText` | buffered Stream | Visible response deltas |
-| `AgentActivity` | Stream | Latest bounded single-line lifecycle summary |
+| `AgentActivity` | Stream | Bounded single-line lifecycle and Plan task events |
 
 Channels are delivery mechanisms, not storage. A queued message enters
 application history only after a Step consumes it. Stream loss never changes
 durable truth.
+
+Each observed `AgentActivity` event is a separate transient timeline row. The
+Stream may also carry revision-scoped Plan task status hints. Activity is never
+written to an Attribute, Snapshot, or archive. Reload may replay only events
+still retained by Dex and does not guarantee a complete activity history.
 
 ## Application history
 

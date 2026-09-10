@@ -322,6 +322,14 @@ type AgentEvent struct {
 	ToolName NilToolName `json:"toolName"`
 	// Durable assistant message produced by this model invocation, or null for unrelated activity.
 	MessageSequence NilSequence `json:"messageSequence"`
+	// Plan revision the browser must currently render before applying a task update, or null.
+	PlanBaseRevision OptNilInt64 `json:"planBaseRevision"`
+	// Durable Plan revision produced by a task update, or null.
+	PlanRevision OptNilInt64 `json:"planRevision"`
+	// Zero-based index of an unchanged Plan task, or null.
+	PlanTaskIndex OptNilInt `json:"planTaskIndex"`
+	// Updated status of the indexed Plan task, or null.
+	PlanTaskStatus OptNilTaskStatus `json:"planTaskStatus"`
 }
 
 // GetKind returns the value of Kind.
@@ -349,6 +357,26 @@ func (s *AgentEvent) GetMessageSequence() NilSequence {
 	return s.MessageSequence
 }
 
+// GetPlanBaseRevision returns the value of PlanBaseRevision.
+func (s *AgentEvent) GetPlanBaseRevision() OptNilInt64 {
+	return s.PlanBaseRevision
+}
+
+// GetPlanRevision returns the value of PlanRevision.
+func (s *AgentEvent) GetPlanRevision() OptNilInt64 {
+	return s.PlanRevision
+}
+
+// GetPlanTaskIndex returns the value of PlanTaskIndex.
+func (s *AgentEvent) GetPlanTaskIndex() OptNilInt {
+	return s.PlanTaskIndex
+}
+
+// GetPlanTaskStatus returns the value of PlanTaskStatus.
+func (s *AgentEvent) GetPlanTaskStatus() OptNilTaskStatus {
+	return s.PlanTaskStatus
+}
+
 // SetKind sets the value of Kind.
 func (s *AgentEvent) SetKind(val EventKind) {
 	s.Kind = val
@@ -372,6 +400,26 @@ func (s *AgentEvent) SetToolName(val NilToolName) {
 // SetMessageSequence sets the value of MessageSequence.
 func (s *AgentEvent) SetMessageSequence(val NilSequence) {
 	s.MessageSequence = val
+}
+
+// SetPlanBaseRevision sets the value of PlanBaseRevision.
+func (s *AgentEvent) SetPlanBaseRevision(val OptNilInt64) {
+	s.PlanBaseRevision = val
+}
+
+// SetPlanRevision sets the value of PlanRevision.
+func (s *AgentEvent) SetPlanRevision(val OptNilInt64) {
+	s.PlanRevision = val
+}
+
+// SetPlanTaskIndex sets the value of PlanTaskIndex.
+func (s *AgentEvent) SetPlanTaskIndex(val OptNilInt) {
+	s.PlanTaskIndex = val
+}
+
+// SetPlanTaskStatus sets the value of PlanTaskStatus.
+func (s *AgentEvent) SetPlanTaskStatus(val OptNilTaskStatus) {
+	s.PlanTaskStatus = val
 }
 
 // Ref: #/components/schemas/AgentInteractionState
@@ -885,6 +933,7 @@ type EventKind string
 const (
 	EventKindPlanStarted        EventKind = "plan_started"
 	EventKindPlanUpdated        EventKind = "plan_updated"
+	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
 	EventKindCompacted          EventKind = "compacted"
@@ -903,6 +952,7 @@ func (EventKind) AllValues() []EventKind {
 	return []EventKind{
 		EventKindPlanStarted,
 		EventKindPlanUpdated,
+		EventKindPlanTaskUpdated,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
 		EventKindCompacted,
@@ -923,6 +973,8 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindPlanStarted:
 		return []byte(s), nil
 	case EventKindPlanUpdated:
+		return []byte(s), nil
+	case EventKindPlanTaskUpdated:
 		return []byte(s), nil
 	case EventKindSteeringApplied:
 		return []byte(s), nil
@@ -959,6 +1011,9 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindPlanUpdated:
 		*s = EventKindPlanUpdated
+		return nil
+	case EventKindPlanTaskUpdated:
+		*s = EventKindPlanTaskUpdated
 		return nil
 	case EventKindSteeringApplied:
 		*s = EventKindSteeringApplied
@@ -1983,6 +2038,142 @@ func (o OptFloat64) Or(d float64) float64 {
 	return d
 }
 
+// NewOptNilInt returns new OptNilInt with value set to v.
+func NewOptNilInt(v int) OptNilInt {
+	return OptNilInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt is optional nullable int.
+type OptNilInt struct {
+	Value int
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt was set.
+func (o OptNilInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt) SetTo(v int) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt) Get() (v int, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilInt64 returns new OptNilInt64 with value set to v.
+func NewOptNilInt64(v int64) OptNilInt64 {
+	return OptNilInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt64 is optional nullable int64.
+type OptNilInt64 struct {
+	Value int64
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt64 was set.
+func (o OptNilInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt64) SetTo(v int64) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt64) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt64) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int64
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt64) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt64) Get() (v int64, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -2045,6 +2236,74 @@ func (o OptNilString) Get() (v string, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilTaskStatus returns new OptNilTaskStatus with value set to v.
+func NewOptNilTaskStatus(v TaskStatus) OptNilTaskStatus {
+	return OptNilTaskStatus{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilTaskStatus is optional nullable TaskStatus.
+type OptNilTaskStatus struct {
+	Value TaskStatus
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilTaskStatus was set.
+func (o OptNilTaskStatus) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilTaskStatus) Reset() {
+	var v TaskStatus
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilTaskStatus) SetTo(v TaskStatus) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilTaskStatus) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilTaskStatus) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v TaskStatus
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilTaskStatus) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilTaskStatus) Get() (v TaskStatus, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilTaskStatus) Or(d TaskStatus) TaskStatus {
 	if v, ok := o.Get(); ok {
 		return v
 	}

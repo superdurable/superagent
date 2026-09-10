@@ -497,6 +497,10 @@ func (flow *Flow) getPlan(ctx dex.Context) (*AgentPlan, error) {
 }
 
 func (flow *Flow) replacePlan(ctx dex.Context, tasks []PlanTask) (PlanRevision, error) {
+	previousPlan, err := flow.getPlan(ctx)
+	if err != nil {
+		return 0, err
+	}
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
 		return 0, err
@@ -536,7 +540,70 @@ func (flow *Flow) replacePlan(ctx dex.Context, tasks []PlanTask) (PlanRevision, 
 	if err := flow.writeActivity(ctx, AgentEvent{Kind: EventKindPlanUpdated, Message: message}); err != nil {
 		return 0, err
 	}
+	if err := flow.writePlanTaskActivities(ctx, previousPlan, revision, tasks); err != nil {
+		return 0, err
+	}
 	return revision, nil
+}
+
+func (flow *Flow) writePlanTaskActivities(
+	ctx dex.Context,
+	previousPlan *AgentPlan,
+	revision PlanRevision,
+	tasks []PlanTask,
+) error {
+	for _, event := range planTaskActivities(previousPlan, revision, tasks) {
+		if err := flow.writeActivity(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func planTaskActivities(
+	previousPlan *AgentPlan,
+	revision PlanRevision,
+	tasks []PlanTask,
+) []AgentEvent {
+	if previousPlan == nil {
+		return nil
+	}
+	result := []AgentEvent{}
+	for index, task := range tasks {
+		if index >= len(previousPlan.Tasks) {
+			break
+		}
+		previousTask := previousPlan.Tasks[index]
+		if previousTask.Content != task.Content || previousTask.Status == task.Status {
+			continue
+		}
+		baseRevision := previousPlan.Revision
+		taskIndex := PlanTaskIndex(index)
+		taskStatus := task.Status
+		result = append(result, AgentEvent{
+			Kind:             EventKindPlanTaskUpdated,
+			Message:          planTaskActivityMessage(taskIndex, taskStatus),
+			PlanBaseRevision: &baseRevision,
+			PlanRevision:     &revision,
+			PlanTaskIndex:    &taskIndex,
+			PlanTaskStatus:   &taskStatus,
+		})
+	}
+	return result
+}
+
+func planTaskActivityMessage(index PlanTaskIndex, status TaskStatus) string {
+	position := int(index) + 1
+	switch status {
+	case TaskStatusInProgress:
+		return fmt.Sprintf("Started plan task %d.", position)
+	case TaskStatusCompleted:
+		return fmt.Sprintf("Completed plan task %d.", position)
+	case TaskStatusPending:
+		return fmt.Sprintf("Reset plan task %d to pending.", position)
+	default:
+		return fmt.Sprintf("Updated plan task %d.", position)
+	}
 }
 
 func (flow *Flow) appendMessage(ctx dex.Context, message AgentMessage) (Sequence, error) {

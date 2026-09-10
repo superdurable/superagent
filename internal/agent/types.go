@@ -110,6 +110,9 @@ func (kind *StreamEventKind) UnmarshalJSON(data []byte) error {
 // PlanRevision identifies one immutable plan revision.
 type PlanRevision int64
 
+// PlanTaskIndex identifies one task position inside a Plan revision.
+type PlanTaskIndex int
+
 // Model identifies a provider-qualified model.
 type Model string
 
@@ -344,6 +347,7 @@ type EventKind string
 const (
 	EventKindPlanStarted        EventKind = "plan_started"
 	EventKindPlanUpdated        EventKind = "plan_updated"
+	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
 	EventKindCompacted          EventKind = "compacted"
@@ -362,6 +366,7 @@ func (kind EventKind) Validate() error {
 	switch kind {
 	case EventKindPlanStarted,
 		EventKindPlanUpdated,
+		EventKindPlanTaskUpdated,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
 		EventKindCompacted,
@@ -799,11 +804,15 @@ type PendingUserInput struct {
 
 // AgentEvent is emitted to the best-effort activity Stream.
 type AgentEvent struct {
-	Kind            EventKind `json:"kind"`
-	Message         string    `json:"message"`
-	CallID          *CallID   `json:"call_id,omitempty"`
-	ToolName        *ToolName `json:"tool_name,omitempty"`
-	MessageSequence *Sequence `json:"message_sequence,omitempty"`
+	Kind             EventKind      `json:"kind"`
+	Message          string         `json:"message"`
+	CallID           *CallID        `json:"call_id,omitempty"`
+	ToolName         *ToolName      `json:"tool_name,omitempty"`
+	MessageSequence  *Sequence      `json:"message_sequence,omitempty"`
+	PlanBaseRevision *PlanRevision  `json:"plan_base_revision,omitempty"`
+	PlanRevision     *PlanRevision  `json:"plan_revision,omitempty"`
+	PlanTaskIndex    *PlanTaskIndex `json:"plan_task_index,omitempty"`
+	PlanTaskStatus   *TaskStatus    `json:"plan_task_status,omitempty"`
 }
 
 // StreamEvent is one typed best-effort Stream message.

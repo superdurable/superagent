@@ -415,6 +415,7 @@ components:
       enum:
         - plan_started
         - plan_updated
+        - plan_task_updated
         - steering_applied
         - compaction_failed
         - compacted
@@ -1137,6 +1138,30 @@ components:
           description: Durable assistant message produced by this model invocation, or null for unrelated activity.
           allOf:
             - $ref: "#/components/schemas/Sequence"
+          nullable: true
+        planBaseRevision:
+          description: Plan revision the browser must currently render before applying a task update, or null.
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          nullable: true
+        planRevision:
+          description: Durable Plan revision produced by a task update, or null.
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          nullable: true
+        planTaskIndex:
+          description: Zero-based index of an unchanged Plan task, or null.
+          type: integer
+          minimum: 0
+          nullable: true
+        planTaskStatus:
+          description: Updated status of the indexed Plan task, or null.
+          allOf:
+            - $ref: "#/components/schemas/TaskStatus"
           nullable: true
     Problem:
       type: object

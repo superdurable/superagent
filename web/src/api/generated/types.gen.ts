@@ -39,6 +39,7 @@ export type EventStream = typeof EventStream[keyof typeof EventStream];
 export const EventKind = {
     PLAN_STARTED: 'plan_started',
     PLAN_UPDATED: 'plan_updated',
+    PLAN_TASK_UPDATED: 'plan_task_updated',
     STEERING_APPLIED: 'steering_applied',
     COMPACTION_FAILED: 'compaction_failed',
     COMPACTED: 'compacted',
@@ -350,6 +351,22 @@ export type AgentEvent = {
      * Durable assistant message produced by this model invocation, or null for unrelated activity.
      */
     messageSequence: Sequence | null;
+    /**
+     * Plan revision the browser must currently render before applying a task update, or null.
+     */
+    planBaseRevision?: number | null;
+    /**
+     * Durable Plan revision produced by a task update, or null.
+     */
+    planRevision?: number | null;
+    /**
+     * Zero-based index of an unchanged Plan task, or null.
+     */
+    planTaskIndex?: number | null;
+    /**
+     * Updated status of the indexed Plan task, or null.
+     */
+    planTaskStatus?: TaskStatus | null;
 };
 
 export type Problem = {

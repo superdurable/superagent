@@ -82,11 +82,17 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	callID := agent.CallID("call-1")
 	toolName := agent.ToolName("lookup")
 	messageSequence := agent.Sequence(2)
+	planBaseRevision := agent.PlanRevision(3)
+	planRevision := agent.PlanRevision(4)
+	planTaskIndex := agent.PlanTaskIndex(1)
+	planTaskStatus := agent.TaskStatusInProgress
 	service := &fakeAgentService{event: agent.StreamEvent{
 		Kind: agent.StreamEventKindActivity,
 		Activity: agent.AgentEvent{
-			Kind: agent.EventKindToolCompleted, Message: "done", CallID: &callID, ToolName: &toolName,
-			MessageSequence: &messageSequence,
+			Kind: agent.EventKindPlanTaskUpdated, Message: "done", CallID: &callID, ToolName: &toolName,
+			MessageSequence:  &messageSequence,
+			PlanBaseRevision: &planBaseRevision, PlanRevision: &planRevision,
+			PlanTaskIndex: &planTaskIndex, PlanTaskStatus: &planTaskStatus,
 		},
 		ResumeToken: "resume-1", CreatedAt: time.Unix(1, 0).UTC(), Source: "turn-1",
 	}}
@@ -102,9 +108,13 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 	activity, _ := event.GetActivityStreamEvent()
-	if activity.Value.Kind != transportapi.EventKindToolCompleted ||
+	if activity.Value.Kind != transportapi.EventKindPlanTaskUpdated ||
 		activity.Value.CallId.Or("") != "call-1" ||
-		activity.Value.MessageSequence.Or(0) != 2 {
+		activity.Value.MessageSequence.Or(0) != 2 ||
+		activity.Value.PlanBaseRevision.Or(0) != 3 ||
+		activity.Value.PlanRevision.Or(0) != 4 ||
+		activity.Value.PlanTaskIndex.Or(-1) != 1 ||
+		activity.Value.PlanTaskStatus.Or("") != transportapi.TaskStatusInProgress {
 		t.Fatalf("activity = %#v", activity)
 	}
 }

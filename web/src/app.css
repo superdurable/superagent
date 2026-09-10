@@ -345,11 +345,18 @@ button.secondary {
   gap: 18px;
   align-items: start;
 }
+.conversation-grid.no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
+}
 .conversation-main,
 .conversation-sidebar {
   display: grid;
   min-width: 0;
   gap: 16px;
+}
+.conversation-sidebar {
+  position: sticky;
+  top: 16px;
 }
 .messages-card,
 .plan-card,
@@ -518,9 +525,59 @@ pre {
 .live-message {
   border-color: #aeb6ff;
 }
+.activity-entry {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+  width: min(92%, 760px);
+  padding: 7px 9px;
+  color: #667085;
+  font-size: 12px;
+}
+.activity-entry > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.activity-entry strong {
+  color: #475467;
+  font-size: 11px;
+}
+.activity-entry span {
+  overflow-wrap: anywhere;
+}
+.activity-entry time {
+  color: #98a2b3;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.activity-icon {
+  color: #6672df;
+  font-size: 15px;
+  line-height: 1.2;
+  text-align: center;
+}
 .plan-card,
 .side-card {
   padding: 18px;
+}
+.plan-panel {
+  min-width: 0;
+}
+.plan-content {
+  min-width: 0;
+}
+.plan-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.plan-heading > button {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.plan-toggle {
+  display: none;
 }
 .section-heading {
   justify-content: space-between;
@@ -548,6 +605,25 @@ pre {
   padding: 10px;
   border-radius: 10px;
   background: #f7f8fa;
+}
+.task-status {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+}
+.task-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid #cbd1ff;
+  border-top-color: #4757d6;
+  border-radius: 50%;
+  animation: task-spin 800ms linear infinite;
+}
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .plan-tasks li.completed p {
   color: #667085;
@@ -609,23 +685,6 @@ pre {
   background: transparent;
   font-size: 12px;
 }
-.activity-summary {
-  display: grid;
-  gap: 2px;
-  margin: 12px 0 0;
-  padding-left: 10px;
-  border-left: 2px solid #ccd2ff;
-  font-size: 12px;
-}
-.activity-summary strong {
-  color: #4353c7;
-  font-size: 10px;
-  text-transform: uppercase;
-}
-.activity-summary time {
-  color: #98a2b3;
-  font-size: 10px;
-}
 .composer-card {
   position: fixed;
   right: 16px;
@@ -638,6 +697,50 @@ pre {
   padding: 14px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+.queue-tray {
+  margin-bottom: 10px;
+  border: 1px solid #e1e5eb;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+.queue-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 11px;
+  color: #344054;
+  background: transparent;
+  text-align: left;
+}
+.queue-toggle > span:first-child {
+  color: #667085;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.queue-toggle strong {
+  min-width: 0;
+  font-size: 12px;
+  text-align: right;
+}
+.queue-items {
+  display: grid;
+  gap: 8px;
+  max-height: min(280px, 34dvh);
+  padding: 0 9px 9px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.queue-items .queue-message {
+  margin-top: 0;
+}
+.queue-message small {
+  margin-left: 7px;
+  color: #667085;
+  font-size: 10px;
 }
 .pending-input {
   margin-bottom: 10px;
@@ -730,6 +833,25 @@ pre {
   }
   .conversation-sidebar {
     grid-row: 1;
+    position: static;
+  }
+  .plan-panel {
+    padding: 0;
+    overflow: hidden;
+  }
+  .plan-toggle {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 13px 14px;
+    color: #344054;
+    background: transparent;
+    text-align: left;
+  }
+  .plan-content {
+    padding: 0 14px 14px;
   }
   .message-bubble {
     width: 94%;
@@ -764,5 +886,12 @@ pre {
   .pending-input .choice-row button {
     width: 100%;
     padding: 8px 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-spinner {
+    animation: none;
+    border-color: #6672df;
   }
 }

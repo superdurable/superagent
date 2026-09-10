@@ -476,6 +476,48 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 	}
 }
 
+func TestAgentPlanTaskActivityIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-plan-activity-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content:  "stream task progress",
+		PlanMode: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draft := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: draft.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	event := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindPlanTaskUpdated && event.PlanTaskStatus != nil &&
+			*event.PlanTaskStatus == TaskStatusInProgress
+	})
+	activity := event.Activity
+	if activity.Message != "Started plan task 1." || activity.PlanBaseRevision == nil ||
+		*activity.PlanBaseRevision != draft.Revision || activity.PlanRevision == nil ||
+		*activity.PlanRevision != draft.Revision+1 || activity.PlanTaskIndex == nil ||
+		*activity.PlanTaskIndex != 0 || activity.CallID != nil || activity.ToolName != nil ||
+		activity.MessageSequence != nil {
+		t.Fatalf("Plan task Activity = %#v", event)
+	}
+	completed := waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
+	if completed.Revision <= *activity.PlanRevision || completed.Tasks[0].Status != TaskStatusCompleted {
+		t.Fatalf("completed Plan = %#v", completed)
+	}
+}
+
 func TestAgentBatchSteeringIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-steer-batch-" + randomLocalID(t))
@@ -976,6 +1018,28 @@ func assertModelActivity(t *testing.T, client *Client, flowID FlowID, expectedSe
 	}
 }
 
+func readActivityUntil(
+	t *testing.T,
+	client *Client,
+	flowID FlowID,
+	matches func(AgentEvent) bool,
+) StreamEvent {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), integrationWaitTimeout)
+	defer cancel()
+	resumeToken := ResumeToken("")
+	for {
+		event, err := client.ReadEvent(ctx, flowID, EventStreamActivity, resumeToken)
+		if err != nil {
+			t.Fatalf("read Activity Stream for %s: %v", flowID, err)
+		}
+		resumeToken = event.ResumeToken
+		if matches(event.Activity) {
+			return event
+		}
+	}
+}
+
 type integrationModel struct{}
 
 var _ ModelClient = integrationModel{}
@@ -991,7 +1055,7 @@ func (integrationModel) Complete(ctx context.Context, request ModelRequest) (Mod
 		arguments := integrationPlanArguments(request.Messages, TaskStatusPending)
 		return integrationToolReply(request, ToolNameWriteTodos, arguments, "drafted plan")
 	}
-	if hasActiveIntegrationPlan(request.Messages) {
+	if planTaskStatus, hasActivePlan := integrationActivePlanTaskStatus(request.Messages); hasActivePlan {
 		if strings.HasPrefix(integrationLastUserContent(request.Messages), "/plan-stop ") {
 			content := "integration stopped before completing the active plan"
 			if err := request.WriteAssistant(content); err != nil {
@@ -999,8 +1063,14 @@ func (integrationModel) Complete(ctx context.Context, request ModelRequest) (Mod
 			}
 			return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
 		}
-		arguments := integrationPlanArguments(request.Messages, TaskStatusCompleted)
-		return integrationToolReply(request, ToolNameWriteTodos, arguments, "completed plan")
+		nextStatus := TaskStatusCompleted
+		content := "completed plan"
+		if planTaskStatus == TaskStatusPending {
+			nextStatus = TaskStatusInProgress
+			content = "started plan task"
+		}
+		arguments := integrationPlanArguments(request.Messages, nextStatus)
+		return integrationToolReply(request, ToolNameWriteTodos, arguments, content)
 	}
 	if lastMessage := integrationLastConversationMessage(request.Messages); lastMessage != nil && lastMessage.Role == MessageRoleTool {
 		content := "integration tool result acknowledged"
@@ -1159,18 +1229,27 @@ func integrationLastConversationMessage(messages []AgentMessage) *AgentMessage {
 	return nil
 }
 
-func hasActiveIntegrationPlan(messages []AgentMessage) bool {
+func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool) {
 	if len(messages) == 0 || messages[len(messages)-1].Role != MessageRoleSystem ||
 		!strings.Contains(messages[len(messages)-1].Content, "The user approved this plan. Execute it") {
-		return false
+		return "", false
 	}
 	for index := len(messages) - 1; index >= 0; index-- {
 		message := messages[index]
 		if message.Role == MessageRoleSystem && strings.Contains(message.Content, "Current durable plan:") {
-			return strings.Contains(message.Content, `"status":"active"`) && strings.Contains(message.Content, `"status":"pending"`)
+			if !strings.Contains(message.Content, `"status":"active"`) {
+				return "", false
+			}
+			if strings.Contains(message.Content, `"status":"pending"`) {
+				return TaskStatusPending, true
+			}
+			if strings.Contains(message.Content, `"status":"in_progress"`) {
+				return TaskStatusInProgress, true
+			}
+			return "", false
 		}
 	}
-	return false
+	return "", false
 }
 
 type integrationToolRegistry struct {

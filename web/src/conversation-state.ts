@@ -7,6 +7,7 @@
 import {
   AgentStatus,
   EventKind,
+  type TaskStatus,
   type AgentDescription,
   type AgentEvent,
   type AgentSnapshot,
@@ -45,7 +46,7 @@ interface LiveText {
   value: string;
 }
 
-interface AssistantEntry extends LiveText {
+export interface AssistantEntry extends LiveText {
   isComplete: boolean;
 }
 
@@ -78,6 +79,17 @@ interface OptimisticSubmission {
   phase: "submitting" | "queued";
 }
 
+interface PlanTaskProgress {
+  index: number;
+  status: TaskStatus;
+}
+
+interface PlanProgressHint {
+  baseRevision: number;
+  revision: number;
+  tasks: PlanTaskProgress[];
+}
+
 type ActiveSnapshot = AgentSnapshot & { description: AgentDescription };
 type TerminalSnapshot = AgentSnapshot & { description: null };
 
@@ -93,6 +105,7 @@ interface ReadyConversationBase {
   assistant: AssistantEntry | null;
   reasoning: ReasoningEntry[];
   activities: ActivityEntry[];
+  planProgress: PlanProgressHint | null;
   error: string | null;
 }
 
@@ -237,24 +250,26 @@ function reconcileSnapshot(
   }
   const previous =
     state.kind === "ready" && state.lifecycle === "active" ? state : null;
+  const previousRun =
+    previous?.snapshot.runId === snapshot.runId ? previous : null;
   const activeSnapshot = {
     ...snapshot,
     description: snapshot.description,
     history:
-      previous?.snapshot.runId === snapshot.runId
+      previousRun !== null
         ? reconcileHistory(
-            previous.snapshot.history,
+            previousRun.snapshot.history,
             snapshot.history,
             snapshot.description.firstRetainedSequence,
           )
         : snapshot.history,
   };
   const hasDurableProgress =
-    previous !== null &&
+    previousRun !== null &&
     snapshot.description.lastSequence >
-      previous.snapshot.description.lastSequence;
+      previousRun.snapshot.description.lastSequence;
   const hasCommittedAssistant =
-    previous?.assistant?.isComplete === true &&
+    previousRun?.assistant?.isComplete === true &&
     snapshot.description.status !== AgentStatus.CALLING_MODEL;
   return {
     kind: "ready",
@@ -263,25 +278,26 @@ function reconcileSnapshot(
     connection: "live",
     snapshotRequest: state.snapshotRequest,
     subscriptionGeneration:
-      previous?.connection === "reconnecting"
-        ? previous.subscriptionGeneration + 1
-        : (previous?.subscriptionGeneration ?? 0),
+      previousRun?.connection === "reconnecting"
+        ? previousRun.subscriptionGeneration + 1
+        : (previousRun?.subscriptionGeneration ?? 0),
     historyRequest: null,
-    pendingCommand: previous?.pendingCommand ?? null,
+    pendingCommand: previousRun?.pendingCommand ?? null,
     optimisticSubmissions: reconcileOptimisticSubmissions(
-      previous?.optimisticSubmissions ?? [],
+      previousRun?.optimisticSubmissions ?? [],
       activeSnapshot,
     ),
-    composer: previous?.composer ?? "",
-    isPlanMode: previous?.isPlanMode ?? false,
+    composer: previousRun?.composer ?? "",
+    isPlanMode: previousRun?.isPlanMode ?? false,
     assistant:
       hasDurableProgress || hasCommittedAssistant
         ? null
-        : (previous?.assistant ?? null),
+        : (previousRun?.assistant ?? null),
     reasoning: hasDurableProgress
-      ? completeReasoning(previous.reasoning)
-      : (previous?.reasoning ?? []),
-    activities: previous?.activities ?? [],
+      ? completeReasoning(previousRun.reasoning)
+      : (previousRun?.reasoning ?? []),
+    activities: previousRun?.activities ?? [],
+    planProgress: null,
     error: null,
   };
 }
@@ -306,6 +322,7 @@ function terminalState(
     assistant: null,
     reasoning: completeReasoning(priorReady?.reasoning ?? []),
     activities: priorReady?.activities ?? [],
+    planProgress: null,
     error: snapshot.errorMessage,
   };
 }
@@ -572,6 +589,13 @@ function applyLiveUpdate(
         ),
       };
     case "activity":
+      if (
+        state.activities.some(
+          (activity) => activity.resumeToken === update.resumeToken,
+        )
+      ) {
+        return state;
+      }
       return {
         ...state,
         assistant: isModelFinished(update.value.kind)
@@ -583,9 +607,46 @@ function applyLiveUpdate(
         reasoning: isModelFinished(update.value.kind)
           ? completeReasoningSource(state.reasoning, update.source)
           : state.reasoning,
-        activities: [update],
+        activities: [...state.activities, update],
+        planProgress: applyPlanTaskUpdate(state, update.value),
       };
   }
+}
+
+function applyPlanTaskUpdate(
+  state: ActiveConversationState,
+  event: AgentEvent,
+): PlanProgressHint | null {
+  if (
+    event.kind !== EventKind.PLAN_TASK_UPDATED ||
+    event.planBaseRevision == null ||
+    event.planRevision == null ||
+    event.planTaskIndex == null ||
+    event.planTaskStatus == null
+  ) {
+    return state.planProgress;
+  }
+  const plan = state.snapshot.description.plan;
+  if (plan?.revision !== event.planBaseRevision) {
+    return state.planProgress;
+  }
+  if (event.planTaskIndex < 0 || event.planTaskIndex >= plan.tasks.length) {
+    return state.planProgress;
+  }
+  const current = state.planProgress;
+  const tasks =
+    current?.baseRevision === event.planBaseRevision &&
+    current.revision === event.planRevision
+      ? current.tasks
+      : [];
+  return {
+    baseRevision: event.planBaseRevision,
+    revision: event.planRevision,
+    tasks: [
+      ...tasks.filter(({ index }) => index !== event.planTaskIndex),
+      { index: event.planTaskIndex, status: event.planTaskStatus },
+    ],
+  };
 }
 
 function appendAssistant(
@@ -660,4 +721,14 @@ export function pendingQueueMessageID(
   if (state.kind !== "ready") return null;
   const command = state.pendingCommand?.command;
   return command?.kind === "queue" ? command.message.messageId : null;
+}
+
+export function displayedPlanTaskStatus(
+  state: ActiveConversationState,
+  index: number,
+): TaskStatus | undefined {
+  const plan = state.snapshot.description.plan;
+  if (plan === null) return undefined;
+  const live = state.planProgress?.tasks.find((task) => task.index === index);
+  return live?.status ?? plan.tasks[index]?.status;
 }

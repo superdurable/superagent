@@ -11,10 +11,13 @@ import {
   type SequencedMessage,
 } from "./api/generated";
 import type { ActivityEntry, ReasoningEntry } from "./conversation-state";
+import type { AssistantEntry } from "./conversation-state";
 
 export type ConversationTimelineEntry =
   | { kind: "message"; value: SequencedMessage }
-  | { kind: "reasoning"; value: ReasoningEntry };
+  | { kind: "reasoning"; value: ReasoningEntry }
+  | { kind: "activity"; value: ActivityEntry }
+  | { kind: "assistant"; value: AssistantEntry };
 
 interface ModelWindow {
   startedAt: number | null;
@@ -25,38 +28,132 @@ export function buildConversationTimeline(
   messages: readonly SequencedMessage[],
   reasoning: readonly ReasoningEntry[],
   activities: readonly ActivityEntry[],
+  assistant: AssistantEntry | null,
 ): ConversationTimelineEntry[] {
   const explicitSequences = modelMessageSequences(activities);
   const modelWindows = completedModelWindows(activities);
-  const loadedSequences = new Set(messages.map(({ sequence }) => sequence));
-  const reasoningBySequence = new Map<Sequence, ReasoningEntry[]>();
-  const unanchoredReasoning: ReasoningEntry[] = [];
+  const entries: ConversationTimelineEntry[] = [
+    ...messages.map((value) => ({ kind: "message" as const, value })),
+    ...reasoning.map((value) => ({ kind: "reasoning" as const, value })),
+    ...activities.map((value) => ({ kind: "activity" as const, value })),
+  ];
+  if (assistant !== null) entries.push({ kind: "assistant", value: assistant });
+  return entries.sort((left, right) =>
+    compareTimelineEntries(
+      left,
+      right,
+      messages,
+      explicitSequences,
+      modelWindows,
+    ),
+  );
+}
 
-  for (const entry of reasoning) {
-    const sequence =
-      explicitSequences.get(entry.source) ??
-      inferMessageSequence(entry.source, messages, modelWindows);
-    if (sequence === undefined || !loadedSequences.has(sequence)) {
-      unanchoredReasoning.push(entry);
-      continue;
-    }
-    const entries = reasoningBySequence.get(sequence) ?? [];
-    entries.push(entry);
-    reasoningBySequence.set(sequence, entries);
+function compareTimelineEntries(
+  left: ConversationTimelineEntry,
+  right: ConversationTimelineEntry,
+  messages: readonly SequencedMessage[],
+  explicitSequences: ReadonlyMap<string, Sequence>,
+  modelWindows: ReadonlyMap<string, ModelWindow>,
+): number {
+  const leftTimestamp = parseTimestamp(entryCreatedAt(left));
+  const rightTimestamp = parseTimestamp(entryCreatedAt(right));
+  if (leftTimestamp !== null && rightTimestamp !== null) {
+    const difference = leftTimestamp - rightTimestamp;
+    if (difference !== 0) return difference;
+  } else if (leftTimestamp !== null) {
+    return -1;
+  } else if (rightTimestamp !== null) {
+    return 1;
   }
+  const causalOrder = compareReasoningToAssistant(
+    left,
+    right,
+    messages,
+    explicitSequences,
+    modelWindows,
+  );
+  if (causalOrder !== 0) return causalOrder;
+  const typeDifference = entryRank(left) - entryRank(right);
+  return typeDifference !== 0
+    ? typeDifference
+    : entryIdentity(left).localeCompare(entryIdentity(right));
+}
 
-  const timeline: ConversationTimelineEntry[] = [];
-  for (const message of messages) {
-    const entries = reasoningBySequence.get(message.sequence) ?? [];
-    for (const entry of [...entries].sort(compareReasoning)) {
-      timeline.push({ kind: "reasoning", value: entry });
-    }
-    timeline.push({ kind: "message", value: message });
+function compareReasoningToAssistant(
+  left: ConversationTimelineEntry,
+  right: ConversationTimelineEntry,
+  messages: readonly SequencedMessage[],
+  explicitSequences: ReadonlyMap<string, Sequence>,
+  modelWindows: ReadonlyMap<string, ModelWindow>,
+): number {
+  if (left.kind === "reasoning" && right.kind === "message") {
+    return reasoningSequence(
+      left.value,
+      messages,
+      explicitSequences,
+      modelWindows,
+    ) === right.value.sequence
+      ? -1
+      : 0;
   }
-  for (const entry of [...unanchoredReasoning].sort(compareReasoning)) {
-    timeline.push({ kind: "reasoning", value: entry });
+  if (right.kind === "reasoning" && left.kind === "message") {
+    return reasoningSequence(
+      right.value,
+      messages,
+      explicitSequences,
+      modelWindows,
+    ) === left.value.sequence
+      ? 1
+      : 0;
   }
-  return timeline;
+  if (left.kind === "reasoning" && right.kind === "assistant") return -1;
+  if (right.kind === "reasoning" && left.kind === "assistant") return 1;
+  return 0;
+}
+
+function reasoningSequence(
+  entry: ReasoningEntry,
+  messages: readonly SequencedMessage[],
+  explicitSequences: ReadonlyMap<string, Sequence>,
+  modelWindows: ReadonlyMap<string, ModelWindow>,
+): Sequence | undefined {
+  return (
+    explicitSequences.get(entry.source) ??
+    inferMessageSequence(entry.source, messages, modelWindows)
+  );
+}
+
+function entryCreatedAt(entry: ConversationTimelineEntry): string {
+  return entry.kind === "message"
+    ? entry.value.message.createdAt
+    : entry.value.createdAt;
+}
+
+function entryRank(entry: ConversationTimelineEntry): number {
+  switch (entry.kind) {
+    case "message":
+      return entry.value.message.role === MessageRole.ASSISTANT ? 3 : 0;
+    case "activity":
+      return 1;
+    case "reasoning":
+      return 2;
+    case "assistant":
+      return 3;
+  }
+}
+
+function entryIdentity(entry: ConversationTimelineEntry): string {
+  switch (entry.kind) {
+    case "message":
+      return `message:${String(entry.value.sequence).padStart(16, "0")}`;
+    case "activity":
+      return `activity:${entry.value.resumeToken}`;
+    case "reasoning":
+      return `reasoning:${entry.value.source}`;
+    case "assistant":
+      return `assistant:${entry.value.source}`;
+  }
 }
 
 function modelMessageSequences(
@@ -120,16 +217,6 @@ function inferMessageSequence(
     );
   });
   return candidates.length === 1 ? candidates[0]?.sequence : undefined;
-}
-
-function compareReasoning(left: ReasoningEntry, right: ReasoningEntry): number {
-  const leftTimestamp = parseTimestamp(left.createdAt);
-  const rightTimestamp = parseTimestamp(right.createdAt);
-  if (leftTimestamp !== null && rightTimestamp !== null) {
-    const difference = leftTimestamp - rightTimestamp;
-    if (difference !== 0) return difference;
-  }
-  return left.source.localeCompare(right.source);
 }
 
 function parseTimestamp(value: string): number | null {

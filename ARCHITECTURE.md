@@ -69,13 +69,14 @@ table are in `docs/flow-model.md`.
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
 and Run identity through one reducer action. Three cancellable event polls apply
-assistant, reasoning-summary, and activity deltas. Reasoning entries are keyed
-by the producing model invocation source. Completion activity marks later text
-from the same source as finalizing instead of starting a second live response.
-Model activity carries the target durable message sequence. The browser places
-each reasoning summary before that assistant message. If sequence metadata is
-unavailable, one completed model activity window may identify exactly one
-assistant message; ambiguous summaries remain with the current live output.
+assistant, reasoning-summary, and activity deltas. The browser orders every
+observed activity event, reasoning summary, live assistant response, and durable
+message in one timeline by creation time. Reasoning entries are keyed by the
+producing model invocation source. Completion activity marks later text from
+the same source as finalizing instead of starting a second live response. Model
+activity carries the target durable message sequence. The browser places each
+reasoning summary before that assistant message when timestamps tie or are
+unavailable. Unanchored reasoning retains its own chronological position.
 `AgentInteractionStatus` alternates between `submitted` and `waiting`. The
 browser long-polls those durable values and reads Snapshot after a real durable
 wait. Server errors, explicit reconcile, and a visible-page ten-second
@@ -83,9 +84,11 @@ lifecycle fallback also reconcile. Commands and ordinary Stream events do not.
 Terminal reconciliation stops Streams, Attribute waits, and fallback polling.
 
 Resume tokens belong to the live subscription and are not durable UI state.
-Retained events may replay after refresh. Completed-source tracking prevents
-those events from duplicating durable assistant messages and keeps replayed
-reasoning summaries in a completed state.
+Activity events are independent timeline rows keyed by resume token. A page
+refresh starts from an empty token, so Dex may replay events from its retained
+head. Events removed by Stream retention are not reconstructed. Completed-source
+tracking prevents replayed text from duplicating durable assistant messages and
+keeps replayed reasoning summaries in a completed state.
 Every poll, Snapshot, and command owns cancellation and rejects stale responses.
 Message send displays one local, non-actionable `Submitting` item and changes it
 to `Queued` after HTTP acceptance. Failure restores its composer text and plan

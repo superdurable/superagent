@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -149,6 +150,61 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	requestJSON(t, http.MethodGet, archiveURL, nil, http.StatusOK, &archive)
 	if len(archive.Messages) != 10 || archive.Messages[0].Sequence != 1 || archive.Messages[9].Sequence != 10 {
 		t.Fatalf("archived history = %#v", archive)
+	}
+
+	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
+		FlowId: transportapi.FlowID(flowID), Content: "Plan through HTTP", PlanMode: true,
+	}, http.StatusAccepted, nil)
+	requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot)
+	description, ok := snapshot.Description.Get()
+	if !ok || description.Plan.IsNull() {
+		t.Fatalf("Plan Snapshot = %#v", snapshot)
+	}
+	plan, ok := description.Plan.Get()
+	if !ok {
+		t.Fatalf("Plan = %#v", description.Plan)
+	}
+	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/plans/execute", &transportapi.ExecutePlanRequest{
+		FlowId: transportapi.FlowID(flowID), Revision: plan.Revision,
+	}, http.StatusAccepted, nil)
+	activity := readHTTPActivityUntil(t, baseURL, flowID, func(event transportapi.AgentEvent) bool {
+		return event.Kind == transportapi.EventKindPlanTaskUpdated &&
+			event.PlanTaskStatus.Or("") == transportapi.TaskStatusInProgress
+	})
+	if activity.Value.PlanBaseRevision.Or(0) != plan.Revision ||
+		activity.Value.PlanRevision.Or(0) != plan.Revision+1 ||
+		activity.Value.PlanTaskIndex.Or(-1) != 0 ||
+		activity.Value.Message != "Started plan task 1." {
+		t.Fatalf("Plan task Activity = %#v", activity)
+	}
+}
+
+func readHTTPActivityUntil(
+	t *testing.T,
+	baseURL string,
+	flowID string,
+	matches func(transportapi.AgentEvent) bool,
+) transportapi.ActivityStreamEvent {
+	t.Helper()
+	resumeToken := ""
+	for {
+		eventURL := fmt.Sprintf(
+			"%s/products/ai-agent/events?flowId=%s&stream=activity&resumeToken=%s",
+			baseURL,
+			url.QueryEscape(flowID),
+			url.QueryEscape(resumeToken),
+		)
+		var event transportapi.StreamEvent
+		requestJSON(t, http.MethodGet, eventURL, nil, http.StatusOK, &event)
+		activity, ok := event.GetActivityStreamEvent()
+		if !ok {
+			t.Fatalf("event is not Activity: %#v", event)
+		}
+		resumeToken = string(activity.ResumeToken)
+		if matches(activity.Value) {
+			return activity
+		}
 	}
 }
 

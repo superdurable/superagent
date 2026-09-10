@@ -725,14 +725,42 @@ func (s *AgentEvent) encodeFields(e *jx.Encoder) {
 		e.FieldStart("messageSequence")
 		s.MessageSequence.Encode(e)
 	}
+	{
+		if s.PlanBaseRevision.Set {
+			e.FieldStart("planBaseRevision")
+			s.PlanBaseRevision.Encode(e)
+		}
+	}
+	{
+		if s.PlanRevision.Set {
+			e.FieldStart("planRevision")
+			s.PlanRevision.Encode(e)
+		}
+	}
+	{
+		if s.PlanTaskIndex.Set {
+			e.FieldStart("planTaskIndex")
+			s.PlanTaskIndex.Encode(e)
+		}
+	}
+	{
+		if s.PlanTaskStatus.Set {
+			e.FieldStart("planTaskStatus")
+			s.PlanTaskStatus.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfAgentEvent = [5]string{
+var jsonFieldsNameOfAgentEvent = [9]string{
 	0: "kind",
 	1: "message",
 	2: "callId",
 	3: "toolName",
 	4: "messageSequence",
+	5: "planBaseRevision",
+	6: "planRevision",
+	7: "planTaskIndex",
+	8: "planTaskStatus",
 }
 
 // Decode decodes AgentEvent from json.
@@ -740,7 +768,7 @@ func (s *AgentEvent) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode AgentEvent to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -796,6 +824,46 @@ func (s *AgentEvent) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"messageSequence\"")
 			}
+		case "planBaseRevision":
+			if err := func() error {
+				s.PlanBaseRevision.Reset()
+				if err := s.PlanBaseRevision.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"planBaseRevision\"")
+			}
+		case "planRevision":
+			if err := func() error {
+				s.PlanRevision.Reset()
+				if err := s.PlanRevision.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"planRevision\"")
+			}
+		case "planTaskIndex":
+			if err := func() error {
+				s.PlanTaskIndex.Reset()
+				if err := s.PlanTaskIndex.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"planTaskIndex\"")
+			}
+		case "planTaskStatus":
+			if err := func() error {
+				s.PlanTaskStatus.Reset()
+				if err := s.PlanTaskStatus.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"planTaskStatus\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -805,8 +873,9 @@ func (s *AgentEvent) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b00011111,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -2148,6 +2217,8 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindPlanStarted
 	case EventKindPlanUpdated:
 		*s = EventKindPlanUpdated
+	case EventKindPlanTaskUpdated:
+		*s = EventKindPlanTaskUpdated
 	case EventKindSteeringApplied:
 		*s = EventKindSteeringApplied
 	case EventKindCompactionFailed:
@@ -3631,6 +3702,108 @@ func (s *OptFloat64) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes int as json.
+func (o OptNilInt) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Int(int(o.Value))
+}
+
+// Decode decodes int from json.
+func (o *OptNilInt) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilInt to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v int
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	v, err := d.Int()
+	if err != nil {
+		return err
+	}
+	o.Value = int(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilInt) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilInt) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int64 as json.
+func (o OptNilInt64) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Int64(int64(o.Value))
+}
+
+// Decode decodes int64 from json.
+func (o *OptNilInt64) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilInt64 to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v int64
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	v, err := d.Int64()
+	if err != nil {
+		return err
+	}
+	o.Value = int64(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilInt64) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilInt64) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes string as json.
 func (o OptNilString) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -3678,6 +3851,55 @@ func (s OptNilString) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptNilString) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes TaskStatus as json.
+func (o OptNilTaskStatus) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes TaskStatus from json.
+func (o *OptNilTaskStatus) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilTaskStatus to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v TaskStatus
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilTaskStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilTaskStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

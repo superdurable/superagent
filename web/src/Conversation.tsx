@@ -132,6 +132,13 @@ export function Conversation({
     state.kind === "ready" && state.lifecycle === "active"
       ? state.subscriptionGeneration
       : -1;
+  const activeRunID =
+    state.kind === "ready" && state.lifecycle === "active"
+      ? state.snapshot.runId
+      : null;
+  useEffect(() => {
+    resetResumeTokens(resumeTokens.current);
+  }, [flowId, activeRunID]);
   useEffect(() => {
     if (subscriptionGeneration < 0) return;
     const controller = new AbortController();
@@ -156,7 +163,6 @@ export function Conversation({
           }
           isCurrent = false;
           controller.abort();
-          resetResumeTokens(resumeTokens.current);
           dispatch({
             type: "stream-failed",
             message: `Live updates disconnected: ${errorMessage(reason)}`,
@@ -169,7 +175,7 @@ export function Conversation({
       isCurrent = false;
       controller.abort();
     };
-  }, [flowId, subscriptionGeneration]);
+  }, [flowId, activeRunID, subscriptionGeneration]);
 
   const interactionStatus =
     state.kind === "ready" && state.lifecycle === "active"
