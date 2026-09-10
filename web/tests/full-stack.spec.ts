@@ -15,6 +15,18 @@ test("renders chronological transient activity and durable queue interactions", 
   test.setTimeout(120_000);
   const snapshots: number[] = [];
   const commandStatuses: number[] = [];
+  let shouldHoldMessage = true;
+  let releaseMessage: () => void = () => undefined;
+  const heldMessage = new Promise<void>((resolve) => {
+    releaseMessage = resolve;
+  });
+  await page.route("**/products/ai-agent/messages", async (route) => {
+    if (shouldHoldMessage) {
+      shouldHoldMessage = false;
+      await heldMessage;
+    }
+    await route.continue();
+  });
   page.on("response", (response) => {
     const path = new URL(response.url()).pathname;
     if (path === "/products/ai-agent/snapshot")
@@ -54,6 +66,7 @@ test("renders chronological transient activity and durable queue interactions", 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(composer).toBeFocused();
   await expect(page.getByText("Submitting…")).toBeVisible();
+  releaseMessage();
 
   const history = page.getByRole("region", { name: "Conversation history" });
   await expect(history.getByText("Checked the constraints")).toBeVisible();
