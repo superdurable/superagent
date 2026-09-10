@@ -115,7 +115,11 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
 
 	environment.replaceWorker(t)
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/tool", false)); err != nil {
+	if _, err := environment.agent.SendMessage(
+		t.Context(),
+		flowID,
+		integrationUserMessage(`/tool integration_tool {"attempt":2}`, false),
+	); err != nil {
 		t.Fatal(err)
 	}
 	approval := waitForPendingApproval(t, environment, flowID)
@@ -196,12 +200,11 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if err != nil || !replayedExecution.IsReplay || replayedExecution.AcceptedAt != executionReceipt.AcceptedAt {
 		t.Fatalf("replayed plan execution = %#v, %v; first = %#v", replayedExecution, err, executionReceipt)
 	}
-	_, completedPlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+	completedPlanReplay, completedPlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
 		RequestID: integrationRequestID("execute-plan"), Revision: plan.Revision,
 	})
-	var completedPlan *CommandRejectedError
-	if !errors.As(completedPlanErr, &completedPlan) || completedPlan.Command != CommandExecutePlan {
-		t.Fatalf("completed plan execution error = %T %v", completedPlanErr, completedPlanErr)
+	if completedPlanErr != nil || !completedPlanReplay.IsReplay || completedPlanReplay.AcceptedAt != executionReceipt.AcceptedAt {
+		t.Fatalf("completed plan execution replay = %#v, %v", completedPlanReplay, completedPlanErr)
 	}
 
 	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/ask deployment region", false)); err != nil {
@@ -368,6 +371,16 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 		replayed.InitialMessage.AcceptedAt != first.InitialMessage.AcceptedAt {
 		t.Fatalf("replayed EnsureStarted receipt = %#v; first = %#v", replayed, first)
 	}
+	identityReplayRequest := request
+	identityReplayRequest.RequestID = integrationRequestID("ensure-alias")
+	identityReplay, err := environment.agent.EnsureStarted(t.Context(), flowID, identityReplayRequest)
+	if err != nil {
+		t.Fatalf("EnsureStarted global-identity replay: %v", err)
+	}
+	if !identityReplay.IsReplay || identityReplay.InitialMessage == nil || !identityReplay.InitialMessage.IsReplay ||
+		identityReplay.InitialMessage.AcceptedAt != first.InitialMessage.AcceptedAt {
+		t.Fatalf("global-identity replay = %#v; first = %#v", identityReplay, first)
+	}
 
 	message, found := readApplicationMessage(t, environment, flowID, 1)
 	if !found || message.MessageID != messageID || message.CreatedAt != first.InitialMessage.AcceptedAt {
@@ -387,9 +400,41 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 	conflictingMessage.Content = "different initial request"
 	requestConflict.InitialMessage = &conflictingMessage
 	_, requestErr := environment.agent.EnsureStarted(t.Context(), flowID, requestConflict)
-	var commandConflict *CommandIdempotencyConflictError
-	if !errors.As(requestErr, &commandConflict) || commandConflict.Command != CommandStart {
-		t.Fatalf("EnsureStarted request conflict = %T %v", requestErr, requestErr)
+	if !errors.As(requestErr, &identityConflict) {
+		t.Fatalf("EnsureStarted global initial-message conflict = %T %v", requestErr, requestErr)
+	}
+	differentRequestConflict := requestConflict
+	differentRequestConflict.RequestID = integrationRequestID("ensure-different-initial")
+	_, differentRequestErr := environment.agent.EnsureStarted(t.Context(), flowID, differentRequestConflict)
+	if !errors.As(differentRequestErr, &identityConflict) {
+		t.Fatalf("EnsureStarted different-request initial-message conflict = %T %v", differentRequestErr, differentRequestErr)
+	}
+
+	terminalMessage := integrationUserMessage("accepted before terminal transition", false)
+	terminalMessageReceipt, err := environment.agent.SendMessage(t.Context(), flowID, terminalMessage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedMessage := integrationUserMessage("deleted before terminal transition", false)
+	if _, err := environment.agent.SendMessage(t.Context(), flowID, deletedMessage); err != nil {
+		t.Fatal(err)
+	}
+	waitForQueuedMessages(t, environment, flowID, 2)
+	deleteRequest := DeleteQueuedMessageRequest{
+		RequestID: integrationRequestID("delete-terminal"),
+		MessageID: deletedMessage.Message.MessageID,
+	}
+	deleteReceipt, err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, deleteRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steerRequest := SteerMessageRequest{
+		RequestID: integrationRequestID("steer-terminal"),
+		MessageID: terminalMessage.Message.MessageID,
+	}
+	steerReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	cancelRequestID := RequestID("cancel-" + randomLocalID(t))
@@ -407,6 +452,30 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 	if !replayedCancellation.IsReplay || replayedCancellation.FlowStatus != FlowStatusCanceled ||
 		replayedCancellation.AcceptedAt != canceled.AcceptedAt {
 		t.Fatalf("replayed cancellation = %#v; first = %#v", replayedCancellation, canceled)
+	}
+	terminalStartReplay, err := environment.agent.EnsureStarted(t.Context(), flowID, request)
+	if err != nil {
+		t.Fatalf("EnsureStarted terminal replay: %v", err)
+	}
+	if !terminalStartReplay.IsReplay || terminalStartReplay.AcceptedAt != first.AcceptedAt ||
+		terminalStartReplay.InitialMessage == nil ||
+		terminalStartReplay.InitialMessage.AcceptedAt != first.InitialMessage.AcceptedAt {
+		t.Fatalf("terminal start replay = %#v; first = %#v", terminalStartReplay, first)
+	}
+	terminalMessageReplay, err := environment.agent.SendMessage(t.Context(), flowID, terminalMessage)
+	if err != nil {
+		t.Fatalf("SendMessage terminal replay: %v", err)
+	}
+	if !terminalMessageReplay.IsReplay || terminalMessageReplay.AcceptedAt != terminalMessageReceipt.AcceptedAt {
+		t.Fatalf("terminal message replay = %#v; first = %#v", terminalMessageReplay, terminalMessageReceipt)
+	}
+	terminalDeleteReplay, err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, deleteRequest)
+	if err != nil || !terminalDeleteReplay.IsReplay || terminalDeleteReplay.AcceptedAt != deleteReceipt.AcceptedAt {
+		t.Fatalf("terminal delete replay = %#v, %v; first = %#v", terminalDeleteReplay, err, deleteReceipt)
+	}
+	terminalSteerReplay, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
+	if err != nil || !terminalSteerReplay.IsReplay || terminalSteerReplay.AcceptedAt != steerReceipt.AcceptedAt {
+		t.Fatalf("terminal steer replay = %#v, %v; first = %#v", terminalSteerReplay, err, steerReceipt)
 	}
 	_, terminalErr := environment.agent.Cancel(t.Context(), flowID, integrationRequestID("cancel"))
 	var terminal *AgentAlreadyTerminalError
@@ -448,6 +517,149 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
 	})
 	toolRegistry.assertApplicationContext(t, toolFlowID, approval.CallID, toolContext)
+}
+
+func TestAgentOriginMainFlowCompatibilityIntegration(t *testing.T) {
+	toolRegistry := newIntegrationToolRegistry()
+	environment := &agentIntegrationEnvironment{
+		flow:          NewFlow(integrationModel{}, toolRegistry),
+		address:       availableLocalAddress(t, t.Context()),
+		serverAddress: os.Getenv("DEX_FLOW_SERVICE_ADDRESS"),
+	}
+	if environment.serverAddress == "" {
+		environment.serverAddress = "127.0.0.1:8801"
+	}
+	legacyFlow := &originMainAgentFlow{}
+	environment.startWorkerWithFlow(t, legacyFlow, false)
+	t.Cleanup(func() {
+		if err := environment.close(t.Context()); err != nil {
+			t.Errorf("close legacy integration environment: %v", err)
+		}
+	})
+
+	config := NewAgentConfig()
+	activeFlowID := FlowID("agent-legacy-active-" + randomLocalID(t))
+	terminalFlowID := FlowID("agent-legacy-terminal-" + randomLocalID(t))
+	for _, flowID := range []FlowID{activeFlowID, terminalFlowID} {
+		requestID := "legacy-start:" + string(flowID)
+		if _, err := environment.sdk.StartFlow(
+			t.Context(),
+			legacyFlow,
+			string(flowID),
+			config,
+			dex.StartFlowOptions{IDReusePolicy: dex.IDReuseDisallow, RequestID: &requestID},
+		); err != nil {
+			t.Fatal(err)
+		}
+		var status AgentInteractionStatus
+		if err := environment.sdk.WaitForAttributeMatch(
+			t.Context(),
+			string(flowID),
+			originMainInteractionStatusAttribute,
+			dex.AttributeMatchEqual(AgentInteractionStatusWaiting),
+			&status,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := environment.sdk.StopFlow(t.Context(), string(terminalFlowID), dex.StopOptions{
+		Type:   dex.TerminateFlow,
+		Reason: "legacy terminal compatibility",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.sdk.WaitForFlow(t.Context(), string(terminalFlowID), dex.WaitForFlowOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.stopWorker(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	environment.startWorker(t)
+	uninitializedFlowID := FlowID("agent-legacy-uninitialized-" + randomLocalID(t))
+	uninitializedRequestID := "legacy-uninitialized:" + string(uninitializedFlowID)
+	if _, err := environment.sdk.StartFlow(
+		t.Context(),
+		environment.flow,
+		string(uninitializedFlowID),
+		config,
+		dex.StartFlowOptions{IDReusePolicy: dex.IDReuseDisallow, RequestID: &uninitializedRequestID},
+	); err != nil {
+		t.Fatal(err)
+	}
+	uninitializedResult, err := environment.sdk.WaitForFlow(
+		t.Context(),
+		string(uninitializedFlowID),
+		dex.WaitForFlowOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uninitializedResult.Status != dex.FlowFailed ||
+		!strings.Contains(uninitializedResult.ErrorMessage, "legacy Agent start identity is unavailable") {
+		t.Fatalf("uninitialized legacy Flow result = %#v", uninitializedResult)
+	}
+
+	unprovenRequest := EnsureStartRequest{
+		RequestID: integrationRequestID("unproven-legacy"),
+		Config:    config,
+	}
+	_, unprovenErr := environment.agent.EnsureStarted(t.Context(), activeFlowID, unprovenRequest)
+	var legacyIdentity *LegacyStartIdentityError
+	if !errors.As(unprovenErr, &legacyIdentity) {
+		t.Fatalf("unproven active legacy identity = %T %v", unprovenErr, unprovenErr)
+	}
+	migrationRequest := EnsureStartRequest{
+		RequestID: originMainStartRequestID(activeFlowID),
+		Config:    config,
+	}
+	migrated, err := environment.agent.EnsureStarted(t.Context(), activeFlowID, migrationRequest)
+	if err != nil {
+		t.Fatalf("migrate active origin/main Flow: %v", err)
+	}
+	if !migrated.IsReplay {
+		t.Fatalf("active legacy migration receipt = %#v", migrated)
+	}
+	snapshot := readSnapshot(t, environment, activeFlowID)
+	if len(snapshot.History.Messages) != 1 || snapshot.History.Messages[0].Message.MessageID == "" ||
+		!strings.HasPrefix(string(snapshot.History.Messages[0].Message.MessageID), "legacy:") {
+		t.Fatalf("migrated legacy history = %#v", snapshot.History.Messages)
+	}
+	if _, err := environment.agent.SendMessage(t.Context(), activeFlowID, integrationUserMessage("/tool", false)); err != nil {
+		t.Fatal(err)
+	}
+	approval := waitForPendingApproval(t, environment, activeFlowID)
+	if _, err := environment.agent.ApproveTool(t.Context(), activeFlowID, ToolApprovalRequest{
+		RequestID: integrationRequestID("approve-legacy"),
+		CallID:    approval.CallID,
+		Approved:  true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, activeFlowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
+	})
+	toolRegistry.assertApplicationContext(t, activeFlowID, approval.CallID, "")
+
+	conflictingMigration := migrationRequest
+	conflictingMigration.RequestID = integrationRequestID("migrate-context")
+	conflictingMigration.ApplicationContext = `{"workspace_id":"cannot-infer"}`
+	_, conflictErr := environment.agent.EnsureStarted(t.Context(), activeFlowID, conflictingMigration)
+	var identityConflict *StartIdentityConflictError
+	if !errors.As(conflictErr, &identityConflict) {
+		t.Fatalf("migrated Flow context conflict = %T %v", conflictErr, conflictErr)
+	}
+
+	terminalReplay := EnsureStartRequest{RequestID: originMainStartRequestID(terminalFlowID), Config: config}
+	replayed, terminalErr := environment.agent.EnsureStarted(t.Context(), terminalFlowID, terminalReplay)
+	if terminalErr != nil || !replayed.IsReplay {
+		t.Fatalf("terminal legacy exact replay = %#v, %v", replayed, terminalErr)
+	}
+	terminalUnproven := terminalReplay
+	terminalUnproven.RequestID = integrationRequestID("unproven-terminal")
+	_, terminalUnprovenErr := environment.agent.EnsureStarted(t.Context(), terminalFlowID, terminalUnproven)
+	if !errors.As(terminalUnprovenErr, &legacyIdentity) {
+		t.Fatalf("terminal unproven legacy identity = %T %v", terminalUnprovenErr, terminalUnprovenErr)
+	}
 }
 
 func TestAgentMessageIdempotencyIntegration(t *testing.T) {
@@ -524,6 +736,175 @@ func TestAgentMessageIdempotencyIntegration(t *testing.T) {
 	}
 	if strings.Contains(string(encodedAccepted), request.Message.Content) {
 		t.Fatalf("accepted-message record copied content: %s", encodedAccepted)
+	}
+}
+
+func TestAgentConcurrentDomainCommandFencingIntegration(t *testing.T) {
+	toolRegistry := newIntegrationToolRegistry()
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, toolRegistry)
+	flowID := FlowID("agent-command-fence-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/tool", false)); err != nil {
+		t.Fatal(err)
+	}
+	approval := waitForPendingApproval(t, environment, flowID)
+	approvalRequests := []ToolApprovalRequest{
+		{RequestID: integrationRequestID("approve-race"), CallID: approval.CallID, Approved: true},
+		{RequestID: integrationRequestID("approve-race"), CallID: approval.CallID, Approved: true},
+	}
+	approvalReceipts := invokeConcurrentApprovals(t, environment, flowID, approvalRequests)
+	assertOneDomainAcceptance(t, approvalReceipts)
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
+	})
+	toolRegistry.assertExecutionCount(t, 1)
+	oppositeRequest := ToolApprovalRequest{
+		RequestID: integrationRequestID("approve-opposite"),
+		CallID:    approval.CallID,
+		Approved:  false,
+	}
+	_, oppositeErr := environment.agent.ApproveTool(t.Context(), flowID, oppositeRequest)
+	var rejected *CommandRejectedError
+	if !errors.As(oppositeErr, &rejected) || rejected.Command != CommandApproveTool {
+		t.Fatalf("opposite approval after fenced acceptance = %T %v", oppositeErr, oppositeErr)
+	}
+
+	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("ship safely", true)); err != nil {
+		t.Fatal(err)
+	}
+	plan := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	planRequests := []PlanExecutionRequest{
+		{RequestID: integrationRequestID("plan-race"), Revision: plan.Revision},
+		{RequestID: integrationRequestID("plan-race"), Revision: plan.Revision},
+	}
+	planReceipts := invokeConcurrentPlanExecutions(t, environment, flowID, planRequests)
+	assertOneDomainAcceptance(t, planReceipts)
+	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
+	if err := environment.sdk.StopFlow(t.Context(), string(flowID), dex.StopOptions{
+		Type:   dex.TerminateFlow,
+		Reason: "terminal command reconciliation integration",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.sdk.WaitForFlow(t.Context(), string(flowID), dex.WaitForFlowOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	terminalApproval, err := environment.agent.ApproveTool(t.Context(), flowID, approvalRequests[0])
+	if err != nil || !terminalApproval.IsReplay || terminalApproval.AcceptedAt != approvalReceipts[0].AcceptedAt {
+		t.Fatalf("terminal approval replay = %#v, %v", terminalApproval, err)
+	}
+	terminalPlan, err := environment.agent.ExecutePlan(t.Context(), flowID, planRequests[0])
+	if err != nil || !terminalPlan.IsReplay || terminalPlan.AcceptedAt != planReceipts[0].AcceptedAt {
+		t.Fatalf("terminal plan replay = %#v, %v", terminalPlan, err)
+	}
+}
+
+func invokeConcurrentApprovals(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	requests []ToolApprovalRequest,
+) []CommandReceipt {
+	t.Helper()
+	type result struct {
+		index   int
+		receipt CommandReceipt
+		err     error
+	}
+	gate := make(chan struct{})
+	results := make(chan result, len(requests))
+	var wg sync.WaitGroup
+	for index, request := range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			receipt, err := environment.agent.ApproveTool(t.Context(), flowID, request)
+			results <- result{index: index, receipt: receipt, err: err}
+		}()
+	}
+	close(gate)
+	wg.Wait()
+	close(results)
+	receipts := make([]CommandReceipt, len(requests))
+	for result := range results {
+		if result.err != nil {
+			var conflict *dex.RPCLockConflictError
+			if !errors.As(result.err, &conflict) {
+				t.Fatalf("concurrent approval %d: %v", result.index, result.err)
+			}
+			result.receipt, result.err = environment.agent.ApproveTool(t.Context(), flowID, requests[result.index])
+		}
+		if result.err != nil {
+			t.Fatalf("retry concurrent approval %d: %v", result.index, result.err)
+		}
+		receipts[result.index] = result.receipt
+	}
+	return receipts
+}
+
+func invokeConcurrentPlanExecutions(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	requests []PlanExecutionRequest,
+) []CommandReceipt {
+	t.Helper()
+	type result struct {
+		index   int
+		receipt CommandReceipt
+		err     error
+	}
+	gate := make(chan struct{})
+	results := make(chan result, len(requests))
+	var wg sync.WaitGroup
+	for index, request := range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			receipt, err := environment.agent.ExecutePlan(t.Context(), flowID, request)
+			results <- result{index: index, receipt: receipt, err: err}
+		}()
+	}
+	close(gate)
+	wg.Wait()
+	close(results)
+	receipts := make([]CommandReceipt, len(requests))
+	for result := range results {
+		if result.err != nil {
+			var conflict *dex.RPCLockConflictError
+			if !errors.As(result.err, &conflict) {
+				t.Fatalf("concurrent plan execution %d: %v", result.index, result.err)
+			}
+			result.receipt, result.err = environment.agent.ExecutePlan(t.Context(), flowID, requests[result.index])
+		}
+		if result.err != nil {
+			t.Fatalf("retry concurrent plan execution %d: %v", result.index, result.err)
+		}
+		receipts[result.index] = result.receipt
+	}
+	return receipts
+}
+
+func assertOneDomainAcceptance(t *testing.T, receipts []CommandReceipt) {
+	t.Helper()
+	if len(receipts) != 2 || receipts[0].AcceptedAt.IsZero() || receipts[0].AcceptedAt != receipts[1].AcceptedAt {
+		t.Fatalf("fenced command receipts = %#v", receipts)
+	}
+	replayCount := 0
+	for _, receipt := range receipts {
+		if receipt.IsReplay {
+			replayCount++
+		}
+	}
+	if replayCount != 1 {
+		t.Fatalf("fenced command replay count = %d; receipts = %#v", replayCount, receipts)
 	}
 }
 
@@ -1061,6 +1442,144 @@ func answerRequest(input PendingUserInput, answer string) AnswerQuestionsRequest
 	}
 }
 
+var (
+	originMainConfigAttribute             = dex.DefineAttribute[AgentConfig]("AgentConfig")
+	originMainApplicationContextAttribute = dex.DefineAttribute[string]("ApplicationContext")
+	originMainInitializedAttribute        = dex.DefineAttribute[bool]("AgentInitialized")
+	originMainStateAttribute              = dex.DefineAttribute[AgentState]("AgentState")
+	originMainInteractionStatusAttribute  = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
+	originMainMessagesAttribute           = dex.DefineAttributeMap[originMainAgentMessage]("CurrentMessages")
+	originMainDurableCommandsAttribute    = dex.DefineAttributeMap[durableCommandRecord]("DurableCommands")
+	originMainQueuedChannel               = dex.DefineChannel[originMainUserMessage]("QueuedUserMessages")
+)
+
+type originMainUserMessage struct {
+	Content  string `json:"content"`
+	PlanMode bool   `json:"plan_mode"`
+}
+
+type originMainAgentMessage struct {
+	Role                 MessageRole           `json:"role"`
+	Content              string                `json:"content"`
+	ToolCalls            []ToolCall            `json:"tool_calls"`
+	ToolCallID           *CallID               `json:"tool_call_id,omitempty"`
+	ToolName             *ToolName             `json:"tool_name,omitempty"`
+	ProviderContextItems []ProviderContextItem `json:"provider_context_items"`
+	CreatedAt            time.Time             `json:"created_at"`
+}
+
+type originMainAgentFlow struct{}
+
+var _ dex.Flow = (*originMainAgentFlow)(nil)
+
+func (*originMainAgentFlow) GetFlowType() string { return flowTypeAIAgent }
+
+func (*originMainAgentFlow) GetSteps() []dex.StepDef {
+	return []dex.StepDef{
+		dex.DefineStartStep(originMainInitStep{}),
+		dex.DefineStep(originMainAwaitStep{}),
+	}
+}
+
+func (*originMainAgentFlow) GetPersistenceSchema() dex.PersistenceSchema {
+	return dex.PersistenceSchema{
+		Attributes: []dex.AttributeDef{
+			originMainConfigAttribute,
+			originMainApplicationContextAttribute,
+			originMainInitializedAttribute,
+			originMainStateAttribute,
+			originMainInteractionStatusAttribute,
+			originMainMessagesAttribute,
+			originMainDurableCommandsAttribute,
+		},
+		Channels: []dex.ChannelDef{originMainQueuedChannel},
+	}
+}
+
+type originMainInitStep struct {
+	dex.StepDefaultsNoWaitFor[AgentConfig]
+}
+
+var _ dex.Step[AgentConfig] = originMainInitStep{}
+
+func (originMainInitStep) GetStepType() string { return string(stepTypeInit) }
+
+func (originMainInitStep) Execute(ctx dex.Context, config AgentConfig) (*dex.StepDecision, error) {
+	state := NewAgentState()
+	state.NextSequence = 2
+	state.LastSequence = 1
+	if err := originMainConfigAttribute.Set(ctx, config); err != nil {
+		return nil, err
+	}
+	if err := originMainApplicationContextAttribute.Set(ctx, ""); err != nil {
+		return nil, err
+	}
+	if err := originMainStateAttribute.Set(ctx, state); err != nil {
+		return nil, err
+	}
+	if err := originMainInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
+	if err := originMainInitializedAttribute.Set(ctx, true); err != nil {
+		return nil, err
+	}
+	requestID := originMainStartRequestID(FlowID(ctx.FlowID()))
+	fingerprint, err := (EnsureStartRequest{RequestID: requestID, Config: config}).fingerprint()
+	if err != nil {
+		return nil, err
+	}
+	if err := originMainDurableCommandsAttribute.Set(
+		ctx,
+		durableCommandInstance(CommandStart, requestID),
+		durableCommandRecord{
+			RequestID:   requestID,
+			Command:     CommandStart,
+			Fingerprint: fingerprint,
+			RecordedAt:  time.Now().UTC(),
+			Outcome:     durableCommandAccepted,
+		},
+	); err != nil {
+		return nil, err
+	}
+	if err := originMainMessagesAttribute.Set(ctx, sequenceKey(1), originMainAgentMessage{
+		Role:                 MessageRoleUser,
+		Content:              "message persisted by origin/main",
+		ToolCalls:            []ToolCall{},
+		ProviderContextItems: []ProviderContextItem{},
+		CreatedAt:            time.Now().UTC(),
+	}); err != nil {
+		return nil, err
+	}
+	return dex.GoTo(originMainAwaitStep{}, nil), nil
+}
+
+func originMainStartRequestID(flowID FlowID) RequestID {
+	return RequestID("origin-main-start:" + string(flowID))
+}
+
+type originMainAwaitStep struct {
+	dex.StepDefaults
+}
+
+var _ dex.Step[dex.None] = originMainAwaitStep{}
+
+func (originMainAwaitStep) GetStepType() string { return string(stepTypeAwaitUser) }
+
+func (originMainAwaitStep) GetStepOptions() *dex.StepOptions {
+	return &dex.StepOptions{ExecuteLoadAttributeMaps: []dex.AttributeDef{originMainMessagesAttribute}}
+}
+
+func (originMainAwaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
+	if err := originMainInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
+		return nil, err
+	}
+	return dex.Until(originMainQueuedChannel.ForOne()), nil
+}
+
+func (originMainAwaitStep) Execute(dex.Context, dex.None) (*dex.StepDecision, error) {
+	return dex.GoTo(originMainAwaitStep{}, nil), nil
+}
+
 type agentIntegrationEnvironment struct {
 	flow          *Flow
 	address       string
@@ -1093,7 +1612,16 @@ func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools
 
 func (environment *agentIntegrationEnvironment) startWorker(t *testing.T) {
 	t.Helper()
-	registry, err := dex.NewRegistry([]dex.Flow{environment.flow})
+	environment.startWorkerWithFlow(t, environment.flow, true)
+}
+
+func (environment *agentIntegrationEnvironment) startWorkerWithFlow(
+	t *testing.T,
+	registeredFlow dex.Flow,
+	isCurrentAgent bool,
+) {
+	t.Helper()
+	registry, err := dex.NewRegistry([]dex.Flow{registeredFlow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,7 +1660,11 @@ func (environment *agentIntegrationEnvironment) startWorker(t *testing.T) {
 	environment.worker = worker
 	environment.workerResult = workerResult
 	environment.sdk = sdkClient
-	environment.agent = NewClient(sdkClient, environment.flow)
+	if isCurrentAgent {
+		environment.agent = NewClient(sdkClient, environment.flow)
+	} else {
+		environment.agent = nil
+	}
 	waitForWorkerAddress(t, environment)
 }
 

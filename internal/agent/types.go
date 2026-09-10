@@ -589,6 +589,44 @@ func (request EnsureStartRequest) fingerprint() (string, error) {
 	return encodedFingerprint(encoded), nil
 }
 
+func (request EnsureStartRequest) identityFingerprint() (string, error) {
+	type initialMessageIdentity struct {
+		MessageID MessageID `json:"message_id"`
+		Content   string    `json:"content"`
+		PlanMode  bool      `json:"plan_mode"`
+	}
+	type startIdentity struct {
+		Version            int                     `json:"version"`
+		Config             AgentConfig             `json:"config"`
+		ApplicationContext string                  `json:"application_context"`
+		InitialMessage     *initialMessageIdentity `json:"initial_message,omitempty"`
+	}
+	config := request.Config
+	if config.EnabledMCPServers == nil {
+		config.EnabledMCPServers = []string{}
+	}
+	if config.EnabledTools == nil {
+		config.EnabledTools = []ToolName{}
+	}
+	identity := startIdentity{
+		Version:            1,
+		Config:             config,
+		ApplicationContext: request.ApplicationContext,
+	}
+	if request.InitialMessage != nil {
+		identity.InitialMessage = &initialMessageIdentity{
+			MessageID: request.InitialMessage.MessageID,
+			Content:   request.InitialMessage.Content,
+			PlanMode:  request.InitialMessage.PlanMode,
+		}
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return "", fmt.Errorf("encode Agent start identity: %w", err)
+	}
+	return encodedFingerprint(encoded), nil
+}
+
 // StartReceipt identifies the established durable Agent and optional first message acceptance.
 type StartReceipt struct {
 	RequestID      RequestID       `json:"request_id"`
@@ -846,6 +884,29 @@ type acceptedUserMessage struct {
 	AcceptedAt  time.Time `json:"accepted_at"`
 }
 
+type agentStartIdentity struct {
+	Version     int    `json:"version"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+type agentBootstrap struct {
+	RequestID           RequestID    `json:"request_id"`
+	CommandFingerprint  string       `json:"command_fingerprint"`
+	IdentityFingerprint string       `json:"identity_fingerprint"`
+	InitialMessage      *UserMessage `json:"initial_message,omitempty"`
+}
+
+type acceptedToolApproval struct {
+	CallID     CallID    `json:"call_id"`
+	Approved   bool      `json:"approved"`
+	AcceptedAt time.Time `json:"accepted_at"`
+}
+
+type acceptedPlanExecution struct {
+	Revision   PlanRevision `json:"revision"`
+	AcceptedAt time.Time    `json:"accepted_at"`
+}
+
 type durableCommandOutcome string
 
 const (
@@ -862,6 +923,7 @@ type durableCommandRecord struct {
 	RecordedAt     time.Time             `json:"recorded_at"`
 	Outcome        durableCommandOutcome `json:"outcome"`
 	IsEffectReplay bool                  `json:"is_effect_replay"`
+	IsBootstrap    bool                  `json:"is_bootstrap,omitempty"`
 }
 
 type durableCommandDisposition string
@@ -878,8 +940,13 @@ type durableCommandResult struct {
 }
 
 type confirmStartRequest struct {
-	RequestID   RequestID `json:"request_id"`
-	Fingerprint string    `json:"fingerprint"`
+	RequestID             RequestID    `json:"request_id"`
+	Config                AgentConfig  `json:"config"`
+	ApplicationContext    string       `json:"application_context"`
+	Fingerprint           string       `json:"fingerprint"`
+	IdentityFingerprint   string       `json:"identity_fingerprint"`
+	InitialMessage        *UserMessage `json:"initial_message,omitempty"`
+	AllowsLegacyMigration bool         `json:"allows_legacy_migration"`
 }
 
 // SteerMessageRequest atomically moves one queued message into steering.
@@ -1093,6 +1160,18 @@ func (err *StartIdentityConflictError) Error() string {
 	return fmt.Sprintf("agent Flow %q already exists with a different start identity", err.FlowID)
 }
 
+// LegacyStartIdentityError reports an old Flow whose global start identity cannot be established safely.
+type LegacyStartIdentityError struct {
+	FlowID FlowID
+}
+
+var _ error = (*LegacyStartIdentityError)(nil)
+
+// Error describes the required explicit replacement without exposing start payloads.
+func (err *LegacyStartIdentityError) Error() string {
+	return fmt.Sprintf("agent Flow %q predates global start identity and cannot accept this start request", err.FlowID)
+}
+
 // AgentAlreadyTerminalError reports a cancellation that did not cause an existing terminal Flow.
 type AgentAlreadyTerminalError struct {
 	FlowID FlowID
@@ -1195,6 +1274,16 @@ func durableCommandInstance(command Command, requestID RequestID) string {
 	return hex.EncodeToString(digest[:])
 }
 
+func acceptedToolApprovalInstance(callID CallID) string {
+	digest := sha256.Sum256([]byte(callID))
+	return hex.EncodeToString(digest[:])
+}
+
+func acceptedPlanExecutionInstance(revision PlanRevision) string {
+	digest := sha256.Sum256([]byte(fmt.Sprint(revision)))
+	return hex.EncodeToString(digest[:])
+}
+
 func encodedFingerprint(encoded []byte) string {
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
@@ -1226,6 +1315,11 @@ func userMessageFingerprint(message UserMessage) (string, error) {
 func generatedMessageID(flowID FlowID, runID RunID, sequence Sequence) MessageID {
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", flowID, runID, sequence)))
 	return MessageID("agent:" + hex.EncodeToString(digest[:]))
+}
+
+func legacyMessageID(flowID FlowID, sequence Sequence) MessageID {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", flowID, sequence)))
+	return MessageID("legacy:" + hex.EncodeToString(digest[:]))
 }
 
 // ModelReply is one complete provider response.

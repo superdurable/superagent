@@ -62,6 +62,19 @@ func TestStartAgentRejectsMissingProviderCredential(t *testing.T) {
 	}
 }
 
+func TestLegacyStartIdentityMapsToConflict(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{startErr: &agent.LegacyStartIdentityError{FlowID: "flow-1"}}
+	handler := newTestHandler(service, fakeCredentials{agent.ProviderOpenAI: true})
+	response, err := handler.StartAgent(context.Background(), validStartRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response.(*transportapi.StartAgentConflict); !ok {
+		t.Fatalf("response type = %T", response)
+	}
+}
+
 func TestCommandRejectionMapsToConflict(t *testing.T) {
 	t.Parallel()
 	service := &fakeAgentService{sendErr: &agent.CommandRejectedError{Command: agent.CommandSendMessage}}
@@ -520,6 +533,7 @@ func newTestHandler(service *fakeAgentService, credentials fakeCredentials) *Han
 type fakeAgentService struct {
 	started          agent.AgentConfig
 	startCalls       int
+	startErr         error
 	sendErr          error
 	answeredFlowID   agent.FlowID
 	answer           agent.AnswerQuestionsRequest
@@ -551,7 +565,7 @@ func (service *fakeAgentService) EnsureStarted(
 	service.started = request.Config
 	return agent.StartReceipt{
 		RequestID: request.RequestID, FlowID: flowID, RunID: "run-1", AcceptedAt: time.Unix(1, 0).UTC(),
-	}, nil
+	}, service.startErr
 }
 
 func (service *fakeAgentService) SendMessage(

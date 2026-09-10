@@ -51,7 +51,8 @@ depending on `internal/model` or duplicating provider wiring.
 ## Durable Agent model
 
 One stable `FlowID` identifies one conversation. `EnsureStarted` binds that ID
-to immutable `AgentConfig` plus an opaque application context. The context is
+to immutable `AgentConfig`, opaque application context, and the complete optional
+initial-message identity. The context is
 available only to trusted tool implementations and is never sent to the model,
 browser, or live Streams. `CurrentMessages` and
 `ArchivedMessages` are the typed application history; they are not Dex
@@ -67,6 +68,20 @@ different payload returns a typed idempotency conflict. `AcceptedUserMessages`
 independently deduplicates application message IDs without copying message
 content. Dex Channel UUIDs remain internal and queue mutations resolve the
 application message ID against a loaded Channel snapshot.
+
+The starting Step commits the start receipt, optional initial-message ledger,
+and optional initial-message publish in one Dex commit. A retry against a closed
+Flow reconstructs any already committed command receipt from Attributes and
+never invents acceptance. Per-call approval and per-revision plan-execution
+ledgers fence concurrent request IDs before either Channel effect is published.
+
+Flows created before global start identity existed have an explicit migration
+boundary. Only an exact start request recorded by the preceding lifecycle
+implementation can establish the missing identity on an active Flow. The same
+committed request remains read-only replayable after termination. Any identity
+without that durable proof is rejected. A legacy run that first reaches `Init`
+on the new Worker fails explicitly because its original first-message intent is
+not recoverable.
 
 Queued messages and validated question answers use `QueuedUserMessages`.
 Steering uses its own Channel. A queued message enters application history only

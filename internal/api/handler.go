@@ -1028,6 +1028,7 @@ func classifyFailure(err error) failureKind {
 	var messageConflict *agent.MessageIdempotencyConflictError
 	var commandConflict *agent.CommandIdempotencyConflictError
 	var startConflict *agent.StartIdentityConflictError
+	var legacyStartIdentity *agent.LegacyStartIdentityError
 	var archivedMessagesNotFound *agent.ArchivedMessagesNotFoundError
 	switch {
 	case errors.As(err, &notFound):
@@ -1042,7 +1043,8 @@ func classifyFailure(err error) failureKind {
 		errors.As(err, &pendingMessageNotFound),
 		errors.As(err, &messageConflict),
 		errors.As(err, &commandConflict),
-		errors.As(err, &startConflict):
+		errors.As(err, &startConflict),
+		errors.As(err, &legacyStartIdentity):
 		return failureConflict
 	default:
 		return failureUnavailable

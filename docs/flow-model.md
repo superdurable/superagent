@@ -4,8 +4,9 @@
 
 - Flow type: `AIAgentFlow`
 - Business identity: one stable Flow ID per durable Agent conversation
-- Start input: typed `AgentConfig`; `EnsureStarted` also persists opaque
-  application context and can compose an idempotent first message
+- Start input: typed `AgentConfig`; `EnsureStarted` atomically persists opaque
+  application context, global start identity, command receipt, and an optional
+  idempotent first message
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
 - Command RPCs: `ConfirmStart`, `SendMessage`, `AnswerQuestions`,
@@ -57,43 +58,47 @@ application history, and makes the model replan.
 
 ## Step responsibilities
 
-| Step | `WaitFor` | `Execute` and transition |
-|---|---|---|
-| `Init` | none | Validate and persist config/state, then `AwaitUser` |
-| `AwaitUser` | steered batch, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected durable command |
-| `CompactContext` | none | Call the summary provider, commit covered range and summary, then trim only already summarized retained messages |
-| `CallModel` | none | Rebuild provider-neutral context, stream buffered deltas, commit the complete assistant message and pending calls |
-| `CheckSteered` | bounded steered batch | Apply steering at a safe boundary or route the explicit continuation |
-| `RouteTool` | none | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path |
-| `AwaitToolApproval` | exact call-ID approval or steering | Persist waiting status beside the wait; consume one decision or replan |
-| `ExecuteTool` | none | Perform one external MCP effect with stable call ID and bounded policy, then persist its result |
-| `DurableWait` | Timer or steering | Persist waiting status beside the wait; record completion/interruption and continue |
+| Step                | `WaitFor`                                                    | `Execute` and transition                                                                                          |
+| ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `Init`              | none                                                         | Validate config, atomically commit bootstrap identity/receipt/message and state, then `AwaitUser`                  |
+| `AwaitUser`         | steered batch, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected durable command |
+| `CompactContext`    | none                                                         | Call the summary provider, commit covered range and summary, then trim only already summarized retained messages  |
+| `CallModel`         | none                                                         | Rebuild provider-neutral context, stream buffered deltas, commit the complete assistant message and pending calls |
+| `CheckSteered`      | bounded steered batch                                        | Apply steering at a safe boundary or route the explicit continuation                                              |
+| `RouteTool`         | none                                                         | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                   |
+| `AwaitToolApproval` | exact call-ID approval or steering                           | Persist waiting status beside the wait; consume one decision or replan                                            |
+| `ExecuteTool`       | none                                                         | Perform one external MCP effect with stable call ID and bounded policy, then persist its result                   |
+| `DurableWait`       | Timer or steering                                            | Persist waiting status beside the wait; record completion/interruption and continue                               |
 
 ## Durable resources
 
-| Resource | Kind | Purpose |
-|---|---|---|
-| `AgentConfig` | Attribute | Immutable execution configuration |
-| `ApplicationContext` | Attribute | Opaque trusted-application routing context; never model or browser context |
-| `AgentInitialized` | Attribute | Initialization boundary used by `EnsureStarted` replay |
-| `AgentState` | Attribute | Sequence range, mode, status, plan revision, and pending-call cursor |
-| `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
-| `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
-| `CurrentMessages` | AttributeMap | Recent provider-neutral messages keyed by sequence |
-| `ArchivedMessages` | AttributeMap | Ten-message chunks keyed by first sequence |
-| `AcceptedUserMessages` | AttributeMap | Message ID, payload fingerprint, and first acceptance time; no content copy |
-| `DurableCommands` | AttributeMap | Exact replay outcome keyed by command and caller request ID |
-| `AgentPlan` | Attribute | Atomically replaced short plan |
-| `PendingApproval` | Attribute | Reloadable approval request |
-| `PendingTimer` | Attribute | Reloadable durable wait description |
-| `PendingUserInput` | Attribute | Reloadable batch of one to three structured questions |
-| `QueuedUserMessages` | Channel | FIFO messages that do not interrupt active work |
-| `SteeredUserMessages` | Channel | Messages consumed only at safe boundaries |
-| `ToolApprovals` | ChannelMap | Approval decision partitioned by call ID |
-| `PlanExecutions` | ChannelMap | Execution request partitioned by plan revision |
-| `ReasoningSummary` | buffered Stream | Provider-authored reasoning summaries only |
-| `AssistantText` | buffered Stream | Visible response deltas |
-| `AgentActivity` | Stream | Bounded single-line lifecycle and Plan task events |
+| Resource                 | Kind            | Purpose                                                                     |
+| ------------------------ | --------------- | --------------------------------------------------------------------------- |
+| `AgentConfig`            | Attribute       | Immutable execution configuration                                           |
+| `ApplicationContext`     | Attribute       | Opaque trusted-application routing context; never model or browser context  |
+| `AgentInitialized`       | Attribute       | Initialization boundary used by `EnsureStarted` replay                      |
+| `AgentStartIdentity`     | Attribute       | Versioned fingerprint binding Flow ID to config, context, and first message |
+| `AgentBootstrap`         | Attribute       | Start-only envelope deleted in the atomic `Init` commit                     |
+| `AgentState`             | Attribute       | Sequence range, mode, status, plan revision, and pending-call cursor        |
+| `AgentInteractionStatus` | Attribute       | Durable `submitted`/`waiting` browser synchronization boundary              |
+| `ContextSummary`         | Attribute       | Cumulative summary and explicit covered sequence                            |
+| `CurrentMessages`        | AttributeMap    | Recent provider-neutral messages keyed by sequence                          |
+| `ArchivedMessages`       | AttributeMap    | Ten-message chunks keyed by first sequence                                  |
+| `AcceptedUserMessages`   | AttributeMap    | Message ID, payload fingerprint, and first acceptance time; no content copy |
+| `DurableCommands`        | AttributeMap    | Exact replay outcome keyed by command and caller request ID                 |
+| `AcceptedToolApprovals`  | AttributeMap    | Per-call decision fence and first acceptance time                           |
+| `AcceptedPlanExecutions` | AttributeMap    | Per-revision execution fence and first acceptance time                      |
+| `AgentPlan`              | Attribute       | Atomically replaced short plan                                              |
+| `PendingApproval`        | Attribute       | Reloadable approval request                                                 |
+| `PendingTimer`           | Attribute       | Reloadable durable wait description                                         |
+| `PendingUserInput`       | Attribute       | Reloadable batch of one to three structured questions                       |
+| `QueuedUserMessages`     | Channel         | FIFO messages that do not interrupt active work                             |
+| `SteeredUserMessages`    | Channel         | Messages consumed only at safe boundaries                                   |
+| `ToolApprovals`          | ChannelMap      | Approval decision partitioned by call ID                                    |
+| `PlanExecutions`         | ChannelMap      | Execution request partitioned by plan revision                              |
+| `ReasoningSummary`       | buffered Stream | Provider-authored reasoning summaries only                                  |
+| `AssistantText`          | buffered Stream | Visible response deltas                                                     |
+| `AgentActivity`          | Stream          | Bounded single-line lifecycle and Plan task events                          |
 
 Channels are delivery mechanisms, not storage. A queued message enters
 application history only after a Step consumes it. Stream loss never changes
@@ -161,16 +166,28 @@ being rendered as current state.
 
 ## Retry and failure policy
 
-- `EnsureStarted` uses Dex's released `AlreadyStarted.IgnoreError` behavior and
-  waits only for the durable initialization marker. It verifies persisted
-  config and application context before recording an exact start receipt, so a
-  replay does not wait for an active model or tool turn.
+- `EnsureStarted` uses Dex's released `AlreadyStarted.IgnoreError` behavior.
+  The starting Step commits global identity, start receipt, optional message
+  ledger, and optional queue publish atomically before its initialization
+  marker. The identity covers config, application context, and whether and what
+  initial message exists, but excludes the retry request ID.
 - Every valid mutation stores its payload fingerprint and outcome under
   `(command, request ID)`. Equal retries replay the first timestamp and outcome;
-  unequal retries return a typed conflict.
+  unequal retries return a typed conflict. A retry after Flow closure performs
+  a read-only ledger reconciliation and succeeds only for an existing exact
+  record.
 - Message IDs have an independent durable ledger. Reusing one with equal
   content and mode is a replay even under a new request ID; different content
   is a typed conflict.
+- Approval effects are fenced by call ID. Plan-execution effects are fenced by
+  revision. Concurrent request IDs can therefore commit at most one Channel
+  effect; equivalent later requests replay the effect timestamp.
+- An active pre-identity Flow can adopt an identity only from an exact start
+  request already recorded by the preceding lifecycle implementation. That
+  committed request stays read-only replayable after closure. Requests without
+  the old durable record are rejected instead of inferring missing identity. A
+  pre-identity run reaching `Init` for the first time fails rather than assuming
+  that its old caller omitted an initial message.
 - `Client.Cancel` first records cancellation acceptance, then invokes released
   Dex 0.4 `StopFlow`, and returns only after observing terminal `canceled`.
   Dex 0.4 does not accept a caller request ID on `StopFlow`; the preceding

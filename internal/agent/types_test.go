@@ -186,3 +186,60 @@ func TestRequestAndApplicationContextValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureStartIdentityFingerprintIsGlobal(t *testing.T) {
+	t.Parallel()
+	request := EnsureStartRequest{
+		RequestID:          "request-one",
+		Config:             NewAgentConfig(),
+		ApplicationContext: `{"workspace_id":"workspace-1"}`,
+		InitialMessage: &UserMessage{
+			MessageID: "message-one",
+			Content:   "build the application",
+			PlanMode:  true,
+		},
+	}
+	fingerprint, err := request.identityFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.RequestID = "request-two"
+	retriedFingerprint, err := request.identityFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retriedFingerprint != fingerprint {
+		t.Fatal("request ID changed the global Agent start identity")
+	}
+	request.Config.EnabledMCPServers = nil
+	request.Config.EnabledTools = nil
+	collectionFingerprint, err := request.identityFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collectionFingerprint != fingerprint {
+		t.Fatal("nil configuration collections changed the global Agent start identity")
+	}
+	request.Config.EnabledMCPServers = []string{}
+	request.Config.EnabledTools = []ToolName{}
+
+	mutations := []func(*EnsureStartRequest){
+		func(candidate *EnsureStartRequest) { candidate.InitialMessage = nil },
+		func(candidate *EnsureStartRequest) { candidate.InitialMessage.MessageID = "message-two" },
+		func(candidate *EnsureStartRequest) { candidate.InitialMessage.Content = "build something else" },
+		func(candidate *EnsureStartRequest) { candidate.InitialMessage.PlanMode = false },
+	}
+	for index, mutate := range mutations {
+		candidate := request
+		initialMessage := *request.InitialMessage
+		candidate.InitialMessage = &initialMessage
+		mutate(&candidate)
+		candidateFingerprint, fingerprintErr := candidate.identityFingerprint()
+		if fingerprintErr != nil {
+			t.Fatal(fingerprintErr)
+		}
+		if candidateFingerprint == fingerprint {
+			t.Fatalf("identity mutation %d retained the original fingerprint", index)
+		}
+	}
+}

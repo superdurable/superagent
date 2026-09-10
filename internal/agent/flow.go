@@ -76,12 +76,16 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 			agentConfigAttribute,
 			applicationContextAttribute,
 			agentInitializedAttribute,
+			agentStartIdentityAttribute,
+			agentBootstrapAttribute,
 			agentStateAttribute,
 			agentInteractionStatusAttribute,
 			contextSummaryAttribute,
 			currentMessagesAttribute,
 			acceptedUserMessagesAttribute,
 			durableCommandsAttribute,
+			acceptedToolApprovalsAttribute,
+			acceptedPlanExecutionsAttribute,
 			archivedMessagesAttribute,
 			agentPlanAttribute,
 			pendingApprovalAttribute,
@@ -102,18 +106,168 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 	}
 }
 
-// ConfirmStart durably records one successfully verified EnsureStarted request.
-func (*Flow) ConfirmStart(ctx dex.Context, input confirmStartRequest) (*dex.RPCResult[durableCommandResult], error) {
+// ConfirmStart records one request against the immutable global start identity.
+func (flow *Flow) ConfirmStart(ctx dex.Context, input confirmStartRequest) (*dex.RPCResult[durableCommandResult], error) {
 	if err := validateRequestID(input.RequestID); err != nil {
 		return nil, err
 	}
-	if input.Fingerprint == "" {
-		return nil, errors.New("start fingerprint must not be empty")
+	if err := flow.validateConfig(input.Config); err != nil {
+		return nil, err
 	}
-	if result, found, err := findDurableCommand(ctx, CommandStart, input.RequestID, input.Fingerprint); err != nil || found {
-		return result, err
+	if err := validateApplicationContext(input.ApplicationContext); err != nil {
+		return nil, err
 	}
-	return commitCommandRPC(ctx, CommandStart, input.RequestID, input.Fingerprint, durableCommandAccepted, time.Now().UTC(), false)
+	if input.Fingerprint == "" || input.IdentityFingerprint == "" {
+		return nil, errors.New("start fingerprints must not be empty")
+	}
+	if input.InitialMessage != nil {
+		if err := validateNewUserMessage(*input.InitialMessage); err != nil {
+			return nil, err
+		}
+	}
+	request := EnsureStartRequest{
+		RequestID:          input.RequestID,
+		Config:             input.Config,
+		ApplicationContext: input.ApplicationContext,
+		InitialMessage:     input.InitialMessage,
+	}
+	fingerprint, err := request.fingerprint()
+	if err != nil {
+		return nil, err
+	}
+	identityFingerprint, err := request.identityFingerprint()
+	if err != nil {
+		return nil, err
+	}
+	if fingerprint != input.Fingerprint || identityFingerprint != input.IdentityFingerprint {
+		return nil, errors.New("start request does not match its fingerprints")
+	}
+	persistedConfig, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !sameAgentConfig(persistedConfig, input.Config) {
+		return nil, errors.New("start config does not match the durable config")
+	}
+	persistedContext, contextErr := applicationContextAttribute.Get(ctx)
+	if contextErr == nil && persistedContext != input.ApplicationContext {
+		return nil, errors.New("start application context does not match the durable context")
+	}
+	if contextErr != nil && !isAttributeNotFound(contextErr) {
+		return nil, contextErr
+	}
+	if isAttributeNotFound(contextErr) && input.ApplicationContext != "" {
+		return nil, errors.New("start application context is absent from the durable context")
+	}
+	instance := durableCommandInstance(CommandStart, input.RequestID)
+	record, recordErr := durableCommandsAttribute.Get(ctx, instance)
+	if recordErr == nil {
+		if record.RequestID != input.RequestID || record.Command != CommandStart || record.Fingerprint != input.Fingerprint {
+			return commandConflictRPC(), nil
+		}
+	} else if !isAttributeNotFound(recordErr) {
+		return nil, recordErr
+	}
+
+	identity, identityErr := agentStartIdentityAttribute.Get(ctx)
+	if isAttributeNotFound(identityErr) {
+		if recordErr != nil || !input.AllowsLegacyMigration {
+			return nil, errors.New("legacy Agent start identity cannot be migrated by this request")
+		}
+		identity = agentStartIdentity{Version: 1, Fingerprint: input.IdentityFingerprint}
+		if err := agentStartIdentityAttribute.Set(ctx, identity); err != nil {
+			return nil, err
+		}
+		if _, contextErr := applicationContextAttribute.Get(ctx); isAttributeNotFound(contextErr) {
+			if err := applicationContextAttribute.Set(ctx, ""); err != nil {
+				return nil, err
+			}
+		} else if contextErr != nil {
+			return nil, contextErr
+		}
+		if err := agentInitializedAttribute.Set(ctx, true); err != nil {
+			return nil, err
+		}
+	} else if identityErr != nil {
+		return nil, identityErr
+	}
+	if identity.Version != 1 || identity.Fingerprint != input.IdentityFingerprint {
+		return nil, errors.New("agent start identity does not match the durable identity")
+	}
+	if recordErr == nil {
+		if record.IsBootstrap {
+			record.IsBootstrap = false
+			if err := durableCommandsAttribute.Set(ctx, instance, record); err != nil {
+				return nil, err
+			}
+			if err := claimBootstrapMessageCommand(ctx, input); err != nil {
+				return nil, err
+			}
+			return &dex.RPCResult[durableCommandResult]{Output: durableCommandResult{
+				Disposition: durableCommandCommitted,
+				Record:      record,
+			}}, nil
+		}
+		return replayedCommandRPC(record), nil
+	}
+
+	if input.InitialMessage != nil {
+		accepted, acceptedErr := acceptedUserMessagesAttribute.Get(ctx, acceptedMessageInstance(input.InitialMessage.MessageID))
+		if acceptedErr != nil {
+			if isAttributeNotFound(acceptedErr) {
+				return nil, errors.New("agent start identity references an uncommitted initial message")
+			}
+			return nil, acceptedErr
+		}
+		messageFingerprint, fingerprintErr := userMessageFingerprint(*input.InitialMessage)
+		if fingerprintErr != nil {
+			return nil, fingerprintErr
+		}
+		if accepted.MessageID != input.InitialMessage.MessageID || accepted.Fingerprint != messageFingerprint {
+			return nil, errors.New("agent initial message ledger does not match its start identity")
+		}
+		if err := recordInitialMessageCommand(
+			ctx,
+			input.RequestID,
+			*input.InitialMessage,
+			accepted.AcceptedAt,
+			false,
+			true,
+		); err != nil {
+			return nil, err
+		}
+	}
+	return commitCommandRPC(
+		ctx,
+		CommandStart,
+		input.RequestID,
+		input.Fingerprint,
+		durableCommandAccepted,
+		time.Now().UTC(),
+		true,
+	)
+}
+
+func claimBootstrapMessageCommand(ctx dex.Context, input confirmStartRequest) error {
+	if input.InitialMessage == nil {
+		return nil
+	}
+	requestID := initialMessageRequestID(input.RequestID)
+	instance := durableCommandInstance(CommandSendMessage, requestID)
+	record, err := durableCommandsAttribute.Get(ctx, instance)
+	if err != nil {
+		return err
+	}
+	request := SendMessageRequest{RequestID: requestID, Message: *input.InitialMessage}
+	fingerprint, err := request.fingerprint()
+	if err != nil {
+		return err
+	}
+	if record.RequestID != requestID || record.Command != CommandSendMessage || record.Fingerprint != fingerprint {
+		return errors.New("bootstrap message command identity does not match")
+	}
+	record.IsBootstrap = false
+	return durableCommandsAttribute.Set(ctx, instance, record)
 }
 
 // SendMessage durably accepts a caller-identified user message at most once.
@@ -234,6 +388,7 @@ func (*Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCR
 	if err := queuedUserMessagesChannel.Delete(ctx, message.MessageID); err != nil {
 		return nil, err
 	}
+	message.Value.MessageID = input.MessageID
 	if err := steeredUserMessagesChannel.Publish(ctx, message.Value); err != nil {
 		return nil, err
 	}
@@ -328,6 +483,32 @@ func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCRe
 	if result, found, findErr := findDurableCommand(ctx, CommandApproveTool, input.RequestID, fingerprint); findErr != nil || found {
 		return result, findErr
 	}
+	effectInstance := acceptedToolApprovalInstance(input.CallID)
+	accepted, acceptedErr := acceptedToolApprovalsAttribute.Get(ctx, effectInstance)
+	switch {
+	case acceptedErr == nil && accepted.CallID == input.CallID && accepted.Approved == input.Approved:
+		return commitCommandRPC(
+			ctx,
+			CommandApproveTool,
+			input.RequestID,
+			fingerprint,
+			durableCommandAccepted,
+			accepted.AcceptedAt,
+			true,
+		)
+	case acceptedErr == nil:
+		return commitCommandRPC(
+			ctx,
+			CommandApproveTool,
+			input.RequestID,
+			fingerprint,
+			durableCommandRejected,
+			time.Now().UTC(),
+			false,
+		)
+	case !isAttributeNotFound(acceptedErr):
+		return nil, acceptedErr
+	}
 	pending, err := getPendingApproval(ctx)
 	if err != nil {
 		return nil, err
@@ -335,13 +516,21 @@ func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCRe
 	if pending == nil || pending.CallID != input.CallID {
 		return commitCommandRPC(ctx, CommandApproveTool, input.RequestID, fingerprint, durableCommandRejected, time.Now().UTC(), false)
 	}
+	acceptedAt := time.Now().UTC()
+	if err := acceptedToolApprovalsAttribute.Set(ctx, effectInstance, acceptedToolApproval{
+		CallID:     input.CallID,
+		Approved:   input.Approved,
+		AcceptedAt: acceptedAt,
+	}); err != nil {
+		return nil, err
+	}
 	if err := toolApprovalsChannel.Publish(ctx, string(input.CallID), ToolApproval{Approved: input.Approved}); err != nil {
 		return nil, err
 	}
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
-	return commitCommandRPC(ctx, CommandApproveTool, input.RequestID, fingerprint, durableCommandAccepted, time.Now().UTC(), false)
+	return commitCommandRPC(ctx, CommandApproveTool, input.RequestID, fingerprint, durableCommandAccepted, acceptedAt, false)
 }
 
 // ExecutePlan schedules an exact waiting draft or active plan revision.
@@ -355,6 +544,24 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	}
 	if result, found, findErr := findDurableCommand(ctx, CommandExecutePlan, input.RequestID, fingerprint); findErr != nil || found {
 		return result, findErr
+	}
+	effectInstance := acceptedPlanExecutionInstance(input.Revision)
+	accepted, acceptedErr := acceptedPlanExecutionsAttribute.Get(ctx, effectInstance)
+	switch {
+	case acceptedErr == nil && accepted.Revision == input.Revision:
+		return commitCommandRPC(
+			ctx,
+			CommandExecutePlan,
+			input.RequestID,
+			fingerprint,
+			durableCommandAccepted,
+			accepted.AcceptedAt,
+			true,
+		)
+	case acceptedErr == nil:
+		return nil, errors.New("accepted plan execution key does not match its revision")
+	case !isAttributeNotFound(acceptedErr):
+		return nil, acceptedErr
 	}
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
@@ -380,6 +587,7 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 		return commitCommandRPC(ctx, CommandExecutePlan, input.RequestID, fingerprint, durableCommandRejected, time.Now().UTC(), false)
 	}
 	revision := plan.Revision
+	acceptedAt := time.Now().UTC()
 	state.PendingPlanExecutionRevision = &revision
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return nil, err
@@ -387,10 +595,16 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	if err := planExecutionsChannel.Publish(ctx, fmt.Sprint(plan.Revision), input); err != nil {
 		return nil, err
 	}
+	if err := acceptedPlanExecutionsAttribute.Set(ctx, effectInstance, acceptedPlanExecution{
+		Revision:   input.Revision,
+		AcceptedAt: acceptedAt,
+	}); err != nil {
+		return nil, err
+	}
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
-	return commitCommandRPC(ctx, CommandExecutePlan, input.RequestID, fingerprint, durableCommandAccepted, time.Now().UTC(), false)
+	return commitCommandRPC(ctx, CommandExecutePlan, input.RequestID, fingerprint, durableCommandAccepted, acceptedAt, false)
 }
 
 // AcceptCancellation durably records one cancellation request before Client.StopFlow.
@@ -419,14 +633,22 @@ func findDurableCommand(
 		return nil, false, err
 	}
 	if record.RequestID != requestID || record.Command != command || record.Fingerprint != fingerprint {
-		return &dex.RPCResult[durableCommandResult]{Output: durableCommandResult{
-			Disposition: durableCommandIdempotencyConflict,
-		}}, true, nil
+		return commandConflictRPC(), true, nil
 	}
+	return replayedCommandRPC(record), true, nil
+}
+
+func commandConflictRPC() *dex.RPCResult[durableCommandResult] {
+	return &dex.RPCResult[durableCommandResult]{Output: durableCommandResult{
+		Disposition: durableCommandIdempotencyConflict,
+	}}
+}
+
+func replayedCommandRPC(record durableCommandRecord) *dex.RPCResult[durableCommandResult] {
 	return &dex.RPCResult[durableCommandResult]{Output: durableCommandResult{
 		Disposition: durableCommandReplayed,
 		Record:      record,
-	}}, true, nil
+	}}
 }
 
 func commitCommandRPC(
@@ -463,6 +685,7 @@ func (*Flow) currentHistory(ctx dex.Context, state AgentState) (HistoryPage, err
 		if err != nil {
 			return HistoryPage{}, err
 		}
+		message = messageWithStableIdentity(FlowID(ctx.FlowID()), sequence, message)
 		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
 	}
 	var nextBeforeSequence *Sequence
@@ -556,8 +779,10 @@ func (flow *Flow) initializingSnapshot(
 func pendingUserMessages(messages []dex.ChannelMessage[UserMessage]) []PendingUserMessage {
 	result := make([]PendingUserMessage, 0, len(messages))
 	for _, message := range messages {
+		messageID := pendingUserMessageID(message)
+		message.Value.MessageID = messageID
 		result = append(result, PendingUserMessage{
-			MessageID: message.Value.MessageID,
+			MessageID: messageID,
 			Value:     message.Value,
 		})
 	}
@@ -573,11 +798,25 @@ func findPendingUserMessage(
 		return dex.ChannelMessage[UserMessage]{}, false, err
 	}
 	for _, message := range messages {
-		if message.Value.MessageID == messageID {
+		if pendingUserMessageID(message) == messageID {
 			return message, true, nil
 		}
 	}
 	return dex.ChannelMessage[UserMessage]{}, false, nil
+}
+
+func pendingUserMessageID(message dex.ChannelMessage[UserMessage]) MessageID {
+	if message.Value.MessageID != "" {
+		return message.Value.MessageID
+	}
+	return MessageID(message.MessageID)
+}
+
+func messageWithStableIdentity(flowID FlowID, sequence Sequence, message AgentMessage) AgentMessage {
+	if message.MessageID == "" {
+		message.MessageID = legacyMessageID(flowID, sequence)
+	}
+	return message
 }
 
 func (flow *Flow) validateConfig(config AgentConfig) error {
@@ -1426,6 +1665,16 @@ func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecis
 	if err := step.flow.validateConfig(input); err != nil {
 		return nil, err
 	}
+	applicationContext, contextErr := applicationContextAttribute.Get(ctx)
+	switch {
+	case isAttributeNotFound(contextErr):
+		applicationContext = ""
+		if setErr := applicationContextAttribute.Set(ctx, applicationContext); setErr != nil {
+			return nil, setErr
+		}
+	case contextErr != nil:
+		return nil, contextErr
+	}
 	if err := agentConfigAttribute.Set(ctx, input); err != nil {
 		return nil, err
 	}
@@ -1435,10 +1684,167 @@ func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecis
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
+	bootstrap, bootstrapErr := agentBootstrapAttribute.Get(ctx)
+	switch {
+	case isAttributeNotFound(bootstrapErr):
+		identity, identityErr := agentStartIdentityAttribute.Get(ctx)
+		if isAttributeNotFound(identityErr) {
+			return dex.ForceFail("legacy Agent start identity is unavailable"), nil
+		}
+		if identityErr != nil {
+			return nil, identityErr
+		}
+		identityFingerprint, err := (EnsureStartRequest{
+			Config:             input,
+			ApplicationContext: applicationContext,
+		}).identityFingerprint()
+		if err != nil {
+			return nil, err
+		}
+		if identity.Version != 1 || identity.Fingerprint != identityFingerprint {
+			return dex.ForceFail("Agent start identity marker does not match its input"), nil
+		}
+	case bootstrapErr != nil:
+		return nil, bootstrapErr
+	default:
+		if err := commitAgentBootstrap(ctx, input, applicationContext, bootstrap); err != nil {
+			return nil, err
+		}
+		if err := agentBootstrapAttribute.Delete(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := agentInitializedAttribute.Set(ctx, true); err != nil {
 		return nil, err
 	}
 	return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
+}
+
+func commitAgentBootstrap(
+	ctx dex.Context,
+	config AgentConfig,
+	applicationContext string,
+	bootstrap agentBootstrap,
+) error {
+	if err := validateRequestID(bootstrap.RequestID); err != nil {
+		return err
+	}
+	if bootstrap.CommandFingerprint == "" || bootstrap.IdentityFingerprint == "" {
+		return errors.New("bootstrap fingerprints must not be empty")
+	}
+	request := EnsureStartRequest{
+		RequestID:          bootstrap.RequestID,
+		Config:             config,
+		ApplicationContext: applicationContext,
+		InitialMessage:     bootstrap.InitialMessage,
+	}
+	if request.InitialMessage != nil {
+		if err := validateNewUserMessage(*request.InitialMessage); err != nil {
+			return err
+		}
+	}
+	commandFingerprint, err := request.fingerprint()
+	if err != nil {
+		return err
+	}
+	identityFingerprint, err := request.identityFingerprint()
+	if err != nil {
+		return err
+	}
+	if commandFingerprint != bootstrap.CommandFingerprint || identityFingerprint != bootstrap.IdentityFingerprint {
+		return errors.New("bootstrap payload does not match its fingerprints")
+	}
+	if err := agentStartIdentityAttribute.Set(ctx, agentStartIdentity{
+		Version:     1,
+		Fingerprint: identityFingerprint,
+	}); err != nil {
+		return err
+	}
+	acceptedAt := time.Now().UTC()
+	if request.InitialMessage != nil {
+		messageFingerprint, err := userMessageFingerprint(*request.InitialMessage)
+		if err != nil {
+			return err
+		}
+		if err := acceptedUserMessagesAttribute.Set(
+			ctx,
+			acceptedMessageInstance(request.InitialMessage.MessageID),
+			acceptedUserMessage{
+				MessageID:   request.InitialMessage.MessageID,
+				Fingerprint: messageFingerprint,
+				AcceptedAt:  acceptedAt,
+			},
+		); err != nil {
+			return err
+		}
+		if err := recordInitialMessageCommand(
+			ctx,
+			request.RequestID,
+			*request.InitialMessage,
+			acceptedAt,
+			true,
+			false,
+		); err != nil {
+			return err
+		}
+		message := *request.InitialMessage
+		message.AcceptedAt = acceptedAt
+		if err := queuedUserMessagesChannel.Publish(ctx, message); err != nil {
+			return err
+		}
+	}
+	return setDurableCommand(ctx, durableCommandRecord{
+		RequestID:   request.RequestID,
+		Command:     CommandStart,
+		Fingerprint: commandFingerprint,
+		RecordedAt:  acceptedAt,
+		Outcome:     durableCommandAccepted,
+		IsBootstrap: true,
+	})
+}
+
+func recordInitialMessageCommand(
+	ctx dex.Context,
+	startRequestID RequestID,
+	message UserMessage,
+	acceptedAt time.Time,
+	isBootstrap bool,
+	isEffectReplay bool,
+) error {
+	requestID := initialMessageRequestID(startRequestID)
+	request := SendMessageRequest{RequestID: requestID, Message: message}
+	fingerprint, err := request.fingerprint()
+	if err != nil {
+		return err
+	}
+	instance := durableCommandInstance(CommandSendMessage, requestID)
+	newRecord := durableCommandRecord{
+		RequestID:      requestID,
+		Command:        CommandSendMessage,
+		Fingerprint:    fingerprint,
+		RecordedAt:     acceptedAt,
+		Outcome:        durableCommandAccepted,
+		IsEffectReplay: isEffectReplay,
+		IsBootstrap:    isBootstrap,
+	}
+	if isBootstrap {
+		return setDurableCommand(ctx, newRecord)
+	}
+	existing, err := durableCommandsAttribute.Get(ctx, instance)
+	if err == nil {
+		if existing.RequestID != requestID || existing.Command != CommandSendMessage || existing.Fingerprint != fingerprint {
+			return &CommandIdempotencyConflictError{Command: CommandSendMessage, RequestID: requestID}
+		}
+		return nil
+	}
+	if !isAttributeNotFound(err) {
+		return err
+	}
+	return setDurableCommand(ctx, newRecord)
+}
+
+func setDurableCommand(ctx dex.Context, record durableCommandRecord) error {
+	return durableCommandsAttribute.Set(ctx, durableCommandInstance(record.Command, record.RequestID), record)
 }
 
 type awaitUserStep struct {
@@ -2114,7 +2520,9 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, configErr
 	}
 	applicationContext, contextErr := applicationContextAttribute.Get(ctx)
-	if contextErr != nil {
+	if isAttributeNotFound(contextErr) {
+		applicationContext = ""
+	} else if contextErr != nil {
 		return nil, contextErr
 	}
 	if contextErr := validateApplicationContext(applicationContext); contextErr != nil {

@@ -185,6 +185,7 @@ type (
 	MessageIdempotencyConflictError = agentinternal.MessageIdempotencyConflictError
 	CommandIdempotencyConflictError = agentinternal.CommandIdempotencyConflictError
 	StartIdentityConflictError      = agentinternal.StartIdentityConflictError
+	LegacyStartIdentityError        = agentinternal.LegacyStartIdentityError
 	AgentAlreadyTerminalError       = agentinternal.AgentAlreadyTerminalError
 	ArchivedMessagesNotFoundError   = agentinternal.ArchivedMessagesNotFoundError
 	HistoryMessageNotFoundError     = agentinternal.HistoryMessageNotFoundError
