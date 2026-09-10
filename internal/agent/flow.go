@@ -28,6 +28,13 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
+var (
+	queuedUserMessagesChannel  = dex.DefineChannel[UserMessage]("QueuedUserMessages")
+	steeredUserMessagesChannel = dex.DefineChannel[UserMessage]("SteeredUserMessages")
+	toolApprovalsChannel       = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
+	planExecutionsChannel      = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
+)
+
 // Flow is the durable AI Agent state machine.
 type Flow struct {
 	modelClient ModelClient
@@ -1268,17 +1275,20 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err != nil {
 		return nil, err
 	}
-	conditions := []dex.Condition{
-		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
-		queuedUserMessagesChannel.ForOne(),
-	}
-	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
-		conditions = append(conditions, planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)))
-	}
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
 		return nil, err
 	}
-	return dex.AnyOf(conditions...), nil
+	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
+		return dex.AnyOf(
+			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+			queuedUserMessagesChannel.ForOne(),
+			planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)),
+		), nil
+	}
+	return dex.AnyOf(
+		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+		queuedUserMessagesChannel.ForOne(),
+	), nil
 }
 
 func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {

@@ -79,7 +79,14 @@ check-flow-definition: install-dexcli
 			echo "Flow definition must be valid with zero diagnostics" >&2; \
 			sed -n '/"diagnostics"/,$$p' "$${flow_definition}" >&2; \
 			exit 1; \
-		fi
+		fi; \
+		for channel in queuedUserMessagesChannel steeredUserMessagesChannel toolApprovalsChannel planExecutionsChannel; do \
+			if ! grep -Fq "\"id\": \"resource:channel:$${channel}\"" "$${flow_definition}" || \
+				! grep -Fq "\"resourceId\": \"resource:channel:$${channel}\"" "$${flow_definition}"; then \
+				echo "Flow definition must render Channel $${channel} and its WaitFor edge" >&2; \
+				exit 1; \
+			fi; \
+		done
 
 flow-visualize: install-dexcli
 	@cd "$(CURDIR)" && GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go
