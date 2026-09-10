@@ -116,7 +116,9 @@ mutation increments an epoch, so a response started before that mutation cannot
 replace newer durable state.
 Message send displays one local, non-actionable `Submitting` item and changes it
 to `Queued` after HTTP acceptance. Failure restores its composer text and plan
-mode. Pending input uses the dedicated `answerQuestions` operation. The browser
+mode. The composer retains focus and remains editable while submission and
+Snapshot reconciliation gate later mutations. Pending input uses the dedicated
+`answerQuestions` operation. The browser
 collects every answer locally, permits review, and submits the complete batch.
 HTTP acceptance means the server has durably removed that exact batch and
 queued one normal answer message. Queue edit, delete, and steer optimistically

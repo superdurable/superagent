@@ -298,11 +298,17 @@ describe("App", () => {
     const composer = await screen.findByRole("textbox", { name: "Message" });
 
     fireEvent.change(composer, { target: { value: "new work" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const send = screen.getByRole("button", { name: "Send" });
+    send.focus();
+    fireEvent.click(send);
 
     expect(await screen.findByText("Submitting…")).toBeInTheDocument();
     expect(screen.getByText("new work")).toBeInTheDocument();
     expect(composer).toHaveValue("");
+    expect(composer).toBeEnabled();
+    expect(composer).toHaveFocus();
+    fireEvent.change(composer, { target: { value: "next message" } });
+    expect(composer).toHaveValue("next message");
   });
 
   it("gates mutations until the post-command Snapshot succeeds", async () => {

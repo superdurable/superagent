@@ -127,13 +127,17 @@ export function ConversationView({
       textareaRef.current?.focus();
     }
   }, [state.pendingCommand]);
+  const submitFromComposer = () => {
+    onSubmit();
+    textareaRef.current?.focus();
+  };
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Enter" &&
       (event.metaKey || event.ctrlKey || event.altKey)
     ) {
       event.preventDefault();
-      onSubmit();
+      submitFromComposer();
     }
   };
 
@@ -407,7 +411,6 @@ export function ConversationView({
               ref={textareaRef}
               aria-label="Message"
               value={state.composer}
-              disabled={isBusy}
               placeholder={
                 state.isPlanMode
                   ? "Describe what you want the Agent to plan…"
@@ -424,7 +427,7 @@ export function ConversationView({
               <button
                 type="button"
                 disabled={areMutationsDisabled || state.composer.trim() === ""}
-                onClick={onSubmit}
+                onClick={submitFromComposer}
               >
                 {state.pendingCommand?.command.kind === "send"
                   ? "Sending…"

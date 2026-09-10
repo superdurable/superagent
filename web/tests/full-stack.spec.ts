@@ -52,6 +52,7 @@ test("renders chronological transient activity and durable queue interactions", 
   const composer = page.getByRole("textbox", { name: "Message" });
   await composer.fill("/reason Checked the constraints | Durable answer");
   await page.getByRole("button", { name: "Send" }).click();
+  await expect(composer).toBeFocused();
   await expect(page.getByText("Submitting…")).toBeVisible();
 
   const history = page.getByRole("region", { name: "Conversation history" });
@@ -68,6 +69,7 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toHaveCount(1);
   await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(2);
+  await expect(composer).toBeFocused();
   await expect(history.locator(".activity-entry").nth(0)).toContainText(
     "Calling mock/dex.",
   );
