@@ -7,6 +7,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import CopyPlugin from "copy-webpack-plugin";
+import MiniCssExtractPlugin from "mini-css-extract-plugin";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,12 +23,12 @@ export default {
       { test: /\.tsx?$/, use: "ts-loader", exclude: /node_modules/ },
       {
         test: /\.css$/,
-        type: "asset/resource",
-        generator: { filename: "styles.css" },
+        use: [MiniCssExtractPlugin.loader, "css-loader"],
       },
     ],
   },
   plugins: [
+    new MiniCssExtractPlugin({ filename: "styles.css" }),
     new CopyPlugin({
       patterns: [
         { from: path.resolve(directory, "public"), to: "." },

@@ -3,6 +3,12 @@
 This React application consumes only the TypeScript client generated from
 `api/openapi.yaml`. Do not hand-write HTTP request or response models.
 
+Reusable, transport-free conversation components live in the local npm
+workspace `packages/superagent-ui`. The Web application consumes that package
+through its public exports and explicitly maps generated state into its view
+models. Network calls, durable-state reconciliation, and product orchestration
+remain in this application.
+
 The application restores a Flow with one generated Snapshot request and applies
 generated event polls for live updates.
 
@@ -15,6 +21,11 @@ npm run typecheck
 npm run lint
 npm run build
 ```
+
+The root scripts build, type-check, and test the shared UI workspace as part of
+the corresponding Web command. The UI package can also be checked directly with
+`npm run build --workspace @superdurable/superagent-ui` and packed with
+`npm pack --workspace @superdurable/superagent-ui`.
 
 The production build is written to the ignored `web/dist/` directory. It is a
 standalone deployment artifact. The Go binary contains no frontend files.

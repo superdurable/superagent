@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+"use client";
+
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -12,7 +14,7 @@ import type { Node, Parent } from "unist";
 const components: Components = {
   table({ children }) {
     return (
-      <div className="markdown-table-scroll">
+      <div className="sa-markdown-table-scroll markdown-table-scroll">
         <table>{children}</table>
       </div>
     );
@@ -21,9 +23,9 @@ const components: Components = {
 
 const breakTagPattern = /^<br\s*\/?\s*>$/i;
 
-export default function MarkdownContent({ value }: { value: string }) {
+export function MarkdownContent({ value }: { value: string }) {
   return (
-    <div className="markdown-content">
+    <div className="sa-markdown-content markdown-content">
       <ReactMarkdown
         components={components}
         remarkPlugins={[remarkGfm, replaceBreakTags]}

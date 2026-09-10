@@ -265,9 +265,7 @@ button.secondary {
 .section-heading,
 .composer-footer,
 .message-meta,
-.button-row,
-.choice-row,
-.queue-actions {
+.button-row {
   display: flex;
   align-items: center;
 }
@@ -284,7 +282,6 @@ button.secondary {
 .section-heading h2,
 .section-heading p,
 .message-bubble p,
-.queue-message p,
 .plan-tasks p,
 .timer-card p {
   margin: 0;
@@ -435,76 +432,10 @@ button.secondary {
 .reasoning-card p {
   white-space: pre-wrap;
 }
-.markdown-content {
-  min-width: 0;
-  max-width: 100%;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
 .markdown-fallback {
   margin: 0;
   line-height: 1.55;
   white-space: pre-wrap;
-}
-.markdown-content > :first-child {
-  margin-top: 0;
-}
-.markdown-content > :last-child {
-  margin-bottom: 0;
-}
-.markdown-content p,
-.markdown-content ul,
-.markdown-content ol,
-.markdown-content blockquote {
-  margin: 0.55em 0;
-}
-.markdown-content ul,
-.markdown-content ol {
-  padding-left: 1.4em;
-}
-.markdown-content code {
-  padding: 0.1em 0.35em;
-  border-radius: 5px;
-  background: #eef0f4;
-  font-size: 0.92em;
-}
-.markdown-content pre code {
-  padding: 0;
-  background: transparent;
-}
-.markdown-content blockquote {
-  padding-left: 12px;
-  border-left: 3px solid #ccd2ff;
-  color: #4b5565;
-}
-.markdown-content a {
-  color: #4353c7;
-}
-.markdown-table-scroll {
-  width: 100%;
-  max-width: 100%;
-  margin: 0.75em 0;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-}
-.markdown-content table {
-  width: max-content;
-  min-width: min(560px, 100%);
-  border-collapse: collapse;
-  overflow-wrap: normal;
-}
-.markdown-content th,
-.markdown-content td {
-  min-width: 120px;
-  padding: 8px 10px;
-  border: 1px solid #dfe3ea;
-  text-align: left;
-  vertical-align: top;
-  overflow-wrap: normal;
-  word-break: normal;
-}
-.markdown-content th {
-  background: #f5f6f8;
 }
 .tool-call,
 .reasoning-card {
@@ -641,9 +572,7 @@ pre {
   font-size: 10px;
   text-transform: uppercase;
 }
-.button-row,
-.choice-row,
-.queue-actions {
+.button-row {
   flex-wrap: wrap;
   gap: 8px;
 }
@@ -660,59 +589,6 @@ pre {
 }
 .timer-card small {
   color: #7a6a3c;
-}
-.queue-message {
-  margin-top: 10px;
-  padding: 11px;
-  border: 1px solid #e1e5eb;
-  border-radius: 11px;
-  background: #f9fafb;
-}
-.queue-message.steered {
-  border-color: #e5c777;
-  background: #fff9e9;
-}
-.queue-message.submitting {
-  border-color: #aeb6ff;
-  background: #f4f5ff;
-  opacity: 0.82;
-}
-.queue-message > strong {
-  color: #667085;
-  font-size: 10px;
-  text-transform: uppercase;
-}
-.queue-message p {
-  margin: 4px 0 8px;
-  overflow-wrap: anywhere;
-}
-.queue-actions {
-  align-items: center;
-}
-.queue-action {
-  min-height: 30px;
-}
-.steer-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
-  border-radius: 8px;
-  background: #3541a9;
-  box-shadow: 0 3px 9px rgb(53 65 169 / 22%);
-  transition:
-    background-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
-}
-.steer-action:hover:not(:disabled) {
-  background: #29348f;
-  box-shadow: 0 5px 12px rgb(41 52 143 / 28%);
-  transform: translateY(-1px);
-}
-.steer-action:focus-visible {
-  outline: 3px solid #aeb6ff;
-  outline-offset: 2px;
 }
 .text-button {
   padding: 4px 2px;
@@ -733,123 +609,6 @@ pre {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.queue-tray {
-  margin-bottom: 10px;
-  border: 1px solid #e1e5eb;
-  border-radius: 12px;
-  background: #fafbfc;
-}
-.queue-toggle {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 9px 11px;
-  color: #344054;
-  background: transparent;
-  text-align: left;
-}
-.queue-toggle > span:first-child {
-  color: #667085;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.queue-toggle strong {
-  min-width: 0;
-  font-size: 12px;
-  text-align: right;
-}
-.queue-items {
-  display: grid;
-  gap: 8px;
-  max-height: min(280px, 34dvh);
-  padding: 0 9px 9px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.queue-items .queue-message {
-  margin-top: 0;
-}
-.queue-message small {
-  margin-left: 7px;
-  color: #667085;
-  font-size: 10px;
-}
-.pending-input {
-  margin-bottom: 10px;
-  padding: 10px;
-  border-radius: 10px;
-  background: #fff7df;
-}
-.question-heading,
-.question-navigation {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.question-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.question-tabs button {
-  padding: 6px 9px;
-}
-.question-tabs button.active,
-.question-option.selected {
-  color: #fff;
-  background: #3541a9;
-}
-.answered-mark {
-  margin-left: 5px;
-}
-.question-content {
-  min-width: 0;
-  margin: 12px 0;
-  padding: 0;
-  border: 0;
-}
-.question-content legend {
-  font-weight: 800;
-}
-.question-content > p {
-  margin: 5px 0 0;
-}
-.question-option {
-  display: grid;
-  gap: 2px;
-  min-width: 140px;
-}
-.question-option small {
-  color: inherit;
-  font-weight: 500;
-}
-.other-answer {
-  display: grid;
-  gap: 5px;
-  margin-top: 10px;
-  font-size: 12px;
-  font-weight: 800;
-}
-.other-answer input {
-  width: 100%;
-}
-.question-navigation {
-  justify-content: flex-end;
-}
-.pending-input .choice-row {
-  margin-top: 9px;
-  max-height: min(220px, 30dvh);
-  padding: 2px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.pending-input .choice-row button {
-  text-align: left;
-}
 .plan-mode {
   display: inline-flex;
   align-items: center;
@@ -858,19 +617,6 @@ pre {
   color: #4353c7;
   font-size: 12px;
   font-weight: 800;
-}
-.composer-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
-}
-.composer-row textarea {
-  min-height: 76px;
-  resize: vertical;
-}
-.composer-row > button {
-  min-width: 112px;
 }
 .composer-footer {
   justify-content: space-between;
@@ -959,12 +705,6 @@ pre {
     width: calc(100% - 20px);
     padding: 10px;
   }
-  .composer-row textarea {
-    min-height: 60px;
-  }
-  .composer-row > button {
-    min-width: 100px;
-  }
   .composer-footer {
     align-items: flex-end;
   }
@@ -972,21 +712,11 @@ pre {
     max-width: 68%;
     font-size: 10px;
   }
-  .pending-input .choice-row {
-    max-height: min(120px, 18dvh);
-  }
-  .pending-input .choice-row button {
-    width: 100%;
-    padding: 8px 10px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .task-spinner {
     animation: none;
     border-color: #6672df;
-  }
-  .steer-action {
-    transition: none;
   }
 }

@@ -6,6 +6,7 @@
 
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@superdurable/superagent-ui/styles.css";
 import App from "./App";
 import { client } from "./api/generated/client.gen";
 import "./app.css";

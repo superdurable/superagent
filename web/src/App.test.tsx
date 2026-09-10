@@ -572,16 +572,13 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
 
     await waitFor(() => {
-      expect(answerQuestions).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: {
-            flowId: "flow-existing",
-            messageId: expect.any(String),
-            callId: "call-1",
-            answers: [{ questionId: "pace", answer: "Relaxed" }],
-          },
-        }),
-      );
+      const request = vi.mocked(answerQuestions).mock.calls[0]?.[0];
+      expect(request?.body).toMatchObject({
+        flowId: "flow-existing",
+        callId: "call-1",
+        answers: [{ questionId: "pace", answer: "Relaxed" }],
+      });
+      expect(request?.body.messageId).toMatch(/^[0-9a-f-]+$/u);
     });
     await waitFor(() => {
       expect(screen.queryByText("Choose a pace")).not.toBeInTheDocument();
@@ -630,20 +627,17 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
 
     await waitFor(() => {
-      expect(answerQuestions).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: {
-            flowId: "flow-existing",
-            messageId: expect.any(String),
-            callId: "call-three",
-            answers: [
-              { questionId: "region", answer: "West" },
-              { questionId: "pace", answer: "Careful" },
-              { questionId: "format", answer: "Checklist" },
-            ],
-          },
-        }),
-      );
+      const request = vi.mocked(answerQuestions).mock.calls[0]?.[0];
+      expect(request?.body).toMatchObject({
+        flowId: "flow-existing",
+        callId: "call-three",
+        answers: [
+          { questionId: "region", answer: "West" },
+          { questionId: "pace", answer: "Careful" },
+          { questionId: "format", answer: "Checklist" },
+        ],
+      });
+      expect(request?.body.messageId).toMatch(/^[0-9a-f-]+$/u);
     });
   });
 

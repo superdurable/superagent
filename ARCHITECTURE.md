@@ -32,10 +32,16 @@ Agent state. Streams reduce latency but never become recovery state.
 | `internal/model`  | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
 | `internal/mcp`    | Trusted server config, discovery, policy, sessions, retries, brokers           | Agent state transitions or exported Dex resource access            |
 | `web`             | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
+| `web/packages/superagent-ui` | Transport-free React conversation components and local interaction behavior | Dex/API clients, routing, durable state, or product workflows |
 
 Interfaces live at their consuming boundary. Concrete single-use components do
 not receive speculative interfaces, and there is no general-purpose helpers
 package.
+
+The Web application maps generated domain objects into the plain view models
+accepted by `@superdurable/superagent-ui`. The shared package never imports the
+generated client or reconstructs application state; this keeps it reusable by
+other products without coupling their transport or orchestration to this portal.
 
 The public `agent` package is a thin façade over `internal/agent`. It aliases the
 stable application types and delegates constructors, so embedders share the
