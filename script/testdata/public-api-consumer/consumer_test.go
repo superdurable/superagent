@@ -86,7 +86,7 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	if _, err := dex.NewRegistry([]dex.Flow{flow}); err != nil {
 		t.Fatalf("register public Agent Flow: %v", err)
 	}
-	invocation := agent.ToolInvocation{ApplicationContext: `{"sandbox_id":"sandbox-1"}`}
+	invocation := agent.ToolInvocation{ApplicationContext: `{"resource_id":"resource-1"}`}
 	if invocation.ApplicationContext == "" {
 		t.Fatal("public ToolInvocation application context is empty")
 	}

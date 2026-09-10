@@ -222,7 +222,7 @@ being rendered as current state.
 - Write or unknown MCP tools require approval and default to one attempt.
 - Stable Flow and call IDs plus opaque application context are loaded from Dex
   and passed together through the tool boundary. An integration can recover
-  sandbox or workspace routing and derive one idempotency key across retries
+  application-specific routing and derive one idempotency key across retries
   and Worker replacement.
 - A timeout after an unprotected write records an unknown outcome; it never
   claims success or a known failure.

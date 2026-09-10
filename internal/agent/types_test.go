@@ -240,7 +240,7 @@ func TestRequestAndApplicationContextValidation(t *testing.T) {
 			t.Fatalf("request ID %q was accepted", requestID)
 		}
 	}
-	if err := validateApplicationContext(`{"sandbox_id":"sandbox-1"}`); err != nil {
+	if err := validateApplicationContext(`{"resource_id":"resource-1"}`); err != nil {
 		t.Fatalf("valid application context: %v", err)
 	}
 	for _, value := range []string{"context\x00value", strings.Repeat("x", maximumAppContextBytes+1)} {
@@ -255,7 +255,7 @@ func TestEnsureStartIdentityFingerprintIsGlobal(t *testing.T) {
 	request := EnsureStartRequest{
 		RequestID:          "request-one",
 		Config:             NewAgentConfig(),
-		ApplicationContext: `{"workspace_id":"workspace-1"}`,
+		ApplicationContext: `{"resource_id":"resource-1"}`,
 		InitialMessage: &UserMessage{
 			MessageID: "message-one",
 			Content:   "build the application",

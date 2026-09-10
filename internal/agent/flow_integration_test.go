@@ -344,7 +344,7 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 	request := EnsureStartRequest{
 		RequestID:          RequestID("ensure-" + randomLocalID(t)),
 		Config:             NewAgentConfig(),
-		ApplicationContext: `{"session_id":"session-1","workspace_id":"workspace-1"}`,
+		ApplicationContext: `{"account_id":"account-1","resource_id":"resource-1"}`,
 		InitialMessage: &UserMessage{
 			MessageID: messageID,
 			Content:   "/wait",
@@ -516,7 +516,7 @@ func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
 	}
 
 	toolFlowID := FlowID("agent-context-" + randomLocalID(t))
-	toolContext := `{"session_id":"session-tool","sandbox_id":"sandbox-7"}`
+	toolContext := `{"account_id":"account-tool","resource_id":"resource-7"}`
 	toolStart := EnsureStartRequest{
 		RequestID:          RequestID("ensure-tool-" + randomLocalID(t)),
 		Config:             NewAgentConfig(),
@@ -674,7 +674,7 @@ func TestAgentOriginMainFlowCompatibilityIntegration(t *testing.T) {
 
 	conflictingMigration := migrationRequest
 	conflictingMigration.RequestID = integrationRequestID("migrate-context")
-	conflictingMigration.ApplicationContext = `{"workspace_id":"cannot-infer"}`
+	conflictingMigration.ApplicationContext = `{"resource_id":"cannot-infer"}`
 	_, conflictErr := environment.agent.EnsureStarted(t.Context(), activeFlowID, conflictingMigration)
 	var identityConflict *StartIdentityConflictError
 	if !errors.As(conflictErr, &identityConflict) {
