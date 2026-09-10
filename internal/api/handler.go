@@ -1073,13 +1073,15 @@ func (handler *Handler) answerQuestionsError(
 
 func (handler *Handler) executePlanError(ctx context.Context, flowID agent.FlowID, err error) transportapi.ExecutePlanRes {
 	handler.logFailure(ctx, flowID, err)
-	problem, kind := commandProblem(err)
-	switch kind {
+	switch classifyFailure(err) {
 	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
 		return (*transportapi.ExecutePlanNotFound)(&problem)
 	case failureConflict:
+		problem := newProblem(409, "Conflict", "the Agent is not at an executable wait or the Plan revision changed")
 		return (*transportapi.ExecutePlanConflict)(&problem)
 	default:
+		problem := newProblem(503, "Service Unavailable", "the command could not be completed")
 		return (*transportapi.ExecutePlanServiceUnavailable)(&problem)
 	}
 }

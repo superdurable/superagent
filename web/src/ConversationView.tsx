@@ -16,6 +16,8 @@ import {
 } from "react";
 
 import {
+  AgentInteractionStatus,
+  AgentStatus,
   EventKind,
   MessageRole,
   PlanStatus,
@@ -600,6 +602,12 @@ interface PlanPanelProps {
   onExecutePlan: (revision: number) => void;
 }
 
+interface PlanActionPresentation {
+  label: string;
+  isDisabled: boolean;
+  reason: string | null;
+}
+
 function PlanPanel({
   state,
   areMutationsDisabled,
@@ -620,6 +628,7 @@ function PlanPanel({
   const hasRunningTask = taskStatuses.some(
     (status) => status === TaskStatus.IN_PROGRESS,
   );
+  const action = planActionPresentation(state, areMutationsDisabled);
   const isContentVisible = !isNarrow || isExpanded;
   return (
     <section className="plan-card plan-panel" aria-label="Agent plan">
@@ -652,23 +661,23 @@ function PlanPanel({
             {plan.status !== PlanStatus.COMPLETED && (
               <button
                 type="button"
-                disabled={
-                  areMutationsDisabled || description.isPlanExecutionRequested
+                disabled={action.isDisabled}
+                aria-describedby={
+                  action.reason === null ? undefined : "plan-action-reason"
                 }
                 onClick={() => {
                   onExecutePlan(plan.revision);
                 }}
               >
-                {state.pendingCommand?.command.kind === "execute-plan"
-                  ? "Requesting execution…"
-                  : description.isPlanExecutionRequested
-                    ? "Execution requested"
-                    : plan.status === PlanStatus.DRAFT
-                      ? "Execute plan"
-                      : "Continue plan"}
+                {action.label}
               </button>
             )}
           </div>
+          {action.reason !== null && plan.status !== PlanStatus.COMPLETED && (
+            <p className="plan-action-reason" id="plan-action-reason">
+              {action.reason}
+            </p>
+          )}
           <ol className="plan-tasks">
             {plan.tasks.map((task, index) => {
               const status = taskStatuses[index] ?? task.status;
@@ -687,6 +696,89 @@ function PlanPanel({
       )}
     </section>
   );
+}
+
+function planActionPresentation(
+  state: ActiveConversationState,
+  areMutationsDisabled: boolean,
+): PlanActionPresentation {
+  const { description } = state.snapshot;
+  const plan = description.plan;
+  if (plan === null || plan.status === PlanStatus.COMPLETED) {
+    return { label: "Plan completed", isDisabled: true, reason: null };
+  }
+  if (state.pendingCommand?.command.kind === "execute-plan") {
+    return {
+      label: "Requesting execution…",
+      isDisabled: true,
+      reason: "Waiting for the execution request to finish.",
+    };
+  }
+  if (description.isPlanExecutionRequested) {
+    return {
+      label: "Execution requested",
+      isDisabled: true,
+      reason: "The Agent will start this Plan from its durable wait.",
+    };
+  }
+  if (areMutationsDisabled) {
+    return {
+      label: "Syncing plan…",
+      isDisabled: true,
+      reason: "Waiting for the current durable state reconciliation.",
+    };
+  }
+  if (description.pendingUserInput !== null) {
+    return {
+      label: "Answer questions first",
+      isDisabled: true,
+      reason: "Submit the requested answers before continuing this Plan.",
+    };
+  }
+  if (description.pendingApproval !== null) {
+    return {
+      label: "Resolve approval first",
+      isDisabled: true,
+      reason: "Approve or reject the pending tool before continuing this Plan.",
+    };
+  }
+  if (description.pendingTimer !== null) {
+    return {
+      label: "Timer is active",
+      isDisabled: true,
+      reason:
+        "The Plan can continue after the durable Timer finishes or is steered.",
+    };
+  }
+  if (
+    description.pendingQueuedMessageCount > 0 ||
+    description.pendingSteeredMessageCount > 0
+  ) {
+    return {
+      label: "Resolve queued messages",
+      isDisabled: true,
+      reason:
+        "The Agent must consume or remove queued messages before continuing this Plan.",
+    };
+  }
+  if (
+    description.interactionStatus !== AgentInteractionStatus.WAITING ||
+    description.status !== AgentStatus.WAITING_FOR_MESSAGE
+  ) {
+    const isDraft = plan.status === PlanStatus.DRAFT;
+    return {
+      label: isDraft ? "Preparing plan…" : "Plan running…",
+      isDisabled: true,
+      reason: isDraft
+        ? "Execute becomes available after the Agent reaches its next durable wait."
+        : "Continue becomes available if unfinished tasks remain at the next durable wait.",
+    };
+  }
+  return {
+    label: plan.status === PlanStatus.DRAFT ? "Execute plan" : "Continue plan",
+    isDisabled: false,
+    reason: null,
+  };
 }
 
 function TaskStatusIndicator({ status }: { status: TaskStatus }) {

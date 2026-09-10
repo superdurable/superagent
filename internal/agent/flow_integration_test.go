@@ -30,6 +30,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -593,6 +594,53 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive
 	})
+	state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && state.PlanNoProgressAttempts == 2
+	})
+	if state.PlanNoProgressAttempts != 2 {
+		t.Fatalf("Plan no-progress attempts = %d, want 2", state.PlanNoProgressAttempts)
+	}
+	if count := countHistoryMessages(
+		active.History.Messages,
+		MessageRoleAssistant,
+		"integration stopped before completing the active plan",
+	); count != 2 {
+		t.Fatalf("automatic Plan recovery responses = %d, want 2", count)
+	}
+
+	environment.replaceWorker(t)
+	submitted := make(chan error, 1)
+	go func() {
+		submitted <- environment.agent.WaitForInteractionStatus(
+			t.Context(),
+			flowID,
+			AgentInteractionStatusSubmitted,
+		)
+	}()
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: active.Description.Plan.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-submitted; err != nil {
+		t.Fatal(err)
+	}
+	continued := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive &&
+			countHistoryMessages(
+				snapshot.History.Messages,
+				MessageRoleAssistant,
+				"integration stopped before completing the active plan",
+			) == 4
+	})
+	if continued.Description.Plan.Revision != active.Description.Plan.Revision {
+		t.Fatalf("Continue changed Plan revision: got %d, want %d", continued.Description.Plan.Revision, active.Description.Plan.Revision)
+	}
+	state = readAgentState(t, environment, flowID)
+	if state.PlanNoProgressAttempts != 2 {
+		t.Fatalf("Continue recovery no-progress attempts = %d, want 2", state.PlanNoProgressAttempts)
+	}
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool integration_tool {}"}); err != nil {
 		t.Fatal(err)
 	}
@@ -603,6 +651,76 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 	if afterBlockedTool.Description.Plan == nil || afterBlockedTool.Description.Plan.Status != PlanStatusActive ||
 		afterBlockedTool.Description.Plan.Revision != active.Description.Plan.Revision {
 		t.Fatalf("blocked tool changed active plan: %#v", afterBlockedTool.Description.Plan)
+	}
+	state = readAgentState(t, environment, flowID)
+	if state.PlanNoProgressAttempts != 0 {
+		t.Fatalf("user turn did not reset Plan no-progress attempts: %d", state.PlanNoProgressAttempts)
+	}
+}
+
+func TestAgentRejectsPlanExecutionWhileBusyWithoutPublishing(t *testing.T) {
+	modelClient := newBlockingPlanModel()
+	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
+	flowID := FlowID("agent-plan-busy-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/plan-stop reject busy execution", PlanMode: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
+	})
+	draft := draftSnapshot.Description.Plan
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: draft.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-modelClient.started:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("timed out waiting for the active Plan model call")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusCallingModel
+	})
+
+	err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: draft.Revision})
+	var rejected *CommandRejectedError
+	if !errors.As(err, &rejected) || rejected.Command != CommandExecutePlan {
+		t.Fatalf("busy Execute Plan error = %T %v, want execute rejection", err, err)
+	}
+	var executions []dex.ChannelMessage[PlanExecutionRequest]
+	if err := environment.sdk.GetChannelMapMessages(
+		t.Context(),
+		string(flowID),
+		planExecutionsChannel,
+		planRevisionKey(draft.Revision),
+		&executions,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(executions) != 0 {
+		t.Fatalf("busy rejection left %d Plan execution message(s)", len(executions))
+	}
+	state := readAgentState(t, environment, flowID)
+	if state.PendingPlanExecutionRevision != nil {
+		t.Fatalf("busy rejection left pending Plan revision %d", *state.PendingPlanExecutionRevision)
+	}
+
+	close(modelClient.release)
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if calls := modelClient.activeCalls.Load(); calls != 2 {
+		t.Fatalf("active Plan model calls = %d, want exactly 2", calls)
 	}
 }
 
@@ -758,6 +876,16 @@ func historyHasMessage(messages []SequencedMessage, role MessageRole, content st
 		}
 	}
 	return false
+}
+
+func countHistoryMessages(messages []SequencedMessage, role MessageRole, content string) int {
+	count := 0
+	for _, message := range messages {
+		if message.Message.Role == role && message.Message.Content == content {
+			count++
+		}
+	}
+	return count
 }
 
 func historyContainsText(messages []SequencedMessage, text string) bool {
@@ -1341,6 +1469,42 @@ func (integrationModel) CountTokens(_ Model, messages []AgentMessage) int {
 		total += max(1, len(message.Content)/4)
 	}
 	return total
+}
+
+type blockingPlanModel struct {
+	integrationModel
+	started     chan struct{}
+	release     chan struct{}
+	activeCalls atomic.Int32
+}
+
+var _ ModelClient = (*blockingPlanModel)(nil)
+
+func newBlockingPlanModel() *blockingPlanModel {
+	return &blockingPlanModel{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+}
+
+func (model *blockingPlanModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	if _, hasActivePlan := integrationActivePlanTaskStatus(request.Messages); !hasActivePlan {
+		return model.integrationModel.Complete(ctx, request)
+	}
+	call := model.activeCalls.Add(1)
+	if call == 1 {
+		model.started <- struct{}{}
+		select {
+		case <-model.release:
+		case <-ctx.Done():
+			return ModelReply{}, ctx.Err()
+		}
+	}
+	content := "integration stopped before completing the active plan"
+	if err := request.WriteAssistant(content); err != nil {
+		return ModelReply{}, err
+	}
+	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
 }
 
 func integrationToolReply(request ModelRequest, name ToolName, arguments JSONObject, content string) (ModelReply, error) {

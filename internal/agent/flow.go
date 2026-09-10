@@ -242,10 +242,20 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	if err != nil {
 		return nil, err
 	}
+	pendingApproval, err := getPendingApproval(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pendingTimer, err := getPendingTimer(ctx)
+	if err != nil {
+		return nil, err
+	}
 	canExecute := plan != nil &&
 		state.Status == AgentStatusWaitingForMessage &&
 		state.PendingPlanExecutionRevision == nil &&
 		pendingInput == nil &&
+		pendingApproval == nil &&
+		pendingTimer == nil &&
 		queuedUserMessagesChannel.Size(ctx) == 0 &&
 		steeredUserMessagesChannel.Size(ctx) == 0 &&
 		plan.Revision == input.Revision &&
@@ -255,6 +265,7 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	}
 	revision := plan.Revision
 	state.PendingPlanExecutionRevision = &revision
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return nil, err
 	}
@@ -461,6 +472,7 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
 	state.PendingToolCalls = []ToolCall{}
 	state.PendingToolIndex = 0
 	state.PendingPlanExecutionRevision = nil
+	state.PlanNoProgressAttempts = 0
 	if setErr := agentStateAttribute.Set(ctx, state); setErr != nil {
 		return setErr
 	}
@@ -483,6 +495,7 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []UserMessage) erro
 	state.PendingToolCalls = []ToolCall{}
 	state.PendingToolIndex = 0
 	state.PendingPlanExecutionRevision = nil
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return err
 	}
@@ -556,6 +569,7 @@ func (flow *Flow) replacePlan(ctx dex.Context, tasks []PlanTask) (PlanRevision, 
 	state.PlanningRequiresWrite = false
 	state.PlanningAllowsWrite = false
 	state.PendingPlanExecutionRevision = nil
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return 0, err
 	}
@@ -848,6 +862,9 @@ func (flow *Flow) planContextMessage(ctx dex.Context, state AgentState) (*AgentM
 		instruction = "This is a planning-only turn. Do not execute business tools or claim that planned work was performed."
 	} else if plan != nil && plan.Status == PlanStatusActive {
 		instruction = "The user approved this plan. Execute it and use write_todos to keep task statuses accurate. If required information is missing, keep dependent tasks pending, call request_user_input with 1-3 related questions, and stop until the user answers."
+		if state.PlanNoProgressAttempts > 0 {
+			instruction += " The previous response left this active plan unfinished without requesting a tool. Continue the work now, call request_user_input for missing information, or use write_todos to record the accurate final state. Do not ask for required input only in assistant text."
+		}
 	}
 	return &AgentMessage{
 		Role:    MessageRoleSystem,
@@ -1140,7 +1157,8 @@ const (
 	stepTypeExecuteTool    stepType = "ExecuteTool"
 	stepTypeDurableWait    stepType = "DurableWait"
 
-	maximumSteeringMessageCount = 2_147_483_647
+	maximumSteeringMessageCount       = 2_147_483_647
+	maximumAutomaticPlanRecoveryCount = 1
 )
 
 type continuation string
@@ -1521,8 +1539,19 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		if plan == nil || plan.Status == PlanStatusCompleted {
 			state.InteractionMode = InteractionModeChat
 			state.PlanningRequiresWrite = false
+			state.PlanNoProgressAttempts = 0
 			if err := agentStateAttribute.Set(ctx, state); err != nil {
 				return nil, err
+			}
+		} else if plan.Status == PlanStatusActive &&
+			state.InteractionMode == InteractionModeExecuting &&
+			!allTasksCompleted(plan.Tasks) {
+			state.PlanNoProgressAttempts++
+			if err := agentStateAttribute.Set(ctx, state); err != nil {
+				return nil, err
+			}
+			if state.PlanNoProgressAttempts <= maximumAutomaticPlanRecoveryCount {
+				return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCallModel), nil
 			}
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueAwaitUser), nil
@@ -1530,6 +1559,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	state.Status = AgentStatusRoutingTool
 	state.PendingToolCalls = reply.ToolCalls
 	state.PendingToolIndex = 0
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return nil, err
 	}

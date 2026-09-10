@@ -25,7 +25,8 @@ Init
        -> approved plan execution -----------^
 
 CallModel
-  -> CheckSteered -> AwaitUser                 (assistant response)
+  -> CheckSteered -> CallModel                 (first active-plan no-progress response)
+  -> CheckSteered -> AwaitUser                 (ordinary or repeated no-progress response)
   -> CheckSteered -> RouteTool                 (tool calls)
 
 RouteTool
@@ -60,7 +61,7 @@ application history, and makes the model replan.
 | `Init` | none | Validate and persist config/state, then `AwaitUser` |
 | `AwaitUser` | steered batch, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected durable command |
 | `CompactContext` | none | Call the summary provider, commit covered range and summary, then trim only already summarized retained messages |
-| `CallModel` | none | Rebuild provider-neutral context, stream buffered deltas, commit the complete assistant message and pending calls |
+| `CallModel` | none | Rebuild provider-neutral context, stream buffered deltas, commit the complete assistant message and pending calls; retry one active-plan response that made no durable progress |
 | `CheckSteered` | bounded steered batch | Apply steering at a safe boundary or route the explicit continuation |
 | `RouteTool` | none | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path |
 | `AwaitToolApproval` | exact call-ID approval or steering | Persist waiting status beside the wait; consume one decision or replan |
@@ -72,7 +73,7 @@ application history, and makes the model replan.
 | Resource | Kind | Purpose |
 |---|---|---|
 | `AgentConfig` | Attribute | Immutable execution configuration |
-| `AgentState` | Attribute | Sequence range, mode, status, plan revision, and pending-call cursor |
+| `AgentState` | Attribute | Sequence range, mode, status, plan revision, pending-call cursor, and consecutive Plan no-progress count |
 | `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
 | `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
 | `CurrentMessages` | AttributeMap | Recent provider-neutral messages keyed by sequence |
@@ -100,6 +101,16 @@ question ID. It deletes the batch, publishes one ordered `UserMessage` to
 retains the answered call ID internally so an active Plan resumes execution.
 A stale, duplicate, partial, or mismatched batch commits no changes. Later model
 turns may create further batches after the current batch resolves.
+
+`ExecutePlan` accepts only the latest draft or active revision at
+`waiting_for_message`. Pending input, approval, timer, queued messages, steered
+messages, or an existing request reject it without committing state or a
+Channel value. Acceptance resets the Plan no-progress count and publishes the
+exact revision. When an executing active Plan receives a model response with no
+tool calls and still has unfinished tasks, the Flow preserves that response and
+automatically calls the model once more with a corrective instruction. A second
+consecutive no-progress response enters `AwaitUser`. Any tool call, Plan update,
+user answer, steer, user turn, or explicit Execute/Continue resets the count.
 
 Each observed `AgentActivity` event is a separate transient timeline row. The
 Stream may also carry revision-scoped Plan task status hints. Activity is never

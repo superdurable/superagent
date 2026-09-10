@@ -665,6 +665,7 @@ type AgentState struct {
 	PlanningRequiresWrite        bool            `json:"planning_requires_write"`
 	PlanningAllowsWrite          bool            `json:"planning_allows_write"`
 	PendingPlanExecutionRevision *PlanRevision   `json:"pending_plan_execution_revision,omitempty"`
+	PlanNoProgressAttempts       int             `json:"plan_no_progress_attempts"`
 }
 
 // SequencedMessage pairs one application message with its durable ordering key.

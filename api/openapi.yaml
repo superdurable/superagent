@@ -288,6 +288,11 @@ paths:
     post:
       operationId: executePlan
       summary: Execute one exact durable plan revision
+      description: >-
+        Accepted only when the Agent is waiting for a message, the requested
+        Plan revision is current, and no pending input, approval, timer, queued
+        message, steering, or execution request blocks it. A conflicting
+        boundary or stale revision returns 409.
       requestBody:
         required: true
         content:

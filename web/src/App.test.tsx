@@ -489,11 +489,167 @@ describe("App", () => {
       await within(plan).findByLabelText("In progress"),
     ).toBeInTheDocument();
     expect(within(plan).getByText("Implement the UI")).toBeInTheDocument();
+    const blockedAction = within(plan).getByRole("button", {
+      name: "Resolve queued messages",
+    });
+    expect(blockedAction).toBeDisabled();
+    expect(blockedAction).toHaveAccessibleDescription(
+      "The Agent must consume or remove queued messages before continuing this Plan.",
+    );
 
     const toggle = within(queue).getByRole("button", { name: /Message queue/ });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(within(queue).queryByText("Follow up")).not.toBeInTheDocument();
+  });
+
+  it("disables an active Plan action while the Agent is running", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        interactionStatus: AgentInteractionStatus.SUBMITTED,
+        plan: {
+          revision: 7,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const plan = await screen.findByLabelText("Agent plan");
+    const action = within(plan).getByRole("button", {
+      name: "Plan running…",
+    });
+    expect(action).toBeDisabled();
+    expect(action).toHaveAccessibleDescription(
+      "Continue becomes available if unfinished tasks remain at the next durable wait.",
+    );
+  });
+
+  it("closes the Plan execution boundary immediately on submitted status", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        plan: {
+          revision: 7,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
+        },
+      },
+    });
+    let resolveSubmitted:
+      ((value: { status: AgentInteractionStatus }) => void) | null = null;
+    vi.mocked(waitForAgentInteractionStatus).mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((resolve, reject) => {
+          resolveSubmitted = resolve;
+          signal?.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    const plan = await screen.findByLabelText("Agent plan");
+    expect(
+      within(plan).getByRole("button", { name: "Continue plan" }),
+    ).toBeEnabled();
+    act(() => {
+      resolveSubmitted?.({ status: AgentInteractionStatus.SUBMITTED });
+    });
+
+    await waitFor(() => {
+      expect(
+        within(plan).getByRole("button", { name: "Plan running…" }),
+      ).toBeDisabled();
+    });
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      name: "pending questions",
+      label: "Answer questions first",
+      reason: "Submit the requested answers before continuing this Plan.",
+      patch: {
+        pendingUserInput: {
+          callId: "call-input",
+          questions: [
+            {
+              id: "region",
+              header: "Region",
+              question: "Choose a region",
+              options: [
+                { label: "West", description: "Use West." },
+                { label: "East", description: "Use East." },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
+      name: "pending approval",
+      label: "Resolve approval first",
+      reason: "Approve or reject the pending tool before continuing this Plan.",
+      patch: {
+        pendingApproval: {
+          callId: "call-approval",
+          toolName: "fixture__echo",
+          argumentsJson: "{}",
+        },
+      },
+    },
+    {
+      name: "active timer",
+      label: "Timer is active",
+      reason:
+        "The Plan can continue after the durable Timer finishes or is steered.",
+      patch: {
+        pendingTimer: {
+          callId: "call-timer",
+          durationSeconds: 30,
+          reason: "wait for a dependency",
+        },
+      },
+    },
+  ] satisfies {
+    name: string;
+    label: string;
+    reason: string;
+    patch: Partial<AgentDescription>;
+  }[])("explains the $name Plan blocker", async ({ label, reason, patch }) => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        ...patch,
+        plan: {
+          revision: 7,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const plan = await screen.findByLabelText("Agent plan");
+    const action = within(plan).getByRole("button", { name: label });
+    expect(action).toBeDisabled();
+    expect(action).toHaveAccessibleDescription(reason);
   });
 
   it("keeps a chosen answer local until the batch is submitted", async () => {

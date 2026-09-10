@@ -5,6 +5,7 @@
  */
 
 import {
+  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   type TaskStatus,
@@ -155,6 +156,7 @@ export type ConversationAction =
   | { type: "older-failed"; id: number; message: string }
   | { type: "stream-update"; update: LiveUpdate }
   | { type: "stream-failed"; message: string }
+  | { type: "interaction-submitted" }
   | { type: "composer-changed"; value: string }
   | { type: "plan-mode-changed"; value: boolean }
   | { type: "command-started"; id: number; command: Command }
@@ -229,6 +231,20 @@ export function conversationReducer(
         ...state,
         connection: "reconnecting",
         error: action.message,
+      };
+    case "interaction-submitted":
+      if (state.kind !== "ready" || state.lifecycle === "terminal") {
+        return state;
+      }
+      return {
+        ...state,
+        snapshot: {
+          ...state.snapshot,
+          description: {
+            ...state.snapshot.description,
+            interactionStatus: AgentInteractionStatus.SUBMITTED,
+          },
+        },
       };
     case "composer-changed":
       return state.kind === "ready" && state.lifecycle === "active"

@@ -583,6 +583,12 @@ pre {
   padding: 8px 10px;
   font-size: 12px;
 }
+.plan-action-reason {
+  margin: 10px 0 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .plan-toggle {
   display: none;
 }

@@ -40,9 +40,9 @@ package.
 One stable `FlowID` identifies one conversation. `CurrentMessages` and
 `ArchivedMessages` are the typed application history; they are not Dex
 execution history. `AgentState` owns the retained sequence range, interaction
-mode, status, pending tool cursor, and plan revision. Plans, pending approvals,
-timers, input prompts, and cumulative context summaries are separate typed
-Attributes.
+mode, status, pending tool cursor, plan revision, and consecutive Plan
+no-progress count. Plans, pending approvals, timers, input prompts, and
+cumulative context summaries are separate typed Attributes.
 
 Queued messages and validated question answers use `QueuedUserMessages`.
 Steering uses its own Channel. A queued message enters application history only
@@ -52,6 +52,14 @@ or MCP side effect. `AnswerQuestions` verifies all answers for the exact pending
 one-to-three-question batch, deletes it, publishes one ordered answer message,
 and writes `submitted` in one locked RPC commit. Approval and plan execution use
 ChannelMaps keyed by typed call ID and plan revision.
+
+Plan execution is available only at a durable `waiting_for_message` boundary
+for the latest revision with no pending input, approval, timer, queued message,
+or steering. The browser derives the button state from Snapshot plus the
+interaction-status long poll, so `submitted` closes the boundary immediately.
+An executing active Plan that produces no tool call receives one automatic
+corrective model turn. A second consecutive no-progress response returns to the
+durable wait and exposes `Continue plan`.
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit
 boundary. Waiting state is written in the `WaitFor` that establishes the wait.

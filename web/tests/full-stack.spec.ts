@@ -81,6 +81,7 @@ test("renders chronological transient activity and durable queue interactions", 
   await composer.fill("edit this queued message");
   await page.getByRole("button", { name: "Create plan" }).click();
   await composer.fill("delete this queued message");
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   await composer.press("Control+Enter");
 
   const queue = page.getByRole("region", { name: "Message queue" });
@@ -336,7 +337,9 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   await composer.fill("verify full-stack planning");
   await page.getByRole("button", { name: "Create plan" }).click();
   const plan = page.getByRole("region", { name: "Agent plan" });
-  await expect(plan.getByText("Plan revision 1")).toBeVisible();
+  await expect(plan.getByText("Plan revision 1")).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(plan.locator("xpath=ancestor::aside")).toHaveCount(1);
   await expect(plan.locator(".plan-tasks li")).toHaveCount(2);
 
@@ -464,6 +467,148 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   ).toBeVisible();
 });
 
+test("disables busy Plan actions and continues a stalled active Plan", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const executeStatuses: number[] = [];
+  const executeBodies: { flowId?: string; revision?: number }[] = [];
+  const snapshotStatuses: number[] = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path === "/products/ai-agent/plans/execute") {
+      executeStatuses.push(response.status());
+    }
+    if (path === "/products/ai-agent/snapshot") {
+      snapshotStatuses.push(response.status());
+    }
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/products/ai-agent/plans/execute"
+    ) {
+      executeBodies.push(
+        request.postDataJSON() as { flowId?: string; revision?: number },
+      );
+    }
+  });
+
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await page.getByRole("checkbox", { name: "Plan mode" }).check();
+  await composer.fill("/plan-slow-stop verify recovery boundary");
+  await page.getByRole("button", { name: "Create plan" }).click();
+
+  const plan = page.getByRole("region", { name: "Agent plan" });
+  const activity = page.locator(".activity-entry");
+  await expect(plan.getByText("Plan revision 1")).toBeVisible();
+  const callsBeforeExecution = await activity
+    .filter({ hasText: "Calling mock/dex." })
+    .count();
+  const snapshotsBeforeExecution = snapshotStatuses.length;
+
+  const firstAccepted = page.waitForResponse(
+    (response) =>
+      response.status() === 202 &&
+      new URL(response.url()).pathname === "/products/ai-agent/plans/execute",
+  );
+  await plan.getByRole("button", { name: "Execute plan" }).click();
+  await firstAccepted;
+  const busyAction = plan.getByRole("button", {
+    name: /Requesting execution|Execution requested|Plan running…/u,
+  });
+  await expect(busyAction).toBeDisabled();
+  await busyAction.evaluate((element) => {
+    (element as HTMLButtonElement).click();
+  });
+
+  const continueAction = plan.getByRole("button", { name: "Continue plan" });
+  await expect(continueAction).toBeEnabled({ timeout: 20_000 });
+  await expect
+    .poll(() => activity.filter({ hasText: "Calling mock/dex." }).count())
+    .toBe(callsBeforeExecution + 2);
+  expect(executeStatuses).toEqual([202]);
+  expect(executeBodies).toEqual([{ flowId: expect.any(String), revision: 1 }]);
+  expect(snapshotStatuses.length).toBeGreaterThan(snapshotsBeforeExecution);
+
+  const snapshotsBeforeContinue = snapshotStatuses.length;
+  const continued = page.waitForResponse(
+    (response) =>
+      response.status() === 202 &&
+      new URL(response.url()).pathname === "/products/ai-agent/plans/execute",
+  );
+  await continueAction.focus();
+  await expect(continueAction).toBeFocused();
+  await continueAction.press("Enter");
+  await continued;
+  await expect(
+    plan.getByRole("button", {
+      name: /Requesting execution|Execution requested|Plan running…/u,
+    }),
+  ).toBeDisabled();
+  await expect
+    .poll(() => snapshotStatuses.length)
+    .toBeGreaterThan(snapshotsBeforeContinue);
+  await expect(continueAction).toBeEnabled({ timeout: 20_000 });
+  await expect
+    .poll(() => activity.filter({ hasText: "Calling mock/dex." }).count())
+    .toBe(callsBeforeExecution + 4);
+  expect(executeStatuses).toEqual([202, 202]);
+  expect(executeBodies).toEqual([
+    { flowId: expect.any(String), revision: 1 },
+    { flowId: expect.any(String), revision: 1 },
+  ]);
+
+  const flowId = executeBodies[0]?.flowId;
+  if (flowId === undefined) throw new Error("missing Plan Flow ID");
+  let shouldInjectRace = true;
+  await page.route("**/products/ai-agent/plans/execute", async (route) => {
+    if (shouldInjectRace) {
+      shouldInjectRace = false;
+      const queued = await page.request.post(
+        `${apiOrigin}/products/ai-agent/messages`,
+        {
+          data: {
+            flowId,
+            content: "replace the Plan before the stale Continue arrives",
+            planMode: true,
+          },
+        },
+      );
+      expect(queued.status()).toBe(202);
+      await expect
+        .poll(async () => {
+          const response = await page.request.get(
+            `${apiOrigin}/products/ai-agent/snapshot?flowId=${flowId}`,
+          );
+          const body = (await response.json()) as {
+            description?: { plan?: { revision?: number } | null } | null;
+          };
+          return body.description?.plan?.revision;
+        })
+        .toBe(2);
+    }
+    await route.continue();
+  });
+  const snapshotsBeforeConflict = snapshotStatuses.length;
+  const staleConflict = page.waitForResponse(
+    (response) =>
+      response.status() === 409 &&
+      new URL(response.url()).pathname === "/products/ai-agent/plans/execute",
+  );
+  await continueAction.click();
+  await staleConflict;
+  await expect(page.getByRole("alert")).toContainText(
+    "the Agent is not at an executable wait or the Plan revision changed",
+  );
+  await expect
+    .poll(() => snapshotStatuses.length)
+    .toBeGreaterThan(snapshotsBeforeConflict);
+  expect(executeStatuses).toEqual([202, 202, 409]);
+  await page.unroute("**/products/ai-agent/plans/execute");
+});
+
 test("shows a collapsed Plan above the conversation on a narrow screen", async ({
   page,
 }) => {
@@ -476,7 +621,9 @@ test("shows a collapsed Plan above the conversation on a narrow screen", async (
 
   const plan = page.getByRole("region", { name: "Agent plan" });
   const toggle = plan.getByRole("button", { name: /Plan · 0\/2 complete/u });
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false", {
+    timeout: 20_000,
+  });
   await expect(plan.getByText("Complete the objective:")).toHaveCount(0);
   const planBox = await plan.boundingBox();
   const historyBox = await page

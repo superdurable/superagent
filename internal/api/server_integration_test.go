@@ -179,6 +179,45 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 		t.Fatalf("Plan task Activity = %#v", activity)
 	}
 
+	busyPlanFlowID := "http-busy-plan-" + randomID(t)
+	busyPlanStart := *startBody
+	busyPlanStart.FlowId = transportapi.FlowID(busyPlanFlowID)
+	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/start", &busyPlanStart, http.StatusCreated, nil)
+	busyPlanWaitURL := fmt.Sprintf(
+		"%s/products/ai-agent/interaction-status?flowId=%s&expectedStatus=waiting",
+		baseURL,
+		busyPlanFlowID,
+	)
+	requestJSON(t, http.MethodGet, busyPlanWaitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
+		FlowId: transportapi.FlowID(busyPlanFlowID), Content: "/plan-slow-stop HTTP boundary", PlanMode: true,
+	}, http.StatusAccepted, nil)
+	requestJSON(t, http.MethodGet, busyPlanWaitURL, nil, http.StatusOK, &waiting)
+	busyPlanSnapshotURL := fmt.Sprintf(
+		"%s/products/ai-agent/snapshot?flowId=%s",
+		baseURL,
+		busyPlanFlowID,
+	)
+	requestJSON(t, http.MethodGet, busyPlanSnapshotURL, nil, http.StatusOK, &snapshot)
+	busyDescription, ok := snapshot.Description.Get()
+	if !ok {
+		t.Fatalf("busy Plan Snapshot = %#v", snapshot)
+	}
+	busyPlan, ok := busyDescription.Plan.Get()
+	if !ok {
+		t.Fatalf("busy Plan = %#v", busyDescription.Plan)
+	}
+	executeRequest := &transportapi.ExecutePlanRequest{
+		FlowId: transportapi.FlowID(busyPlanFlowID), Revision: busyPlan.Revision,
+	}
+	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/plans/execute", executeRequest, http.StatusAccepted, nil)
+	var conflict transportapi.Problem
+	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/plans/execute", executeRequest, http.StatusConflict, &conflict)
+	if conflict.Detail != "the Agent is not at an executable wait or the Plan revision changed" {
+		t.Fatalf("busy Plan conflict detail = %q", conflict.Detail)
+	}
+	requestJSON(t, http.MethodGet, busyPlanWaitURL, nil, http.StatusOK, &waiting)
+
 	questionFlowID := "http-question-" + randomID(t)
 	questionStart := *startBody
 	questionStart.FlowId = transportapi.FlowID(questionFlowID)

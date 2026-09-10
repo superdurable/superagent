@@ -105,6 +105,25 @@ describe("conversationReducer", () => {
     });
   });
 
+  it("marks the durable view busy when the interaction status is submitted", () => {
+    const ready = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshot("run-1", "queued-1", "hello"),
+    });
+    const submitted = conversationReducer(ready, {
+      type: "interaction-submitted",
+    });
+
+    expect(submitted).toMatchObject({
+      kind: "ready",
+      snapshot: {
+        description: {
+          interactionStatus: AgentInteractionStatus.SUBMITTED,
+        },
+      },
+    });
+  });
+
   it("renders a terminal Snapshot without inventing active Agent state", () => {
     const state = conversationReducer(initialConversationState(), {
       type: "snapshot-loaded",
