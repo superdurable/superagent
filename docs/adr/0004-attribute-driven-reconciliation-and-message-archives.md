@@ -10,7 +10,7 @@ Activity-triggered and command-triggered Snapshot reads duplicated work and
 could still miss a terminal Flow after Stream loss. Loading the complete
 retained history map also made every recovery read grow with the conversation.
 
-The released Dex Go SDK `v0.2.12` provides `WaitForAttributeEqual` and exact
+The released Dex Go SDK `v0.4.0` provides `WaitForAttributeMatch` and exact
 `GetAttributeMapInstance` reads. Streams remain disposable latency hints.
 
 ## Decision

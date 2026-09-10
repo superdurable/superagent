@@ -1079,17 +1079,28 @@ type toolHeartbeat struct {
 }
 
 var (
+	messageMutationStepOptions = &dex.StepOptions{
+		ExecuteLoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
+	}
+	messageContextStepOptions = &dex.StepOptions{
+		ExecuteLoadAttributeMaps: []dex.AttributeDef{
+			currentMessagesAttribute,
+			archivedMessagesAttribute,
+		},
+	}
 	modelStepOptions = &dex.StepOptions{
-		ExecuteMethodTimeout: 10 * time.Minute,
-		HeartbeatTimeout:     5 * time.Minute,
+		ExecuteMethodTimeout:     10 * time.Minute,
+		HeartbeatTimeout:         5 * time.Minute,
+		ExecuteLoadAttributeMaps: messageContextStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: 3,
 			TotalDuration:   30 * time.Minute,
 		},
 	}
 	toolStepOptions = &dex.StepOptions{
-		ExecuteMethodTimeout: 2 * time.Hour,
-		HeartbeatTimeout:     5 * time.Minute,
+		ExecuteMethodTimeout:     2 * time.Hour,
+		HeartbeatTimeout:         5 * time.Minute,
+		ExecuteLoadAttributeMaps: messageMutationStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: 1,
 		},
@@ -1129,6 +1140,8 @@ type awaitUserStep struct {
 var _ dex.Step[dex.None] = awaitUserStep{}
 
 func (awaitUserStep) GetStepType() string { return string(stepTypeAwaitUser) }
+
+func (awaitUserStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
 
 func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForMessage); err != nil {
@@ -1433,6 +1446,8 @@ var _ dex.Step[continuation] = checkSteeredStep{}
 
 func (checkSteeredStep) GetStepType() string { return string(stepTypeCheckSteered) }
 
+func (checkSteeredStep) GetStepOptions() *dex.StepOptions { return messageContextStepOptions }
+
 func (checkSteeredStep) WaitFor(_ dex.Context, _ continuation) (*dex.Wait, error) {
 	return dex.Until(steeredUserMessagesChannel.AtMost(maximumSteeringMessageCount)), nil
 }
@@ -1483,6 +1498,8 @@ type routeToolStep struct {
 var _ dex.Step[dex.None] = routeToolStep{}
 
 func (routeToolStep) GetStepType() string { return string(stepTypeRouteTool) }
+
+func (routeToolStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
 
 func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
 	if err := step.flow.updateStatus(ctx, AgentStatusRoutingTool); err != nil {
@@ -1669,6 +1686,8 @@ var _ dex.Step[dex.None] = awaitToolApprovalStep{}
 
 func (awaitToolApprovalStep) GetStepType() string { return string(stepTypeAwaitApproval) }
 
+func (awaitToolApprovalStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
+
 func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
 	call, err := step.flow.currentToolCall(ctx)
 	if err != nil {
@@ -1832,6 +1851,8 @@ type durableWaitStep struct {
 var _ dex.Step[dex.None] = durableWaitStep{}
 
 func (durableWaitStep) GetStepType() string { return string(stepTypeDurableWait) }
+
+func (durableWaitStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
 
 func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
 	timer, err := pendingTimerAttribute.Get(ctx)
