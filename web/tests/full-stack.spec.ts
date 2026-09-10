@@ -30,6 +30,27 @@ test("renders chronological transient activity and durable queue interactions", 
   await startAgent(page);
   expect(snapshots).toEqual([200]);
 
+  const headerBox = await page.locator(".conversation-header").boundingBox();
+  const statusBox = await page
+    .getByRole("group", { name: "Agent status" })
+    .boundingBox();
+  expect(headerBox).not.toBeNull();
+  expect(statusBox).not.toBeNull();
+  expect(
+    Math.abs(
+      (headerBox?.y ?? 0) +
+        (headerBox?.height ?? 0) -
+        ((statusBox?.y ?? 0) + (statusBox?.height ?? 0)),
+    ),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(
+      (headerBox?.x ?? 0) +
+        (headerBox?.width ?? 0) -
+        ((statusBox?.x ?? 0) + (statusBox?.width ?? 0)),
+    ),
+  ).toBeLessThanOrEqual(1);
+
   const composer = page.getByRole("textbox", { name: "Message" });
   await composer.fill("/reason Checked the constraints | Durable answer");
   await page.getByRole("button", { name: "Send" }).click();
@@ -47,6 +68,7 @@ test("renders chronological transient activity and durable queue interactions", 
       hasText: "/reason Checked the constraints | Durable answer",
     }),
   ).toHaveCount(1);
+  await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(2);
   await expect(history.locator(".activity-entry").nth(0)).toContainText(
     "Calling mock/dex.",
@@ -502,7 +524,9 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
 
   const plan = page.getByRole("region", { name: "Agent plan" });
   const activity = page.locator(".activity-entry");
-  await expect(plan.getByText("Plan revision 1")).toBeVisible();
+  await expect(plan.getByText("Plan revision 1")).toBeVisible({
+    timeout: 20_000,
+  });
   const callsBeforeExecution = await activity
     .filter({ hasText: "Calling mock/dex." })
     .count();

@@ -136,7 +136,7 @@ export function ConversationView({
             Flow <code>{flowId}</code> · Run <code>{snapshot.runId}</code>
           </p>
         </div>
-        <div className="status-stack">
+        <div className="status-stack" role="group" aria-label="Agent status">
           <span className={`connection-pill ${state.connection}`}>
             {connectionLabel(state.connection)}
           </span>

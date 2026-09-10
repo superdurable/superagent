@@ -272,6 +272,7 @@ button.secondary {
   align-items: center;
 }
 .conversation-header {
+  align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 20px;
@@ -920,8 +921,10 @@ pre {
   }
   .status-stack {
     display: flex;
+    width: fit-content;
     max-width: none;
     align-items: center;
+    justify-self: start;
     justify-content: flex-start;
     gap: 8px;
     text-align: left;
