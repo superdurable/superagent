@@ -239,7 +239,8 @@ describe("App", () => {
 
     render(<App />);
 
-    const steer = await screen.findByRole("button", { name: "Steer" });
+    const steer = await screen.findByRole("button", { name: "Steer now" });
+    expect(steer).toHaveClass("steer-action");
     fireEvent.click(steer);
 
     await waitFor(() => {

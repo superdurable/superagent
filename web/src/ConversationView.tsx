@@ -613,16 +613,27 @@ function QueueTray({
                 {(["steer", "edit", "delete"] as const).map((action) => (
                   <button
                     type="button"
-                    className="text-button"
+                    className={
+                      action === "steer"
+                        ? "queue-action steer-action"
+                        : "queue-action text-button"
+                    }
                     disabled={isBusy}
                     key={action}
                     onClick={() => {
                       onMutateQueue(message, action);
                     }}
                   >
-                    {pendingMessageID === message.messageId
-                      ? "Updating…"
-                      : statusLabel(action)}
+                    {pendingMessageID === message.messageId ? (
+                      "Updating…"
+                    ) : action === "steer" ? (
+                      <>
+                        <span aria-hidden="true">↪</span>
+                        Steer now
+                      </>
+                    ) : (
+                      statusLabel(action)
+                    )}
                   </button>
                 ))}
               </div>

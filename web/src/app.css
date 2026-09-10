@@ -679,6 +679,34 @@ pre {
   margin: 4px 0 8px;
   overflow-wrap: anywhere;
 }
+.queue-actions {
+  align-items: center;
+}
+.queue-action {
+  min-height: 30px;
+}
+.steer-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  background: #3541a9;
+  box-shadow: 0 3px 9px rgb(53 65 169 / 22%);
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+.steer-action:hover:not(:disabled) {
+  background: #29348f;
+  box-shadow: 0 5px 12px rgb(41 52 143 / 28%);
+  transform: translateY(-1px);
+}
+.steer-action:focus-visible {
+  outline: 3px solid #aeb6ff;
+  outline-offset: 2px;
+}
 .text-button {
   padding: 4px 2px;
   color: #4353c7;
@@ -893,5 +921,8 @@ pre {
   .task-spinner {
     animation: none;
     border-color: #6672df;
+  }
+  .steer-action {
+    transition: none;
   }
 }

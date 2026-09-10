@@ -116,10 +116,13 @@ test("renders chronological transient activity and durable queue interactions", 
   const steerRow = queue
     .locator(".queue-message")
     .filter({ hasText: "steer the timer now" });
-  await expect(steerRow.getByRole("button", { name: "Steer" })).toBeVisible({
-    timeout: 15_000,
-  });
-  await steerRow.getByRole("button", { name: "Steer" }).click();
+  const steerButton = steerRow.getByRole("button", { name: "Steer now" });
+  await expect(steerButton).toBeVisible({ timeout: 15_000 });
+  await expect(steerButton).toHaveCSS("background-color", "rgb(53, 65, 169)");
+  await expect(steerButton).toHaveCSS("color", "rgb(255, 255, 255)");
+  await steerButton.focus();
+  await expect(steerButton).toBeFocused();
+  await steerButton.press("Enter");
   await expect(queue.getByText("Steering", { exact: true })).toBeVisible();
   await expect(page.getByText("90s")).toHaveCount(0);
   await expect(
