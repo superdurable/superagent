@@ -44,6 +44,10 @@ with its Dex Worker, and uses `agent.NewClient(...)` for typed commands,
 Snapshots, history, and live events. The reference API process uses this same
 public package; it does not copy or wrap the Agent loop.
 
+The optional `github.com/superdurable/superagent/model` package exposes the
+built-in provider router, provider adapters, and process-memory credential
+store. Embedders can use it without importing SuperAgent internals.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph
 and resource model.

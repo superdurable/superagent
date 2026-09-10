@@ -18,10 +18,12 @@ package consumer_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/agent"
+	"github.com/superdurable/superagent/model"
 )
 
 type modelClient struct{}
@@ -76,4 +78,33 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	if _, err := dex.NewRegistry([]dex.Flow{flow}); err != nil {
 		t.Fatalf("register public Agent Flow: %v", err)
 	}
+}
+
+func TestExternalModuleCanConstructProviderRouter(t *testing.T) {
+	t.Parallel()
+	credentials := model.NewCredentialStore()
+	if err := credentials.SetDefaultAPIKey(agent.ProviderOpenAI, "test-key"); err != nil {
+		t.Fatalf("set public credential: %v", err)
+	}
+	httpClient := &http.Client{}
+	anthropic, err := model.NewAnthropicClient(credentials, httpClient, "")
+	if err != nil {
+		t.Fatalf("construct public Anthropic adapter: %v", err)
+	}
+	gemini, err := model.NewGeminiClient(credentials, httpClient, "")
+	if err != nil {
+		t.Fatalf("construct public Gemini adapter: %v", err)
+	}
+	groq, err := model.NewGroqClient(credentials, httpClient, "")
+	if err != nil {
+		t.Fatalf("construct public Groq adapter: %v", err)
+	}
+	client := model.NewClient(
+		model.NewMockClient(),
+		model.NewOpenAIClient(credentials, httpClient, ""),
+		anthropic,
+		gemini,
+		groq,
+	)
+	var _ agent.ModelClient = client
 }

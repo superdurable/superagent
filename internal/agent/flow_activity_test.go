@@ -75,3 +75,16 @@ func TestPlanTaskActivitiesRequireAPreviousPlan(t *testing.T) {
 		t.Fatalf("events = %#v", events)
 	}
 }
+
+func TestToolProgressMessageCarriesBoundedProviderProgress(t *testing.T) {
+	message := toolProgressMessage("exec_command", "stdout:\n"+strings.Repeat("x", 250))
+	if strings.Contains(message, "\n") {
+		t.Fatalf("tool progress contains newline: %q", message)
+	}
+	if !strings.HasPrefix(message, "stdout: ") || len([]rune(message)) != 200 {
+		t.Fatalf("tool progress did not retain a bounded provider update: %q", message)
+	}
+	if fallback := toolProgressMessage("exec_command", "  \n "); fallback != "Running exec_command." {
+		t.Fatalf("empty tool progress fallback = %q", fallback)
+	}
+}

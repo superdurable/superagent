@@ -2053,14 +2053,18 @@ func (progress modelProgress) writeAssistant(chunk string) error {
 	if err := progress.ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); err != nil {
 		return err
 	}
-	return progress.assistantWriter.Write(chunk)
+	// Streams are disposable; heartbeat failure still cancels the provider call.
+	_ = progress.assistantWriter.Write(chunk)
+	return nil
 }
 
 func (progress modelProgress) writeReasoning(chunk string) error {
 	if err := progress.ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseReasoningStream}); err != nil {
 		return err
 	}
-	return progress.reasoningWriter.Write(chunk)
+	// Streams are disposable; heartbeat failure still cancels the provider call.
+	_ = progress.reasoningWriter.Write(chunk)
+	return nil
 }
 
 func (progress modelProgress) writeActivity(event AgentEvent) error {
@@ -2071,7 +2075,9 @@ func (progress modelProgress) writeActivity(event AgentEvent) error {
 		return err
 	}
 	event.MessageSequence = &progress.messageSequence
-	return progress.activityWriteFunc(progress.ctx, event)
+	// Streams are disposable; heartbeat failure still cancels the provider call.
+	_ = progress.activityWriteFunc(progress.ctx, event)
+	return nil
 }
 
 type toolProgress struct {
@@ -2080,7 +2086,7 @@ type toolProgress struct {
 	call ToolCall
 }
 
-func (progress toolProgress) write(_ string) error {
+func (progress toolProgress) write(message string) error {
 	if err := progress.ctx.RecordHeartbeat(toolHeartbeat{
 		Phase:    heartbeatPhaseToolProgress,
 		ToolName: progress.call.Name,
@@ -2089,12 +2095,21 @@ func (progress toolProgress) write(_ string) error {
 	}
 	callID := progress.call.ID
 	toolName := progress.call.Name
-	return progress.flow.writeActivity(progress.ctx, AgentEvent{
+	// Streams are disposable; heartbeat failure still cancels the tool call.
+	_ = progress.flow.writeActivity(progress.ctx, AgentEvent{
 		Kind:     EventKindToolProgress,
-		Message:  "Running " + string(progress.call.Name) + ".",
+		Message:  toolProgressMessage(progress.call.Name, message),
 		CallID:   &callID,
 		ToolName: &toolName,
 	})
+	return nil
+}
+
+func toolProgressMessage(tool ToolName, message string) string {
+	if strings.TrimSpace(message) == "" {
+		return "Running " + string(tool) + "."
+	}
+	return condenseActivityMessage(message)
 }
 
 func errorTypeName(err error) string {

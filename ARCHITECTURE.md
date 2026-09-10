@@ -24,6 +24,7 @@ Agent state. Streams reduce latency but never become recovery state.
 | Package | Owns | Must not own |
 |---|---|---|
 | `agent` | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle |
+| `model` | Public built-in provider adapters, router, and process-memory credentials | Dex resources, provider protocol implementation, process lifecycle |
 | `internal/agent` | Domain IDs/enums, Flow graph, private Dex descriptors, command client | Provider protocols, HTTP transport models, global configuration |
 | `internal/api` | ogen implementation, validation mapping, problem responses | Handwritten routes, generated-model duplicates, durable state |
 | `internal/app` | Dependency construction, goroutine ownership, startup and shutdown | Domain decisions or provider-specific payloads |
@@ -42,6 +43,10 @@ same Flow implementation as the reference process. It does not expose private
 Attribute, Channel, or Stream descriptor handles, nor does it provide generic
 reads around them. Provider and tool implementations remain constructor-injected
 and may live in the embedding application.
+
+The public `model` package aliases the built-in provider implementations and
+delegates their constructors. Embedders can opt into those adapters without
+depending on `internal/model` or duplicating provider wiring.
 
 ## Durable Agent model
 
