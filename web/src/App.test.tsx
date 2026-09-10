@@ -692,6 +692,10 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Relaxed/u }));
 
     expect(screen.getByLabelText("Answered")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Additional details for Pace" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Choose a pace")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit all" })).toBeEnabled();
     expect(answerQuestions).not.toHaveBeenCalled();
   });
@@ -766,8 +770,14 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^West/u }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Additional details for Region" }),
+      { target: { value: "California departure" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Which pace?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Fast/u }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Which format?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Other/u }));
     fireEvent.change(
@@ -788,7 +798,10 @@ describe("App", () => {
             flowId: "flow-existing",
             callId: "call-three",
             answers: [
-              { questionId: "region", answer: "West" },
+              {
+                questionId: "region",
+                answer: "West: California departure",
+              },
               { questionId: "pace", answer: "Careful" },
               { questionId: "format", answer: "Checklist" },
             ],

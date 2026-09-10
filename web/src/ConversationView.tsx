@@ -475,7 +475,8 @@ interface QuestionsPanelProps {
 }
 
 interface QuestionDraft {
-  answer: string;
+  selectedOption: string | null;
+  detail: string;
   isOther: boolean;
 }
 
@@ -491,18 +492,42 @@ function QuestionsPanel({
   if (question === undefined) return null;
   const currentDraft = drafts[question.id];
   const hasAllAnswers = pendingInput.questions.every(
-    ({ id }) => (drafts[id]?.answer.trim().length ?? 0) > 0,
+    ({ id }) => questionAnswer(drafts[id]) !== "",
   );
   const isLast = currentIndex === pendingInput.questions.length - 1;
-  const setAnswer = (answer: string, isOther: boolean) => {
+  const chooseOption = (selectedOption: string) => {
     setDrafts((current) => ({
       ...current,
-      [question.id]: { answer, isOther },
+      [question.id]: {
+        selectedOption,
+        detail:
+          current[question.id]?.isOther === false &&
+          current[question.id]?.selectedOption === selectedOption
+            ? (current[question.id]?.detail ?? "")
+            : "",
+        isOther: false,
+      },
     }));
   };
-  const chooseOption = (answer: string) => {
-    setAnswer(answer, false);
-    if (!isLast) setCurrentIndex((index) => index + 1);
+  const chooseOther = () => {
+    setDrafts((current) => ({
+      ...current,
+      [question.id]: {
+        selectedOption: null,
+        detail:
+          current[question.id]?.isOther === true
+            ? (current[question.id]?.detail ?? "")
+            : "",
+        isOther: true,
+      },
+    }));
+  };
+  const setDetail = (detail: string) => {
+    setDrafts((current) => {
+      const draft = current[question.id];
+      if (draft === undefined) return current;
+      return { ...current, [question.id]: { ...draft, detail } };
+    });
   };
   const submit = () => {
     if (!hasAllAnswers || disabled) return;
@@ -510,7 +535,7 @@ function QuestionsPanel({
       pendingInput.callId,
       pendingInput.questions.map(({ id }) => ({
         questionId: id,
-        answer: drafts[id]?.answer.trim() ?? "",
+        answer: questionAnswer(drafts[id]),
       })),
     );
   };
@@ -537,7 +562,7 @@ function QuestionsPanel({
               }}
             >
               {candidate.header}
-              {(drafts[candidate.id]?.answer.trim().length ?? 0) > 0 && (
+              {questionAnswer(drafts[candidate.id]) !== "" && (
                 <span className="answered-mark" aria-label="Answered">
                   ✓
                 </span>
@@ -555,7 +580,7 @@ function QuestionsPanel({
               type="button"
               className={
                 currentDraft?.isOther === false &&
-                currentDraft.answer === option.label
+                currentDraft.selectedOption === option.label
                   ? "question-option selected"
                   : "question-option secondary"
               }
@@ -575,25 +600,29 @@ function QuestionsPanel({
                 ? "question-option selected"
                 : "question-option secondary"
             }
-            onClick={() => {
-              setAnswer(
-                currentDraft?.isOther === true ? currentDraft.answer : "",
-                true,
-              );
-            }}
+            onClick={chooseOther}
           >
             <strong>Other</strong>
             <small>Enter a different answer.</small>
           </button>
         </div>
-        {currentDraft?.isOther === true && (
-          <label className="other-answer">
-            Other answer
+        {currentDraft !== undefined && (
+          <label className="answer-detail">
+            {currentDraft.isOther ? "Your answer" : "Add details (optional)"}
             <input
-              aria-label={`Other answer for ${question.header}`}
-              value={currentDraft.answer}
+              aria-label={
+                currentDraft.isOther
+                  ? `Other answer for ${question.header}`
+                  : `Additional details for ${question.header}`
+              }
+              placeholder={
+                currentDraft.isOther
+                  ? "Enter your answer…"
+                  : "Add dates, constraints, or context…"
+              }
+              value={currentDraft.detail}
               onChange={(event) => {
-                setAnswer(event.target.value, true);
+                setDetail(event.target.value);
               }}
             />
           </label>
@@ -614,7 +643,7 @@ function QuestionsPanel({
           <button
             type="button"
             className="secondary"
-            disabled={disabled || currentDraft?.answer.trim() === ""}
+            disabled={disabled || questionAnswer(currentDraft) === ""}
             onClick={() => {
               setCurrentIndex((index) => index + 1);
             }}
@@ -634,6 +663,15 @@ function QuestionsPanel({
       </div>
     </section>
   );
+}
+
+function questionAnswer(draft: QuestionDraft | undefined): string {
+  if (draft === undefined) return "";
+  const detail = draft.detail.trim();
+  if (draft.isOther) return detail;
+  const selectedOption = draft.selectedOption?.trim() ?? "";
+  if (selectedOption === "" || detail === "") return selectedOption;
+  return `${selectedOption}: ${detail}`;
 }
 
 interface PlanPanelProps {

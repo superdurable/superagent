@@ -497,10 +497,17 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
     inputCard.getByText("Which region should I use?", { exact: true }),
   ).toBeVisible();
   await inputCard.getByRole("button", { name: /^US West/u }).click();
+  const regionDetails = inputCard.getByRole("textbox", {
+    name: "Additional details for Region",
+  });
+  await expect(regionDetails).toBeVisible();
+  await regionDetails.fill("Depart 2026-07-01, return 2026-07-18");
+  await inputCard.getByRole("button", { name: "Next" }).click();
   await expect(
     inputCard.getByText("How quickly should I proceed?", { exact: true }),
   ).toBeVisible();
   await inputCard.getByRole("button", { name: /^Fast/u }).click();
+  await inputCard.getByRole("button", { name: "Next" }).click();
   await expect(
     inputCard.getByText("Which output format should I use?", { exact: true }),
   ).toBeVisible();
@@ -534,7 +541,10 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
         "answers" in body &&
         JSON.stringify(body.answers) ===
           JSON.stringify([
-            { questionId: "region", answer: "US West" },
+            {
+              questionId: "region",
+              answer: "US West: Depart 2026-07-01, return 2026-07-18",
+            },
             { questionId: "pace", answer: "Careful" },
             { questionId: "format", answer: "Checklist" },
           ]) &&
@@ -545,6 +555,9 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   ).toHaveLength(1);
   await expect(
     page.locator(".message-bubble.user").filter({ hasText: "Checklist" }),
+  ).toHaveCount(1);
+  await expect(
+    page.locator(".message-bubble.user").filter({ hasText: "2026-07-18" }),
   ).toHaveCount(1);
   await expect(
     page
@@ -782,7 +795,14 @@ test("shows a collapsed Plan above the conversation on a narrow screen", async (
   const firstChoice = questions.getByRole("button", { name: /^US West/u });
   await firstChoice.focus();
   await firstChoice.press("Enter");
+  const narrowDetails = questions.getByRole("textbox", {
+    name: "Additional details for Region",
+  });
+  await expect(narrowDetails).toBeVisible();
+  await narrowDetails.fill("Near Seattle");
+  await questions.getByRole("button", { name: "Next" }).click();
   await questions.getByRole("button", { name: /^Careful/u }).click();
+  await questions.getByRole("button", { name: "Next" }).click();
   await questions.getByRole("button", { name: /^Summary/u }).click();
   const submit = questions.getByRole("button", { name: "Submit all" });
   await submit.focus();

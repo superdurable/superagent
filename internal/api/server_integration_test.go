@@ -246,7 +246,10 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	answerURL := baseURL + "/products/ai-agent/questions/answer"
 	answer := &transportapi.AnswerQuestionsRequest{
 		FlowId: transportapi.FlowID(questionFlowID), CallId: pendingInput.CallId,
-		Answers: []transportapi.UserInputAnswer{{QuestionId: pendingInput.Questions[0].ID, Answer: "us-west"}},
+		Answers: []transportapi.UserInputAnswer{{
+			QuestionId: pendingInput.Questions[0].ID,
+			Answer:     "us-west: depart 2026-07-01, return 2026-07-18",
+		}},
 	}
 	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusAccepted, nil)
 	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
@@ -257,8 +260,8 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusConflict, nil)
 	requestJSON(t, http.MethodGet, questionWaitURL, nil, http.StatusOK, &waiting)
 	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
-	if !transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleUser, "**Details**: us-west") ||
-		!transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleAssistant, "Local demo response: **Details**: us-west") {
+	if !transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleUser, "**Details**: us-west: depart 2026-07-01, return 2026-07-18") ||
+		!transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleAssistant, "Local demo response: **Details**: us-west: depart 2026-07-01, return 2026-07-18") {
 		t.Fatalf("answered history = %#v", snapshot.History.Messages)
 	}
 }

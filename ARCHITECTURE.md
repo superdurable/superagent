@@ -120,6 +120,8 @@ mode. The composer retains focus and remains editable while submission and
 Snapshot reconciliation gate later mutations. Pending input uses the dedicated
 `answerQuestions` operation. The browser
 collects every answer locally, permits review, and submits the complete batch.
+Preset answers may include a compact supplemental detail that is composed into
+the answer string; `Other` requires free text.
 HTTP acceptance means the server has durably removed that exact batch and
 queued one normal answer message. Queue edit, delete, and steer optimistically
 remove one stable message ID.

@@ -871,14 +871,15 @@ pre {
   color: inherit;
   font-weight: 500;
 }
-.other-answer {
+.answer-detail {
   display: grid;
+  width: min(560px, 100%);
   gap: 5px;
   margin-top: 10px;
   font-size: 12px;
   font-weight: 800;
 }
-.other-answer input {
+.answer-detail input {
   width: 100%;
 }
 .question-navigation {
