@@ -37,6 +37,13 @@ The Go process never embeds or serves frontend assets. `web/dist` reads its API
 origin from `config.json`, so frontend deployments can change independently of
 the backend.
 
+The reusable Go package is available at
+`github.com/superdurable/superagent/agent`. An embedding application supplies
+the provider-neutral model and tool boundaries, registers `agent.NewFlow(...)`
+with its Dex Worker, and uses `agent.NewClient(...)` for typed commands,
+Snapshots, history, and live events. The reference API process uses this same
+public package; it does not copy or wrap the Agent loop.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph
 and resource model.
@@ -124,6 +131,9 @@ Run the complete credential-free quality gate:
 ```bash
 make check
 ```
+
+`make test-public-api` also compiles a fixture as a separate Go module. This
+guards the public import boundary independently of access to `internal` code.
 
 Run real-server and provider verification explicitly:
 

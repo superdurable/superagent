@@ -2,10 +2,10 @@
 	check-generated copyright-check flow-visualize format-check fuzz generate \
 	generate-go generate-web governance-check install-dexcli install-osv-scanner install-temporal lint lint-go lint-web lint-workflows \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
-	test-full-stack-e2e test-integration test-race test-server-integration test-web vet vulnerability-check
+	test-full-stack-e2e test-integration test-public-api test-race test-server-integration test-web vet vulnerability-check
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
-GO_PACKAGES := ./cmd/... ./internal/...
+GO_PACKAGES := ./agent/... ./cmd/... ./internal/...
 DEXCLI_VERSION := v0.4.0
 DEXCLI_BINARY := $(CURDIR)/.cache/dexcli-$(DEXCLI_VERSION)
 OSV_SCANNER_VERSION := v2.5.1
@@ -110,6 +110,9 @@ audit-web: install-osv-scanner
 test-agent:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/agent
 
+test-public-api:
+	@sh script/test-public-api.sh
+
 test-dex-integration:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 \
 		-run '$(INTEGRATION_TEST_RUN)' -timeout '$(INTEGRATION_TEST_TIMEOUT)' ./internal/agent
@@ -138,7 +141,7 @@ test-model:
 test-mcp:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test ./internal/mcp
 
-test: test-agent test-api test-app test-config test-mcp test-model
+test: test-public-api test-agent test-api test-app test-config test-mcp test-model
 
 test-race:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -race $(GO_PACKAGES)

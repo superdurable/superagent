@@ -29,7 +29,7 @@ import (
 
 	"github.com/superdurable/dex/blob-cache-go/blobcache"
 	"github.com/superdurable/dex/sdk-go/dex"
-	"github.com/superdurable/superagent/internal/agent"
+	"github.com/superdurable/superagent/agent"
 	httpapi "github.com/superdurable/superagent/internal/api"
 	"github.com/superdurable/superagent/internal/config"
 	mcpregistry "github.com/superdurable/superagent/internal/mcp"

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/superdurable/superagent/internal/agent"
+	"github.com/superdurable/superagent/agent"
 	"github.com/superdurable/superagent/internal/config"
 )
 

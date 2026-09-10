@@ -6,7 +6,11 @@
 set -eu
 
 repository_root=$(git rev-parse --show-toplevel)
-unformatted_go=$(gofmt -l "$repository_root/cmd" "$repository_root/internal")
+unformatted_go=$(gofmt -l \
+  "$repository_root/agent" \
+  "$repository_root/cmd" \
+  "$repository_root/internal" \
+  "$repository_root/script/testdata/public-api-consumer")
 if [ -n "$unformatted_go" ]; then
   printf '%s\n' "Go files require gofmt:" "$unformatted_go" >&2
   exit 1
