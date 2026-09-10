@@ -50,10 +50,24 @@ trap cleanup EXIT INT TERM
 ready=false
 attempt=0
 while [ "$attempt" -lt 200 ]; do
+  if ! kill -0 "$backend_pid" 2>/dev/null; then
+    echo "full-stack backend exited before becoming ready; see $log_dir/backend.log"
+    exit 1
+  fi
+  if ! kill -0 "$web_pid" 2>/dev/null; then
+    echo "full-stack web server exited before becoming ready; see $log_dir/web.log"
+    exit 1
+  fi
   if curl --fail --silent "$api_origin/readyz" >/dev/null && \
     curl --fail --silent "$web_origin/config.json" >/dev/null; then
-    ready=true
-    break
+    # A process that loses a bind race can still be alive briefly while an
+    # older listener satisfies the probes. Only accept readiness after both
+    # child processes survive one more scheduler turn.
+    sleep 0.1
+    if kill -0 "$backend_pid" 2>/dev/null && kill -0 "$web_pid" 2>/dev/null; then
+      ready=true
+      break
+    fi
   fi
   attempt=$((attempt + 1))
   sleep 0.1

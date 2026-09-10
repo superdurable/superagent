@@ -153,7 +153,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	}
 
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
-		FlowId: transportapi.FlowID(flowID), Content: "Plan through HTTP", PlanMode: true,
+		FlowId: transportapi.FlowID(flowID), MessageId: "http-plan-message", Content: "Plan through HTTP", PlanMode: true,
 	}, http.StatusAccepted, nil)
 	requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
 	requestJSON(t, http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot)
@@ -183,16 +183,11 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	questionStart := *startBody
 	questionStart.FlowId = transportapi.FlowID(questionFlowID)
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/start", &questionStart, http.StatusCreated, nil)
-	questionWaitURL := fmt.Sprintf(
-		"%s/products/ai-agent/interaction-status?flowId=%s&expectedStatus=waiting",
-		baseURL, questionFlowID,
-	)
 	questionSnapshotURL := fmt.Sprintf("%s/products/ai-agent/snapshot?flowId=%s", baseURL, questionFlowID)
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
-		FlowId: transportapi.FlowID(questionFlowID), Content: "/choose Region? | us-west | eu-central", PlanMode: false,
+		FlowId: transportapi.FlowID(questionFlowID), MessageId: "http-question-message", Content: "/choose Region? | us-west | eu-central", PlanMode: false,
 	}, http.StatusAccepted, nil)
-	requestJSON(t, http.MethodGet, questionWaitURL, nil, http.StatusOK, &waiting)
-	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
+	snapshot = waitForPendingUserInput(t, questionSnapshotURL)
 	description, ok = snapshot.Description.Get()
 	if !ok || description.PendingUserInput.IsNull() {
 		t.Fatalf("question Snapshot = %#v", snapshot)
@@ -202,11 +197,11 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 		t.Fatalf("pending input = %#v", description.PendingUserInput)
 	}
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
-		FlowId: transportapi.FlowID(questionFlowID), Content: "us-west", PlanMode: false,
+		FlowId: transportapi.FlowID(questionFlowID), MessageId: "http-blocked-answer", Content: "us-west", PlanMode: false,
 	}, http.StatusConflict, nil)
 	answerURL := baseURL + "/products/ai-agent/questions/answer"
 	answer := &transportapi.AnswerQuestionsRequest{
-		FlowId: transportapi.FlowID(questionFlowID), CallId: pendingInput.CallId,
+		FlowId: transportapi.FlowID(questionFlowID), MessageId: "http-answer-message", CallId: pendingInput.CallId,
 		Answers: []transportapi.UserInputAnswer{{QuestionId: pendingInput.Questions[0].ID, Answer: "us-west"}},
 	}
 	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusAccepted, nil)
@@ -215,13 +210,15 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	if !ok || !description.PendingUserInput.IsNull() {
 		t.Fatalf("question remained after accepted answer: %#v", snapshot)
 	}
-	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusConflict, nil)
-	requestJSON(t, http.MethodGet, questionWaitURL, nil, http.StatusOK, &waiting)
-	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
-	if !transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleUser, "**Details**: us-west") ||
-		!transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleAssistant, "Local demo response: **Details**: us-west") {
-		t.Fatalf("answered history = %#v", snapshot.History.Messages)
+	var replayedAnswer transportapi.MessageReceipt
+	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusAccepted, &replayedAnswer)
+	if !replayedAnswer.Replayed || replayedAnswer.MessageId != answer.MessageId {
+		t.Fatalf("replayed answer receipt = %#v", replayedAnswer)
 	}
+	snapshot = waitForSnapshot(t, questionSnapshotURL, func(snapshot transportapi.AgentSnapshot) bool {
+		return transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleUser, "**Details**: us-west") &&
+			transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleAssistant, "Local demo response: **Details**: us-west")
+	})
 }
 
 func readHTTPActivityUntil(
@@ -263,6 +260,39 @@ func transportHistoryHasMessage(
 		}
 	}
 	return false
+}
+
+func waitForPendingUserInput(t *testing.T, snapshotURL string) transportapi.AgentSnapshot {
+	t.Helper()
+	return waitForSnapshot(t, snapshotURL, func(snapshot transportapi.AgentSnapshot) bool {
+		description, ok := snapshot.Description.Get()
+		return ok && !description.PendingUserInput.IsNull()
+	})
+}
+
+func waitForSnapshot(
+	t *testing.T,
+	snapshotURL string,
+	matches func(transportapi.AgentSnapshot) bool,
+) transportapi.AgentSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var snapshot transportapi.AgentSnapshot
+		if err := requestJSONError(http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if matches(snapshot) {
+			return snapshot
+		}
+		select {
+		case <-time.After(50 * time.Millisecond):
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
+	t.Fatal("matching Snapshot did not become visible")
+	return transportapi.AgentSnapshot{}
 }
 
 func availableAddress(t *testing.T) string {

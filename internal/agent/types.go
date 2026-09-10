@@ -1117,10 +1117,21 @@ type PendingUserInput struct {
 	Questions []UserInputQuestion `json:"questions"`
 }
 
-// AnswerQuestionsRequest identifies and answers one pending batch.
+// AnswerQuestionsRequest idempotently answers one exact pending batch.
 type AnswerQuestionsRequest struct {
-	CallID  CallID            `json:"call_id"`
-	Answers []UserInputAnswer `json:"answers"`
+	RequestID        RequestID         `json:"request_id"`
+	MessageID        MessageID         `json:"message_id"`
+	CallID           CallID            `json:"call_id"`
+	Answers          []UserInputAnswer `json:"answers"`
+	ExpectedRevision *MutationRevision `json:"expected_revision,omitempty"`
+}
+
+func (request AnswerQuestionsRequest) fingerprint() (string, error) {
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("encode AnswerQuestions request fingerprint: %w", err)
+	}
+	return encodedFingerprint(encoded), nil
 }
 
 // UserInputAnswer answers one question in a pending input batch.
@@ -1347,6 +1358,35 @@ func (err *CommandRejectedError) Error() string {
 func validateExpectedRevision(revision *MutationRevision) error {
 	if revision != nil && *revision < 0 {
 		return errors.New("expected revision must not be negative")
+	}
+	return nil
+}
+
+func validateAnswerQuestionsRequest(request AnswerQuestionsRequest) error {
+	if err := validateRequestID(request.RequestID); err != nil {
+		return err
+	}
+	if err := validateMessageID(request.MessageID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(request.CallID)) == "" {
+		return errors.New("call ID must not be empty")
+	}
+	if err := validateExpectedRevision(request.ExpectedRevision); err != nil {
+		return err
+	}
+	if len(request.Answers) == 0 || len(request.Answers) > maximumUserInputQuestions {
+		return fmt.Errorf("answers must contain 1-%d values", maximumUserInputQuestions)
+	}
+	seen := make(map[UserInputQuestionID]struct{}, len(request.Answers))
+	for _, answer := range request.Answers {
+		if strings.TrimSpace(string(answer.QuestionID)) == "" || strings.TrimSpace(answer.Answer) == "" {
+			return errors.New("answers require question ID and answer")
+		}
+		if _, found := seen[answer.QuestionID]; found {
+			return fmt.Errorf("question %q was answered more than once", answer.QuestionID)
+		}
+		seen[answer.QuestionID] = struct{}{}
 	}
 	return nil
 }

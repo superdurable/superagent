@@ -133,17 +133,19 @@ func TestAnswerQuestionsMapsExactPendingBatch(t *testing.T) {
 	service := &fakeAgentService{}
 	handler := newTestHandler(service, fakeCredentials{})
 	response, err := handler.AnswerQuestions(context.Background(), &transportapi.AnswerQuestionsRequest{
-		FlowId: "flow-1", CallId: "call-1", Answers: []transportapi.UserInputAnswer{{
+		FlowId: "flow-1", MessageId: "answer-1", CallId: "call-1", Answers: []transportapi.UserInputAnswer{{
 			QuestionId: "environment", Answer: "Production",
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := response.(*transportapi.Accepted); !ok {
-		t.Fatalf("response type = %T", response)
+	receipt, ok := response.(*transportapi.MessageReceipt)
+	if !ok || receipt.MessageId != "answer-1" || receipt.AcceptedAt != time.Unix(2, 0).UTC() || !receipt.Replayed {
+		t.Fatalf("answer response = %#v", response)
 	}
-	if service.answeredFlowID != "flow-1" || service.answer.CallID != "call-1" ||
+	if service.answeredFlowID != "flow-1" || service.answer.RequestID != "answer-1" ||
+		service.answer.MessageID != "answer-1" || service.answer.CallID != "call-1" ||
 		len(service.answer.Answers) != 1 || service.answer.Answers[0].QuestionID != "environment" ||
 		service.answer.Answers[0].Answer != "Production" {
 		t.Fatalf("answer = %q / %#v", service.answeredFlowID, service.answer)
@@ -155,7 +157,7 @@ func TestAnswerQuestionsRejectionMapsToConflict(t *testing.T) {
 	service := &fakeAgentService{answerErr: &agent.CommandRejectedError{Command: agent.CommandAnswerQuestions}}
 	handler := newTestHandler(service, fakeCredentials{})
 	response, err := handler.AnswerQuestions(context.Background(), &transportapi.AnswerQuestionsRequest{
-		FlowId: "flow-1", CallId: "stale-call", Answers: []transportapi.UserInputAnswer{{
+		FlowId: "flow-1", MessageId: "stale-answer", CallId: "stale-call", Answers: []transportapi.UserInputAnswer{{
 			QuestionId: "environment", Answer: "Production",
 		}},
 	})
@@ -586,10 +588,13 @@ func (service *fakeAgentService) AnswerQuestions(
 	_ context.Context,
 	flowID agent.FlowID,
 	request agent.AnswerQuestionsRequest,
-) error {
+) (agent.MessageReceipt, error) {
 	service.answeredFlowID = flowID
 	service.answer = request
-	return service.answerErr
+	return agent.MessageReceipt{
+		RequestID: request.RequestID, MessageID: request.MessageID,
+		AcceptedAt: time.Unix(2, 0).UTC(), IsReplay: true,
+	}, service.answerErr
 }
 
 func (service *fakeAgentService) Snapshot(

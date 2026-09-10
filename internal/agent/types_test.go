@@ -208,6 +208,59 @@ func TestMutationPreconditionAndCancellationValidation(t *testing.T) {
 	}
 }
 
+func TestAnswerQuestionsValidationAndFingerprint(t *testing.T) {
+	t.Parallel()
+	valid := AnswerQuestionsRequest{
+		RequestID: "answer-request-1",
+		MessageID: "answer-message-1",
+		CallID:    "call-1",
+		Answers: []UserInputAnswer{{
+			QuestionID: "environment",
+			Answer:     "Production",
+		}},
+	}
+	if err := validateAnswerQuestionsRequest(valid); err != nil {
+		t.Fatalf("valid answer request: %v", err)
+	}
+	fingerprint, err := valid.fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*AnswerQuestionsRequest)
+	}{
+		{name: "missing request ID", mutate: func(request *AnswerQuestionsRequest) { request.RequestID = "" }},
+		{name: "missing message ID", mutate: func(request *AnswerQuestionsRequest) { request.MessageID = "" }},
+		{name: "missing call ID", mutate: func(request *AnswerQuestionsRequest) { request.CallID = "" }},
+		{name: "missing answers", mutate: func(request *AnswerQuestionsRequest) { request.Answers = nil }},
+		{name: "blank answer", mutate: func(request *AnswerQuestionsRequest) { request.Answers[0].Answer = " " }},
+		{name: "duplicate question", mutate: func(request *AnswerQuestionsRequest) {
+			request.Answers = append(request.Answers, request.Answers[0])
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := valid
+			candidate.Answers = append([]UserInputAnswer(nil), valid.Answers...)
+			test.mutate(&candidate)
+			if err := validateAnswerQuestionsRequest(candidate); err == nil {
+				t.Fatal("validation error = nil")
+			}
+		})
+	}
+	changed := valid
+	changed.Answers = append([]UserInputAnswer(nil), valid.Answers...)
+	changed.Answers[0].Answer = "Staging"
+	changedFingerprint, err := changed.fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedFingerprint == fingerprint {
+		t.Fatal("answer mutation did not change the request fingerprint")
+	}
+}
+
 func TestCancelFingerprintIncludesReason(t *testing.T) {
 	t.Parallel()
 	request := CancelRequest{RequestID: "cancel-1", Reason: "first reason"}

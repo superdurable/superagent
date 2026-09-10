@@ -108,9 +108,11 @@ Steering uses its own Channel. A queued message enters application history only
 after a Step consumes it. Steering is consumed only at
 explicit safe Step boundaries, so it cannot claim to cancel an in-flight model
 or MCP side effect. `AnswerQuestions` verifies all answers for the exact pending
-one-to-three-question batch, deletes it, publishes one ordered answer message,
-and writes `submitted` in one locked RPC commit. Approval and plan execution use
-ChannelMaps keyed by typed call ID and plan revision.
+one-to-three-question batch. It records caller-stable command and message
+identities, deletes the batch, publishes one ordered answer message, advances
+the mutation revision, and writes `submitted` in one locked RPC commit. Equal
+retries return the original receipt without publishing again. Approval and plan
+execution use ChannelMaps keyed by typed call ID and plan revision.
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit
 boundary. Waiting state is written in the `WaitFor` that establishes the wait.

@@ -297,6 +297,21 @@ func (*Flow) SendMessage(ctx dex.Context, input SendMessageRequest) (*dex.RPCRes
 	if result, found, findErr := findDurableCommand(ctx, CommandSendMessage, input.RequestID, fingerprint); findErr != nil || found {
 		return result, findErr
 	}
+	pendingInput, err := getPendingUserInput(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pendingInput != nil {
+		return commitCommandRPC(
+			ctx,
+			CommandSendMessage,
+			input.RequestID,
+			fingerprint,
+			durableCommandRejected,
+			time.Now().UTC(),
+			false,
+		)
+	}
 	messageFingerprint, messageFingerprintErr := userMessageFingerprint(input.Message)
 	if messageFingerprintErr != nil {
 		return nil, messageFingerprintErr
@@ -397,21 +412,92 @@ func (*Flow) SendMessage(ctx dex.Context, input SendMessageRequest) (*dex.RPCRes
 	}
 }
 
-// AnswerQuestions closes and answers one exact pending input batch atomically.
-func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
-	if strings.TrimSpace(string(input.CallID)) == "" {
-		return &dex.RPCResult[bool]{Output: false}, nil
+// AnswerQuestions durably accepts one caller-identified answer batch at most once.
+func (*Flow) AnswerQuestions(
+	ctx dex.Context,
+	input AnswerQuestionsRequest,
+) (*dex.RPCResult[durableCommandResult], error) {
+	if err := validateAnswerQuestionsRequest(input); err != nil {
+		return nil, err
+	}
+	fingerprint, err := input.fingerprint()
+	if err != nil {
+		return nil, err
+	}
+	if result, found, findErr := findDurableCommand(
+		ctx,
+		CommandAnswerQuestions,
+		input.RequestID,
+		fingerprint,
+	); findErr != nil || found {
+		return result, findErr
 	}
 	pending, err := getPendingUserInput(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if pending == nil || pending.CallID != input.CallID {
-		return &dex.RPCResult[bool]{Output: false}, nil
+	message, answerErr := answeredUserMessageValue(pending, input)
+	if answerErr != nil {
+		return commitCommandRPC(
+			ctx,
+			CommandAnswerQuestions,
+			input.RequestID,
+			fingerprint,
+			durableCommandRejected,
+			time.Now().UTC(),
+			false,
+		)
 	}
-	message, isValid := acceptedAnsweredUserMessage(*pending, input.Answers)
-	if !isValid {
-		return &dex.RPCResult[bool]{Output: false}, nil
+	messageFingerprint, err := userMessageFingerprint(message)
+	if err != nil {
+		return nil, err
+	}
+	acceptedAt := time.Now().UTC()
+	accepted, acceptedErr := acceptedUserMessagesAttribute.Get(ctx, acceptedMessageInstance(input.MessageID))
+	if acceptedErr == nil {
+		outcome := durableCommandMessageConflict
+		if accepted.MessageID == input.MessageID && accepted.Fingerprint == messageFingerprint {
+			outcome = durableCommandRejected
+		}
+		return commitCommandRPC(
+			ctx,
+			CommandAnswerQuestions,
+			input.RequestID,
+			fingerprint,
+			outcome,
+			acceptedAt,
+			false,
+		)
+	}
+	if !isAttributeNotFound(acceptedErr) {
+		return nil, acceptedErr
+	}
+	currentRevision, err := currentMutationRevision(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if input.ExpectedRevision != nil && *input.ExpectedRevision != currentRevision {
+		return staleMutationRevisionRPC(
+			ctx,
+			CommandAnswerQuestions,
+			input.RequestID,
+			fingerprint,
+			*input.ExpectedRevision,
+			currentRevision,
+		)
+	}
+	mutationRevision, err := advanceMutationRevision(ctx)
+	if err != nil {
+		return nil, err
+	}
+	message.AcceptedAt = acceptedAt
+	if err := acceptedUserMessagesAttribute.Set(ctx, acceptedMessageInstance(input.MessageID), acceptedUserMessage{
+		MessageID:        input.MessageID,
+		Fingerprint:      messageFingerprint,
+		AcceptedAt:       acceptedAt,
+		MutationRevision: mutationRevision,
+	}); err != nil {
+		return nil, err
 	}
 	if err := pendingUserInputAttribute.Delete(ctx); err != nil {
 		return nil, err
@@ -422,7 +508,29 @@ func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*de
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
-	return &dex.RPCResult[bool]{Output: true}, nil
+	return commitCommandAtRevisionRPC(
+		ctx,
+		CommandAnswerQuestions,
+		input.RequestID,
+		fingerprint,
+		durableCommandAccepted,
+		acceptedAt,
+		false,
+		mutationRevision,
+		nil,
+	)
+}
+
+func answeredUserMessageValue(pending *PendingUserInput, input AnswerQuestionsRequest) (UserMessage, error) {
+	if pending == nil || pending.CallID != input.CallID {
+		return UserMessage{}, errors.New("answer batch does not match the pending input")
+	}
+	message, err := answeredUserMessage(*pending, input.Answers)
+	if err != nil {
+		return UserMessage{}, err
+	}
+	message.MessageID = input.MessageID
+	return message, nil
 }
 
 // SteerMessage atomically moves a queued message into the Steer queue.
@@ -2821,6 +2929,11 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, fmt.Errorf("validate persisted application context: %w", contextErr)
 	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
+	// Always expose the stable lifecycle event retained by the activity
+	// timeline. Tool adapters may then append richer, bounded provider progress.
+	if progressErr := progress.write(""); progressErr != nil {
+		return nil, progressErr
+	}
 	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
 		FlowID:             FlowID(ctx.FlowID()),
 		ApplicationContext: applicationContext,

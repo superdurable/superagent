@@ -35,6 +35,7 @@ import {
   waitForAgentInteractionStatus,
   type AgentSnapshot,
   type AgentDescription,
+  type MessageReceipt,
   type Portal,
 } from "./api/generated";
 import type * as GeneratedAPI from "./api/generated";
@@ -116,7 +117,11 @@ describe("App", () => {
     window.history.replaceState({}, "", "/");
     vi.mocked(getPortal).mockResolvedValue(portal);
     vi.mocked(getAgentSnapshot).mockResolvedValue(snapshot);
-    vi.mocked(answerQuestions).mockResolvedValue({ accepted: true });
+    vi.mocked(answerQuestions).mockResolvedValue({
+      messageId: "answer-message",
+      acceptedAt: "2026-09-03T00:00:00Z",
+      replayed: false,
+    });
     vi.mocked(readEvent).mockImplementation(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
@@ -311,7 +316,7 @@ describe("App", () => {
   });
 
   it("gates mutations until the post-command Snapshot succeeds", async () => {
-    const command = deferred<{ accepted: true }>();
+    const command = deferred<MessageReceipt>();
     const reconciliation = deferred<AgentSnapshot>();
     vi.mocked(sendMessage).mockReturnValueOnce(command.promise);
     vi.mocked(getAgentSnapshot)
@@ -324,7 +329,11 @@ describe("App", () => {
     fireEvent.change(composer, { target: { value: "first" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     act(() => {
-      command.resolve({ accepted: true });
+      command.resolve({
+        messageId: "message-command",
+        acceptedAt: "2026-09-03T00:00:00Z",
+        replayed: false,
+      });
     });
 
     expect(await screen.findByRole("status")).toHaveTextContent(
@@ -451,6 +460,7 @@ describe("App", () => {
       queued: [
         {
           messageId: "queued-1",
+          acceptedAt: "2026-09-03T00:00:00Z",
           value: { content: "Follow up", planMode: false },
         },
       ],
@@ -566,6 +576,7 @@ describe("App", () => {
         expect.objectContaining({
           body: {
             flowId: "flow-existing",
+            messageId: expect.any(String),
             callId: "call-1",
             answers: [{ questionId: "pace", answer: "Relaxed" }],
           },
@@ -623,6 +634,7 @@ describe("App", () => {
         expect.objectContaining({
           body: {
             flowId: "flow-existing",
+            messageId: expect.any(String),
             callId: "call-three",
             answers: [
               { questionId: "region", answer: "West" },
@@ -731,6 +743,7 @@ function message(
   return {
     sequence,
     message: {
+      messageId: `message-${String(sequence)}`,
       role,
       content,
       toolCalls: [],

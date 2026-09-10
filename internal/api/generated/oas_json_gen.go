@@ -1798,6 +1798,10 @@ func (s *AnswerQuestionsRequest) encodeFields(e *jx.Encoder) {
 		s.FlowId.Encode(e)
 	}
 	{
+		e.FieldStart("messageId")
+		s.MessageId.Encode(e)
+	}
+	{
 		e.FieldStart("callId")
 		s.CallId.Encode(e)
 	}
@@ -1811,10 +1815,11 @@ func (s *AnswerQuestionsRequest) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfAnswerQuestionsRequest = [3]string{
+var jsonFieldsNameOfAnswerQuestionsRequest = [4]string{
 	0: "flowId",
-	1: "callId",
-	2: "answers",
+	1: "messageId",
+	2: "callId",
+	3: "answers",
 }
 
 // Decode decodes AnswerQuestionsRequest from json.
@@ -1836,8 +1841,18 @@ func (s *AnswerQuestionsRequest) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"flowId\"")
 			}
-		case "callId":
+		case "messageId":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.MessageId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"messageId\"")
+			}
+		case "callId":
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				if err := s.CallId.Decode(d); err != nil {
 					return err
@@ -1847,7 +1862,7 @@ func (s *AnswerQuestionsRequest) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"callId\"")
 			}
 		case "answers":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				s.Answers = make([]UserInputAnswer, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1874,7 +1889,7 @@ func (s *AnswerQuestionsRequest) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00000111,
+		0b00001111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

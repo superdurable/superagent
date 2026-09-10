@@ -275,6 +275,7 @@ export function Conversation({
     if (areMutationsDisabled) return;
     const pendingInput = state.snapshot.description.pendingUserInput;
     if (pendingInput?.callId !== callID) return;
+    const messageID = crypto.randomUUID() as MessageId;
     const answersByQuestion = new Map(
       answers.map((answer) => [answer.questionId, answer.answer]),
     );
@@ -289,6 +290,7 @@ export function Conversation({
     };
     const command: Command = {
       kind: "answer",
+      messageID,
       callID,
       value,
       submittedAfterSequence: state.snapshot.description.lastSequence,
@@ -298,7 +300,10 @@ export function Conversation({
       ],
     };
     runCommand(command, (signal) =>
-      answerQuestions({ body: { flowId, callId: callID, answers }, signal }),
+      answerQuestions({
+        body: { flowId, messageId: messageID, callId: callID, answers },
+        signal,
+      }),
     );
   };
   const mutateQueue = (

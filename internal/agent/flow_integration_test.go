@@ -212,7 +212,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	}
 	pendingInput := waitForPendingUserInput(t, environment, flowID)
 	environment.replaceWorker(t)
-	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
+	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
 		t.Fatal(err)
 	}
 	waitForNoPendingUserInput(t, environment, flowID)
@@ -1445,12 +1445,16 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatalf("multi-call results = %#v / %#v", firstResult, secondResult)
 	}
 	environment.replaceWorker(t)
-	rejectedMessage := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "September 12"})
+	_, rejectedMessage := environment.agent.SendMessage(
+		t.Context(),
+		flowID,
+		integrationUserMessage("September 12", false),
+	)
 	var sendRejected *CommandRejectedError
 	if !errors.As(rejectedMessage, &sendRejected) || sendRejected.Command != CommandSendMessage {
 		t.Fatalf("message while question pending = %T %v", rejectedMessage, rejectedMessage)
 	}
-	if err := environment.agent.AnswerQuestions(
+	if _, err := environment.agent.AnswerQuestions(
 		t.Context(),
 		flowID,
 		answerRequest(*snapshot.Description.PendingUserInput, "September 12"),
@@ -1465,7 +1469,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: September 12")
 	})
-	staleAnswer := environment.agent.AnswerQuestions(
+	_, staleAnswer := environment.agent.AnswerQuestions(
 		t.Context(),
 		flowID,
 		answerRequest(*snapshot.Description.PendingUserInput, "September 13"),
@@ -1489,7 +1493,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		question.Options[0].Label != "Staging" || question.Options[1].Label != "Production" {
 		t.Fatalf("pending input = %#v", input)
 	}
-	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(*input, "Production")); err != nil {
+	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(*input, "Production")); err != nil {
 		t.Fatal(err)
 	}
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1497,58 +1501,70 @@ func TestAgentUserInputIntegration(t *testing.T) {
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: Production")
 	})
 
-	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/questions"}); err != nil {
+	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/questions", false)); err != nil {
 		t.Fatal(err)
 	}
 	multi := waitForPendingUserInput(t, environment, flowID)
 	if len(multi.Questions) != 3 {
 		t.Fatalf("question count = %d, want 3", len(multi.Questions))
 	}
-	missing := AnswerQuestionsRequest{CallID: multi.CallID, Answers: []UserInputAnswer{
+	missing := answerBatchRequest(multi.CallID, []UserInputAnswer{
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
-	}}
-	assertAnswerRejected(t, environment.agent.AnswerQuestions(t.Context(), flowID, missing))
-	unknown := AnswerQuestionsRequest{CallID: multi.CallID, Answers: []UserInputAnswer{
+	})
+	_, missingErr := environment.agent.AnswerQuestions(t.Context(), flowID, missing)
+	assertAnswerRejected(t, missingErr)
+	unknown := answerBatchRequest(multi.CallID, []UserInputAnswer{
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
 		{QuestionID: "unknown", Answer: "Detailed"},
-	}}
-	assertAnswerRejected(t, environment.agent.AnswerQuestions(t.Context(), flowID, unknown))
+	})
+	_, unknownErr := environment.agent.AnswerQuestions(t.Context(), flowID, unknown)
+	assertAnswerRejected(t, unknownErr)
 	if current := readSnapshot(t, environment, flowID); current.Description == nil ||
 		current.Description.PendingUserInput == nil || current.Description.PendingUserInput.CallID != multi.CallID {
 		t.Fatalf("invalid answer changed pending batch: %#v", current.Description)
 	}
 
-	answer := AnswerQuestionsRequest{CallID: multi.CallID, Answers: []UserInputAnswer{
+	answer := answerBatchRequest(multi.CallID, []UserInputAnswer{
 		{QuestionID: "format", Answer: "Detailed"},
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
-	}}
+	})
 	environment.replaceWorker(t)
-	results := make(chan error, 2)
+	type answerResult struct {
+		receipt MessageReceipt
+		err     error
+	}
+	results := make(chan answerResult, 2)
 	for range 2 {
 		go func() {
-			results <- environment.agent.AnswerQuestions(t.Context(), flowID, answer)
+			receipt, err := environment.agent.AnswerQuestions(t.Context(), flowID, answer)
+			results <- answerResult{receipt: receipt, err: err}
 		}()
 	}
 	accepted := 0
-	rejected := 0
+	replayed := 0
+	receipts := make([]MessageReceipt, 0, 2)
 	for range 2 {
-		err := <-results
-		if err == nil {
+		result := <-results
+		if result.err == nil {
 			accepted++
+			receipts = append(receipts, result.receipt)
+			if result.receipt.IsReplay {
+				replayed++
+			}
 			continue
 		}
-		var commandRejected *CommandRejectedError
-		if errors.As(err, &commandRejected) && commandRejected.Command == CommandAnswerQuestions {
-			rejected++
-			continue
-		}
-		t.Fatalf("concurrent answer error = %T %v", err, err)
+		t.Fatalf("concurrent answer error = %T %v", result.err, result.err)
 	}
-	if accepted != 1 || rejected != 1 {
-		t.Fatalf("concurrent answers accepted/rejected = %d/%d, want 1/1", accepted, rejected)
+	if accepted != 2 || replayed != 1 {
+		t.Fatalf("concurrent answers accepted/replayed = %d/%d, want 2/1", accepted, replayed)
+	}
+	if receipts[0].AcceptedAt != receipts[1].AcceptedAt ||
+		receipts[0].MutationRevision != receipts[1].MutationRevision ||
+		receipts[0].MutationRevision <= 0 {
+		t.Fatalf("concurrent answer receipts = %#v", receipts)
 	}
 	const combinedAnswer = "**Region**: West\n\n**Pace**: Careful\n\n**Format**: Detailed"
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1556,39 +1572,43 @@ func TestAgentUserInputIntegration(t *testing.T) {
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: "+combinedAnswer)
 	})
 
-	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/questions"}); err != nil {
+	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/questions", false)); err != nil {
 		t.Fatal(err)
 	}
 	nextBatch := waitForPendingUserInput(t, environment, flowID)
 	if nextBatch.CallID == multi.CallID {
 		t.Fatal("a later question batch reused the resolved call ID")
 	}
-	if err := environment.agent.AnswerQuestions(t.Context(), flowID, AnswerQuestionsRequest{
-		CallID: nextBatch.CallID,
-		Answers: []UserInputAnswer{
+	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerBatchRequest(
+		nextBatch.CallID,
+		[]UserInputAnswer{
 			{QuestionID: "region", Answer: "East"},
 			{QuestionID: "pace", Answer: "Fast"},
 			{QuestionID: "format", Answer: "Short"},
 		},
-	}); err != nil {
+	)); err != nil {
 		t.Fatal(err)
 	}
 	waitForNoPendingUserInput(t, environment, flowID)
 
-	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
-		Content: "/plan-question deployment", PlanMode: true,
-	}); err != nil {
+	if _, err := environment.agent.SendMessage(
+		t.Context(),
+		flowID,
+		integrationUserMessage("/plan-question deployment", true),
+	); err != nil {
 		t.Fatal(err)
 	}
 	plan := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision}); err != nil {
+	if _, err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		RequestID: integrationRequestID("execute-question-plan"), Revision: plan.Revision,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	planInput := waitForPendingUserInput(t, environment, flowID)
-	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(planInput, "Production")); err != nil {
+	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(planInput, "Production")); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
@@ -1679,18 +1699,19 @@ func TestAgentPlanTaskActivityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
-		Content:  "stream task progress",
-		PlanMode: true,
-	}); err != nil {
+	if _, err := environment.agent.SendMessage(
+		t.Context(),
+		flowID,
+		integrationUserMessage("stream task progress", true),
+	); err != nil {
 		t.Fatal(err)
 	}
 	draft := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		Revision: draft.Revision,
+	if _, err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		RequestID: integrationRequestID("execute-activity-plan"), Revision: draft.Revision,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1836,12 +1857,19 @@ func historyContainsText(messages []SequencedMessage, text string) bool {
 }
 
 func answerRequest(input PendingUserInput, answer string) AnswerQuestionsRequest {
+	return answerBatchRequest(input.CallID, []UserInputAnswer{{
+		QuestionID: input.Questions[0].ID,
+		Answer:     answer,
+	}})
+}
+
+func answerBatchRequest(callID CallID, answers []UserInputAnswer) AnswerQuestionsRequest {
+	identity := "answer:" + encodedFingerprint([]byte(fmt.Sprintf("%s:%v", callID, answers)))
 	return AnswerQuestionsRequest{
-		CallID: input.CallID,
-		Answers: []UserInputAnswer{{
-			QuestionID: input.Questions[0].ID,
-			Answer:     answer,
-		}},
+		RequestID: RequestID(identity),
+		MessageID: MessageID(identity),
+		CallID:    callID,
+		Answers:   answers,
 	}
 }
 

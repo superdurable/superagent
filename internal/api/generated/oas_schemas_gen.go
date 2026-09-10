@@ -24,9 +24,8 @@ func (s *Accepted) SetAccepted(val AcceptedAccepted) {
 	s.Accepted = val
 }
 
-func (*Accepted) answerQuestionsRes() {}
-func (*Accepted) approveToolRes()     {}
-func (*Accepted) executePlanRes()     {}
+func (*Accepted) approveToolRes() {}
+func (*Accepted) executePlanRes() {}
 
 type AcceptedAccepted bool
 
@@ -824,14 +823,20 @@ func (*AnswerQuestionsNotFound) answerQuestionsRes() {}
 
 // Ref: #/components/schemas/AnswerQuestionsRequest
 type AnswerQuestionsRequest struct {
-	FlowId  FlowID            `json:"flowId"`
-	CallId  CallID            `json:"callId"`
-	Answers []UserInputAnswer `json:"answers"`
+	FlowId    FlowID            `json:"flowId"`
+	MessageId MessageID         `json:"messageId"`
+	CallId    CallID            `json:"callId"`
+	Answers   []UserInputAnswer `json:"answers"`
 }
 
 // GetFlowId returns the value of FlowId.
 func (s *AnswerQuestionsRequest) GetFlowId() FlowID {
 	return s.FlowId
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *AnswerQuestionsRequest) GetMessageId() MessageID {
+	return s.MessageId
 }
 
 // GetCallId returns the value of CallId.
@@ -847,6 +852,11 @@ func (s *AnswerQuestionsRequest) GetAnswers() []UserInputAnswer {
 // SetFlowId sets the value of FlowId.
 func (s *AnswerQuestionsRequest) SetFlowId(val FlowID) {
 	s.FlowId = val
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *AnswerQuestionsRequest) SetMessageId(val MessageID) {
+	s.MessageId = val
 }
 
 // SetCallId sets the value of CallId.
@@ -1587,7 +1597,8 @@ func (s *MessageReceipt) SetReplayed(val bool) {
 	s.Replayed = val
 }
 
-func (*MessageReceipt) sendMessageRes() {}
+func (*MessageReceipt) answerQuestionsRes() {}
+func (*MessageReceipt) sendMessageRes()     {}
 
 // Ref: #/components/schemas/MessageRole
 type MessageRole string

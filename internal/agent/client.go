@@ -258,22 +258,25 @@ func (client *Client) SendMessage(
 	commandInstance := durableCommandInstance(CommandSendMessage, request.RequestID)
 	messageInstance := acceptedMessageInstance(request.Message.MessageID)
 	var result durableCommandResult
-	invokeErr := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, request, &result, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-		LockAttributes: []dex.AttributeLock{
-			dex.LockAttribute(agentMutationRevisionAttribute),
-			dex.LockAttributeMap(durableCommandsAttribute, commandInstance),
-			dex.LockAttributeMap(acceptedUserMessagesAttribute, messageInstance),
-		},
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			durableCommandsAttribute.Load(commandInstance),
-			acceptedUserMessagesAttribute.Load(messageInstance),
-		},
-		LoadChannels: []dex.ChannelDef{
-			queuedUserMessagesChannel,
-			steeredUserMessagesChannel,
-		},
+	invokeErr := client.invokeWithLockRetry(ctx, func(ctx context.Context) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, request, &result, dex.InvokeOptions{
+			Timeout:         client.commandTimeout,
+			IsTransactional: true,
+			LockAttributes: []dex.AttributeLock{
+				dex.LockAttribute(agentMutationRevisionAttribute),
+				dex.LockAttribute(pendingUserInputAttribute),
+				dex.LockAttributeMap(durableCommandsAttribute, commandInstance),
+				dex.LockAttributeMap(acceptedUserMessagesAttribute, messageInstance),
+			},
+			LoadAttributeMapInstances: []dex.AttributeMapLoad{
+				durableCommandsAttribute.Load(commandInstance),
+				acceptedUserMessagesAttribute.Load(messageInstance),
+			},
+			LoadChannels: []dex.ChannelDef{
+				queuedUserMessagesChannel,
+				steeredUserMessagesChannel,
+			},
+		})
 	})
 	if invokeErr != nil {
 		reconciled, found, reconcileErr := client.reconcileDurableCommand(
@@ -304,68 +307,92 @@ func (client *Client) SendMessage(
 	}, nil
 }
 
-// AnswerQuestions invokes the durable command for one exact pending input batch.
+// AnswerQuestions idempotently answers one exact pending input batch.
 func (client *Client) AnswerQuestions(
 	ctx context.Context,
 	flowID FlowID,
 	request AnswerQuestionsRequest,
-) error {
+) (MessageReceipt, error) {
 	if err := validateFlowID(flowID); err != nil {
-		return err
+		return MessageReceipt{}, err
 	}
-	if strings.TrimSpace(string(request.CallID)) == "" {
-		return errors.New("call ID must not be empty")
+	if err := validateAnswerQuestionsRequest(request); err != nil {
+		return MessageReceipt{}, err
 	}
-	if len(request.Answers) == 0 || len(request.Answers) > maximumUserInputQuestions {
-		return fmt.Errorf("answers must contain 1-%d values", maximumUserInputQuestions)
+	fingerprint, err := request.fingerprint()
+	if err != nil {
+		return MessageReceipt{}, err
 	}
-	seen := make(map[UserInputQuestionID]struct{}, len(request.Answers))
-	for _, answer := range request.Answers {
-		if strings.TrimSpace(string(answer.QuestionID)) == "" || strings.TrimSpace(answer.Answer) == "" {
-			return errors.New("answers require question ID and answer")
-		}
-		if _, found := seen[answer.QuestionID]; found {
-			return fmt.Errorf("question %q was answered more than once", answer.QuestionID)
-		}
-		seen[answer.QuestionID] = struct{}{}
-	}
-	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
-			Timeout:        client.commandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+	commandInstance := durableCommandInstance(CommandAnswerQuestions, request.RequestID)
+	messageInstance := acceptedMessageInstance(request.MessageID)
+	var result durableCommandResult
+	invokeErr := client.invokeWithLockRetry(ctx, func(ctx context.Context) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, &result, dex.InvokeOptions{
+			Timeout:         client.commandTimeout,
+			IsTransactional: true,
+			LockAttributes: []dex.AttributeLock{
+				dex.LockAttribute(agentMutationRevisionAttribute),
+				dex.LockAttribute(pendingUserInputAttribute),
+				dex.LockAttributeMap(durableCommandsAttribute, commandInstance),
+				dex.LockAttributeMap(acceptedUserMessagesAttribute, messageInstance),
+			},
+			LoadAttributeMapInstances: []dex.AttributeMapLoad{
+				durableCommandsAttribute.Load(commandInstance),
+				acceptedUserMessagesAttribute.Load(messageInstance),
+			},
 		})
 	})
-	if err != nil {
-		return err
+	if invokeErr != nil {
+		reconciled, found, reconcileErr := client.reconcileDurableCommand(
+			ctx,
+			flowID,
+			CommandAnswerQuestions,
+			request.RequestID,
+			fingerprint,
+		)
+		if reconcileErr != nil {
+			return MessageReceipt{}, reconcileErr
+		}
+		if !found {
+			return MessageReceipt{}, invokeErr
+		}
+		result = reconciled
 	}
-	return ensureAccepted(accepted, CommandAnswerQuestions)
+	commandReceipt, err := commandReceipt(result, CommandAnswerQuestions, request.RequestID, request.MessageID)
+	if err != nil {
+		return MessageReceipt{}, err
+	}
+	return MessageReceipt{
+		RequestID:        commandReceipt.RequestID,
+		MessageID:        request.MessageID,
+		AcceptedAt:       commandReceipt.AcceptedAt,
+		MutationRevision: commandReceipt.MutationRevision,
+		IsReplay:         commandReceipt.IsReplay,
+	}, nil
 }
 
-func invokeLockedCommand(
+func (client *Client) invokeWithLockRetry(
 	ctx context.Context,
-	timeout time.Duration,
-	invoke func(context.Context, *bool) error,
-) (bool, error) {
+	invoke func(context.Context) error,
+) error {
 	const initialRetryDelay = 5 * time.Millisecond
 	const maximumRetryDelay = 100 * time.Millisecond
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, client.commandTimeout)
 	defer cancel()
 	retryDelay := initialRetryDelay
 	for {
-		var accepted bool
-		err := invoke(ctx, &accepted)
-		if err == nil {
-			return accepted, nil
-		}
+		err := invoke(ctx)
 		var conflict *dex.RPCLockConflictError
-		if !errors.As(err, &conflict) {
-			return false, err
+		var workerInvocation *dex.WorkerInvocationError
+		isWorkerTransportFailure := errors.As(err, &workerInvocation) && workerInvocation.Worker == nil
+		if !errors.As(err, &conflict) && !isWorkerTransportFailure {
+			return err
 		}
 		timer := time.NewTimer(retryDelay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return false, ctx.Err()
+			return ctx.Err()
 		case <-timer.C:
 		}
 		retryDelay = min(retryDelay*2, maximumRetryDelay)
@@ -441,7 +468,6 @@ func (client *Client) Snapshot(
 	var snapshot AgentSnapshot
 	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, nil, &snapshot, dex.InvokeOptions{
 		Timeout:           client.commandTimeout,
-		IsTransactional:   true,
 		LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
 		LoadChannels: []dex.ChannelDef{
 			queuedUserMessagesChannel,
@@ -1274,13 +1300,6 @@ func (client *Client) ReadEvent(
 func validateFlowID(flowID FlowID) error {
 	if strings.TrimSpace(string(flowID)) == "" {
 		return errors.New("flow ID must not be empty")
-	}
-	return nil
-}
-
-func ensureAccepted(accepted bool, command Command) error {
-	if !accepted {
-		return &CommandRejectedError{Command: command}
 	}
 	return nil
 }

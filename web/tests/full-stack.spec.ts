@@ -81,6 +81,7 @@ test("renders chronological transient activity and durable queue interactions", 
   await composer.fill("edit this queued message");
   await page.getByRole("button", { name: "Create plan" }).click();
   await composer.fill("delete this queued message");
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   await composer.press("Control+Enter");
 
   const queue = page.getByRole("region", { name: "Message queue" });
@@ -412,7 +413,10 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
           ]) &&
         "callId" in body &&
         typeof body.callId === "string" &&
-        body.callId.length > 0,
+        body.callId.length > 0 &&
+        "messageId" in body &&
+        typeof body.messageId === "string" &&
+        body.messageId.length > 0,
     ),
   ).toHaveLength(1);
   await expect(

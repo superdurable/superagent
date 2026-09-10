@@ -107,12 +107,15 @@ Channels are delivery mechanisms, not storage. A queued message enters
 application history only after a Step consumes it. Stream loss never changes
 durable truth.
 
-`SendMessage` rejects while `PendingUserInput` exists. `AnswerQuestions` locks
-that Attribute and requires exactly one non-empty answer for each current
-question ID. It deletes the batch, publishes one ordered `UserMessage` to
-`QueuedUserMessages`, and writes `submitted` in one RPC commit. The message
-retains the answered call ID internally so an active Plan resumes execution.
-A stale, duplicate, partial, or mismatched batch commits no changes. Later model
+`SendMessage` durably rejects while `PendingUserInput` exists.
+`AnswerQuestions` locks the mutation revision, pending input, command record,
+and accepted-message record. It requires exactly one non-empty answer for each
+current question ID. One transaction assigns the caller's message ID and first
+acceptance time, deletes the batch, publishes the ordered `UserMessage`, advances
+the mutation revision, and writes `submitted`. An equal request replay returns
+the first receipt without another publish. A stale, partial, or mismatched batch
+records a rejection without changing the pending input. The message retains the
+answered call ID internally so an active Plan resumes execution. Later model
 turns may create further batches after the current batch resolves.
 
 Each observed `AgentActivity` event is a separate transient timeline row. The

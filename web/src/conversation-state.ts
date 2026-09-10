@@ -33,6 +33,7 @@ export interface SendCommand {
 
 export interface AnswerCommand {
   kind: "answer";
+  messageID: MessageId;
   callID: CallId;
   value: UserMessage;
   submittedAfterSequence: Sequence;

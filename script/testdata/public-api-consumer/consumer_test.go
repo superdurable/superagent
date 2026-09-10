@@ -65,6 +65,7 @@ var (
 	_ func(*dex.Client, *agent.Flow) *agent.Client                                                                       = agent.NewClient
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.EnsureStartRequest) (agent.StartReceipt, error)           = (*agent.Client).EnsureStarted
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.SendMessageRequest) (agent.MessageReceipt, error)         = (*agent.Client).SendMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) (agent.MessageReceipt, error)     = (*agent.Client).AnswerQuestions
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) (agent.CommandReceipt, error)        = (*agent.Client).SteerMessage
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.DeleteQueuedMessageRequest) (agent.CommandReceipt, error) = (*agent.Client).DeleteQueuedMessage
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.RequestID) (agent.CancellationReceipt, error)             = (*agent.Client).Cancel

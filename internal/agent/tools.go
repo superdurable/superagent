@@ -336,11 +336,6 @@ func answeredUserMessage(pending PendingUserInput, answers []UserInputAnswer) (U
 	return UserMessage{Content: content.String(), AnsweredInputCallID: &callID}, nil
 }
 
-func acceptedAnsweredUserMessage(pending PendingUserInput, answers []UserInputAnswer) (UserMessage, bool) {
-	message, err := answeredUserMessage(pending, answers)
-	return message, err == nil
-}
-
 func encodeToolResult(payload toolResultPayload, outcome ToolOutcome, isError bool) (ToolExecutionResult, error) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {

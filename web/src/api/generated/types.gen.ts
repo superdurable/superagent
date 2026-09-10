@@ -169,6 +169,7 @@ export type SendMessageRequest = {
 
 export type AnswerQuestionsRequest = {
     flowId: FlowId;
+    messageId: MessageId;
     callId: CallId;
     answers: Array<UserInputAnswer>;
 };
@@ -576,7 +577,7 @@ export type AnswerQuestionsResponses = {
     /**
      * The answers were durably accepted and the input batch was closed.
      */
-    202: Accepted;
+    202: MessageReceipt;
 };
 
 export type AnswerQuestionsResponse = AnswerQuestionsResponses[keyof AnswerQuestionsResponses];

@@ -34,7 +34,7 @@ import (
 type AgentService interface {
 	EnsureStarted(context.Context, agent.FlowID, agent.EnsureStartRequest) (agent.StartReceipt, error)
 	SendMessage(context.Context, agent.FlowID, agent.SendMessageRequest) (agent.MessageReceipt, error)
-	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
+	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) (agent.MessageReceipt, error)
 	Snapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
 	ArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
 	WaitForInteractionStatus(context.Context, agent.FlowID, agent.AgentInteractionStatus) error
@@ -215,14 +215,20 @@ func (handler *Handler) AnswerQuestions(
 			Answer:     answer.Answer,
 		})
 	}
-	err := handler.agent.AnswerQuestions(ctx, flowID, agent.AnswerQuestionsRequest{
-		CallID:  agent.CallID(request.CallId),
-		Answers: answers,
+	receipt, err := handler.agent.AnswerQuestions(ctx, flowID, agent.AnswerQuestionsRequest{
+		RequestID: agent.RequestID(request.MessageId),
+		MessageID: agent.MessageID(request.MessageId),
+		CallID:    agent.CallID(request.CallId),
+		Answers:   answers,
 	})
 	if err != nil {
 		return handler.answerQuestionsError(ctx, flowID, err), nil
 	}
-	return accepted(), nil
+	return &transportapi.MessageReceipt{
+		MessageId:  transportapi.MessageID(receipt.MessageID),
+		AcceptedAt: receipt.AcceptedAt,
+		Replayed:   receipt.IsReplay,
+	}, nil
 }
 
 // GetAgentSnapshot returns one atomic durable application view.

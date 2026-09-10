@@ -565,6 +565,7 @@ describe("conversationReducer", () => {
       id: 12,
       command: {
         kind: "answer",
+        messageID: "answer-message-1",
         callID: "input-call-1",
         value: { content: "Relaxed", planMode: false },
         submittedAfterSequence: 1,
