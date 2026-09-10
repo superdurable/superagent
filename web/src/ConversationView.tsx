@@ -187,8 +187,11 @@ export function ConversationView({
                     onToggle={revealOpenedDetails}
                   >
                     <summary>
-                      Reasoning summary · {formatTime(entry.value.createdAt)} ·{" "}
-                      {entry.value.isComplete ? "Complete" : "Streaming"}
+                      Reasoning summary ·{" "}
+                      <time dateTime={entry.value.createdAt}>
+                        {formatTime(entry.value.createdAt)}
+                      </time>{" "}
+                      · {entry.value.isComplete ? "Complete" : "Streaming"}
                     </summary>
                     <RichText value={entry.value.value} />
                   </details>

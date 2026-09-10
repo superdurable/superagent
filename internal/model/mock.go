@@ -141,6 +141,22 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 		}
 		return calls.toolReply(content, agent.ToolNameRequestUserInput, arguments, request.WriteActivity)
 	}
+	if strings.HasPrefix(strings.ToLower(userRequest), "/reason ") {
+		parts := splitReasoningCommand(userRequest)
+		if len(parts) != 2 {
+			return agent.ModelReply{}, errors.New("local /reason syntax is /reason <summary> | <response>")
+		}
+		if err := request.WriteReasoning(parts[0]); err != nil {
+			return agent.ModelReply{}, err
+		}
+		if err := waitContext(ctx, 1200*time.Millisecond); err != nil {
+			return agent.ModelReply{}, err
+		}
+		if err := streamMockContent(ctx, parts[1], request.WriteAssistant); err != nil {
+			return agent.ModelReply{}, err
+		}
+		return agent.ModelReply{Content: parts[1], ToolCalls: []agent.ToolCall{}}, nil
+	}
 
 	activeTasks := activePlan(request.Messages)
 	if activeTasks != nil && hasUnfinishedTask(activeTasks) {
@@ -150,6 +166,11 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 				return agent.ModelReply{}, err
 			}
 			return agent.ModelReply{Content: content, ToolCalls: []agent.ToolCall{}}, nil
+		}
+		if hasInProgressTask(activeTasks) {
+			if err := waitContext(ctx, 800*time.Millisecond); err != nil {
+				return agent.ModelReply{}, err
+			}
 		}
 		arguments, err := writeTodosObject(nextMockPlanTasks(activeTasks))
 		if err != nil {
@@ -365,6 +386,17 @@ func splitChoiceCommand(request string) []string {
 	return parts
 }
 
+func splitReasoningCommand(request string) []string {
+	parts := strings.SplitN(request[len("/reason "):], "|", 2)
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
+		if parts[index] == "" {
+			return nil
+		}
+	}
+	return parts
+}
+
 func hasTool(available map[agent.ToolName]struct{}, name agent.ToolName) bool {
 	_, found := available[name]
 	return found
@@ -427,6 +459,15 @@ func planStatus(messages []agent.AgentMessage) agent.PlanStatus {
 func hasUnfinishedTask(tasks []agent.PlanTask) bool {
 	for _, task := range tasks {
 		if task.Status != agent.TaskStatusCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+func hasInProgressTask(tasks []agent.PlanTask) bool {
+	for _, task := range tasks {
+		if task.Status == agent.TaskStatusInProgress {
 			return true
 		}
 	}

@@ -284,6 +284,8 @@ export function Conversation({
       {
         kind: "send",
         value,
+        pendingUserInputCallID:
+          state.snapshot.description.pendingUserInput?.callId ?? null,
         submittedAfterSequence: state.snapshot.description.lastSequence,
         knownMessageIDs: [
           ...state.snapshot.queued.map((message) => message.messageId),

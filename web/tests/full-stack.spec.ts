@@ -4,20 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const apiOrigin = "http://127.0.0.1:8080";
 
-test("renders durable submit, history, activity, queue, edit, delete, and steer", async ({
+test("renders chronological transient activity and durable queue interactions", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   const snapshots: number[] = [];
   const commandStatuses: number[] = [];
   page.on("response", (response) => {
     const path = new URL(response.url()).pathname;
-    if (path === "/products/ai-agent/snapshot") {
+    if (path === "/products/ai-agent/snapshot")
       snapshots.push(response.status());
-    }
     if (
       path === "/products/ai-agent/messages" ||
       path.startsWith("/products/ai-agent/message-queue/")
@@ -26,38 +26,52 @@ test("renders durable submit, history, activity, queue, edit, delete, and steer"
     }
   });
 
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Start a SuperAgent" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Start agent" }).click();
-  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
-  await expect(page.locator(".flow-identity code")).toHaveCount(2);
-  await expect(page.locator(".flow-identity code").first()).not.toBeEmpty();
-  await expect(page.locator(".flow-identity code").last()).not.toBeEmpty();
-  await expect(page.getByText("Waiting For Message").first()).toBeVisible();
+  await startAgent(page);
   expect(snapshots).toEqual([200]);
 
   const composer = page.getByRole("textbox", { name: "Message" });
-  await composer.fill("**durable** hello");
+  await composer.fill("/reason Checked the constraints | Durable answer");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Submitting…")).toBeVisible();
   await expect(page.getByText("Queued", { exact: true })).toBeVisible();
+
+  const history = page.getByRole("region", { name: "Conversation history" });
+  await expect(history.getByText("Checked the constraints")).toBeVisible();
   await expect(
-    page.getByRole("article").filter({ hasText: "durable hello" }),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByRole("article")
-      .filter({ hasText: "Local demo response: durable hello" }),
-  ).toBeVisible();
-  await expect(page.locator(".queue-message.submitting")).toHaveCount(0);
-  await expect(
-    page
-      .getByRole("region", { name: "Agent activity" })
-      .locator(".activity-summary"),
+    history
+      .locator(".message-bubble.assistant")
+      .filter({ hasText: "Durable answer" }),
   ).toHaveCount(1);
-  await expect(page.locator(".activity-card li")).toHaveCount(0);
+  await expect(
+    history.locator(".message-bubble.user").filter({
+      hasText: "/reason Checked the constraints | Durable answer",
+    }),
+  ).toHaveCount(1);
+  await expect(history.locator(".activity-entry")).toHaveCount(2);
+  await expect(history.locator(".activity-entry").nth(0)).toContainText(
+    "Calling mock/dex.",
+  );
+  await expect(history.locator(".activity-entry").nth(1)).toContainText(
+    "Model response completed.",
+  );
+  const timelineText = await directTimelineText(history);
+  const reasoningIndex = timelineText.findIndex((text) =>
+    text.includes("Reasoning summary"),
+  );
+  const assistantIndex = timelineText.findIndex(
+    (text) => text.includes("Durable answer") && text.includes("Assistant"),
+  );
+  expect(timelineText[0]).toContain(
+    "/reason Checked the constraints | Durable answer",
+  );
+  expect(reasoningIndex).toBeGreaterThan(0);
+  expect(reasoningIndex).toBeLessThan(assistantIndex);
+  const timelineTimes = await directTimelineTimes(history);
+  expect(timelineTimes).toEqual(
+    [...timelineTimes].sort((left, right) => left - right),
+  );
+  await expect(page.locator(".activity-card")).toHaveCount(0);
+  await expect(page.locator(".queue-message.submitting")).toHaveCount(0);
   expect(commandStatuses).toContain(202);
 
   await composer.fill("/wait 90 browser queue test");
@@ -66,20 +80,19 @@ test("renders durable submit, history, activity, queue, edit, delete, and steer"
   await page.getByRole("checkbox", { name: "Plan mode" }).check();
   await composer.fill("edit this queued message");
   await page.getByRole("button", { name: "Create plan" }).click();
-  await expect(page.getByText("Queued", { exact: true })).toBeVisible();
-  await expect(page.getByText("Plan", { exact: true })).toBeVisible();
-  await expect(page.getByText("edit this queued message")).toBeVisible();
   await composer.fill("delete this queued message");
   await composer.press("Control+Enter");
-  await expect(page.locator(".queue-message")).toHaveCount(2);
-  await expect(page.getByRole("heading", { name: /2 queued/u })).toBeVisible();
-  await expect(page.getByText("Chat", { exact: true })).toBeVisible();
-  expect(await page.locator(".queue-message p").allTextContents()).toEqual([
+
+  const queue = page.getByRole("region", { name: "Message queue" });
+  await expect(queue).toContainText("2 queued · 0 steering");
+  await expect(queue.getByText("Plan", { exact: true })).toBeVisible();
+  await expect(queue.getByText("Chat", { exact: true })).toBeVisible();
+  expect(await queue.locator(".queue-message p").allTextContents()).toEqual([
     "edit this queued message",
     "delete this queued message",
   ]);
 
-  const editRow = page
+  const editRow = queue
     .locator(".queue-message")
     .filter({ hasText: "edit this queued message" });
   await expect(editRow.getByRole("button", { name: "Edit" })).toBeVisible({
@@ -91,28 +104,47 @@ test("renders durable submit, history, activity, queue, edit, delete, and steer"
   await expect(page.getByRole("checkbox", { name: "Plan mode" })).toBeChecked();
   await composer.fill("");
   await page.getByRole("checkbox", { name: "Plan mode" }).uncheck();
-  const deleteRow = page
+
+  const deleteRow = queue
     .locator(".queue-message")
     .filter({ hasText: "delete this queued message" });
   await deleteRow.getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByText("delete this queued message")).toHaveCount(0);
+  await expect(queue.getByText("delete this queued message")).toHaveCount(0);
 
   await composer.fill("steer the timer now");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("button", { name: "Steer" })).toBeVisible({
+  const steerRow = queue
+    .locator(".queue-message")
+    .filter({ hasText: "steer the timer now" });
+  await expect(steerRow.getByRole("button", { name: "Steer" })).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "Steer" }).click();
-  await expect(page.getByText("Steering", { exact: true })).toBeVisible();
+  await steerRow.getByRole("button", { name: "Steer" }).click();
+  await expect(queue.getByText("Steering", { exact: true })).toBeVisible();
   await expect(page.getByText("90s")).toHaveCount(0);
   await expect(
-    page.getByRole("article").filter({ hasText: "steer the timer now" }),
-  ).toHaveCount(2);
+    history
+      .locator(".message-bubble.user")
+      .filter({ hasText: "steer the timer now" }),
+  ).toHaveCount(1);
+  await expect(
+    history
+      .locator(".message-bubble.assistant")
+      .filter({ hasText: "Local demo response: steer the timer now" }),
+  ).toHaveCount(1);
+  await expect(history.locator(".activity-entry")).not.toHaveCount(1);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
   await expect(
     page
-      .getByRole("article")
+      .locator(".message-bubble.user")
+      .filter({ hasText: "steer the timer now" }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator(".message-bubble.assistant")
       .filter({ hasText: "Local demo response: steer the timer now" }),
-  ).toBeVisible();
+  ).toHaveCount(1);
 });
 
 test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll", async ({
@@ -160,28 +192,22 @@ test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll"
   }
 
   const archiveRequests: string[] = [];
-  const snapshotResponses: number[] = [];
   page.on("request", (browserRequest) => {
     const url = new URL(browserRequest.url());
     if (url.pathname === "/products/ai-agent/archived-messages") {
       archiveRequests.push(url.search);
     }
   });
-  page.on("response", (response) => {
-    if (new URL(response.url()).pathname === "/products/ai-agent/snapshot") {
-      snapshotResponses.push(response.status());
-    }
-  });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/?flowId=${flowId}`);
-  await expect(page.getByRole("article")).toHaveCount(10);
+  await expect(page.locator(".message-bubble")).toHaveCount(10);
   expect(archiveRequests).toHaveLength(0);
 
   await page.evaluate(() => {
     window.scrollTo(0, 0);
     window.dispatchEvent(new Event("scroll"));
   });
-  await expect(page.getByRole("article")).toHaveCount(20);
+  await expect(page.locator(".message-bubble")).toHaveCount(20);
   expect(archiveRequests).toHaveLength(1);
   expect(archiveRequests[0]).toContain("beforeSequence=21");
   await expect(page.getByText("archive ui 06", { exact: true })).toHaveCount(1);
@@ -197,77 +223,202 @@ test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll"
   }));
   expect(scrollPosition.top).toBeGreaterThan(0);
   expect(scrollPosition.distanceToBottom).toBeGreaterThan(100);
-  await expect
-    .poll(() => snapshotResponses.length, { timeout: 15_000 })
-    .toBe(2);
-  await expect(page.getByRole("article")).toHaveCount(20);
+  await expect(page.locator(".message-bubble")).toHaveCount(20);
   await expect(page.getByText("archive ui 06", { exact: true })).toHaveCount(1);
   expect(archiveRequests).toHaveLength(1);
 });
 
-test("renders plan, input choices, and real MCP approval outcomes", async ({
+test("renders Plan progress, clears an accepted input, and shows safe tool activity", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Start agent" }).click();
-  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
+  test.setTimeout(120_000);
+  const snapshotStatuses: number[] = [];
+  const messageBodies: unknown[] = [];
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/products/ai-agent/snapshot") {
+      snapshotStatuses.push(response.status());
+    }
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/products/ai-agent/messages"
+    ) {
+      messageBodies.push(request.postDataJSON());
+    }
+  });
+
+  await startAgent(page);
   const composer = page.getByRole("textbox", { name: "Message" });
 
   await page.getByRole("checkbox", { name: "Plan mode" }).check();
   await composer.fill("verify full-stack planning");
   await page.getByRole("button", { name: "Create plan" }).click();
-  await expect(page.getByText("Plan revision 1")).toBeVisible();
-  await expect(page.locator(".plan-tasks li")).toHaveCount(2);
-  await page.getByRole("button", { name: "Execute plan" }).click();
-  await expect(page.getByRole("button", { name: /execution/i })).toBeDisabled();
-  await expect(page.getByRole("heading", { name: "Completed" })).toBeVisible({
+  const plan = page.getByRole("region", { name: "Agent plan" });
+  await expect(plan.getByText("Plan revision 1")).toBeVisible();
+  await expect(plan.locator("xpath=ancestor::aside")).toHaveCount(1);
+  await expect(plan.locator(".plan-tasks li")).toHaveCount(2);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await plan.getByRole("button", { name: "Execute plan" }).click();
+  await expect(plan.getByRole("button", { name: /execution/i })).toBeDisabled();
+  const spinner = plan.getByLabel("In progress").first();
+  await expect(spinner).toBeVisible();
+  await expect(spinner.locator(".task-spinner")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await expect(plan.getByRole("heading", { name: "Completed" })).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.locator(".plan-tasks li.completed")).toHaveCount(2);
+  await expect(plan.locator(".plan-tasks li.completed")).toHaveCount(2);
+  const activity = page.locator(".activity-entry");
+  await expect(
+    activity.filter({ hasText: "Started plan task 1." }),
+  ).toBeVisible();
+  await expect(
+    activity.filter({ hasText: "Completed plan task 2." }),
+  ).toBeVisible();
 
   await composer.fill("/choose Region? | us-west | eu-central");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Region?", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "us-west" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "eu-central" })).toBeVisible();
-  await page.getByRole("button", { name: "us-west" }).click();
+  const inputCard = page.locator(".pending-input");
+  await expect(inputCard.getByText("Region?", { exact: true })).toBeVisible();
+  await inputCard.getByRole("button", { name: "us-west" }).click();
   await expect(
     page.getByRole("textbox", { name: "Answer Agent question" }),
   ).toHaveValue("us-west");
+  const snapshotsBeforeAnswer = snapshotStatuses.length;
+  const acceptedAnswer = page.waitForResponse(
+    (response) =>
+      response.status() === 202 &&
+      new URL(response.url()).pathname === "/products/ai-agent/messages",
+  );
   await page.getByRole("button", { name: "Submit answer" }).click();
-  await expect(page.getByText("Region?", { exact: true })).toHaveCount(0);
+  await acceptedAnswer;
+  await expect(inputCard).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Submit answer" })).toHaveCount(
+    0,
+  );
+  expect(snapshotStatuses).toHaveLength(snapshotsBeforeAnswer);
+  expect(
+    messageBodies.filter(
+      (body) =>
+        typeof body === "object" &&
+        body !== null &&
+        "content" in body &&
+        body.content === "us-west",
+    ),
+  ).toHaveLength(1);
   await expect(
-    page.getByRole("article").filter({ hasText: "us-west" }).first(),
-  ).toBeVisible();
+    page.locator(".message-bubble.user").filter({ hasText: "us-west" }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator(".message-bubble.assistant")
+      .filter({ hasText: "Local demo response: us-west" }),
+  ).toHaveCount(1);
 
   await composer.fill('/tool fixture__echo {"value":"approved"}');
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Approval required")).toBeVisible();
+  const approval = page.locator(".approval-card");
+  await expect(approval.getByText("Approval required")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "fixture__echo" }),
+    approval.getByRole("heading", { name: "fixture__echo" }),
   ).toBeVisible();
-  await expect(page.locator(".approval-card pre")).toContainText(
-    '"value":"approved"',
-  );
-  await page.getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByText("Approval required")).toHaveCount(0);
+  await expect(approval.locator("pre")).toContainText('"value":"approved"');
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(approval).toHaveCount(0);
   await expect(
     page
       .locator(".message-bubble.tool")
       .filter({ hasText: '"echo":"approved"' }),
   ).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Agent activity" }),
-  ).not.toContainText('"value":"approved"');
+    activity.filter({ hasText: "Model requested fixture__echo." }),
+  ).toBeVisible();
+  await expect(
+    activity.filter({ hasText: "Running fixture__echo." }),
+  ).toBeVisible();
+  await expect(
+    activity.filter({ hasText: "Completed fixture__echo." }),
+  ).toBeVisible();
+  const activityText = (await activity.allTextContents()).join("\n");
+  expect(activityText).not.toContain('"value":"approved"');
+  expect(activityText).not.toContain('"echo":"approved"');
 
   await composer.fill('/tool fixture__echo {"value":"rejected"}');
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Approval required")).toBeVisible();
-  await page.getByRole("button", { name: "Reject" }).click();
-  await expect(page.getByText("Approval required")).toHaveCount(0);
+  await expect(approval.getByText("Approval required")).toBeVisible();
+  await approval.getByRole("button", { name: "Reject" }).click();
+  await expect(approval).toHaveCount(0);
   await expect(
     page
       .locator(".message-bubble.tool")
       .filter({ hasText: "rejected_by_user" }),
   ).toBeVisible();
 });
+
+test("shows a collapsed Plan above the conversation on a narrow screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await page.getByRole("checkbox", { name: "Plan mode" }).check();
+  await composer.fill("narrow layout objective");
+  await page.getByRole("button", { name: "Create plan" }).click();
+
+  const plan = page.getByRole("region", { name: "Agent plan" });
+  const toggle = plan.getByRole("button", { name: /Plan · 0\/2 complete/u });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(plan.getByText("Complete the objective:")).toHaveCount(0);
+  const planBox = await plan.boundingBox();
+  const historyBox = await page
+    .getByRole("region", { name: "Conversation history" })
+    .boundingBox();
+  expect(planBox).not.toBeNull();
+  expect(historyBox).not.toBeNull();
+  expect(planBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(
+    historyBox?.y ?? Number.NEGATIVE_INFINITY,
+  );
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    plan.getByText("Complete the objective: narrow layout objective"),
+  ).toBeVisible();
+});
+
+async function startAgent(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Start a SuperAgent" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Start agent" }).click();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
+  await expect(page.locator(".flow-identity code")).toHaveCount(2);
+  await expect(page.locator(".flow-identity code").first()).not.toBeEmpty();
+  await expect(page.locator(".flow-identity code").last()).not.toBeEmpty();
+  await expect(page.getByText("Waiting For Message").first()).toBeVisible();
+}
+
+async function directTimelineText(history: Locator): Promise<string[]> {
+  return history
+    .locator(":scope > article, :scope > details")
+    .allTextContents();
+}
+
+async function directTimelineTimes(history: Locator): Promise<number[]> {
+  return history
+    .locator(":scope > article, :scope > details")
+    .evaluateAll((rows) =>
+      rows.map((row) => {
+        const dateTime = row.querySelector("time")?.getAttribute("datetime");
+        if (dateTime === undefined || dateTime === null) {
+          throw new Error("timeline row is missing a datetime");
+        }
+        return Date.parse(dateTime);
+      }),
+    );
+}

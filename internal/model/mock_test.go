@@ -123,6 +123,28 @@ func TestMockClientStreamsVisibleResponse(t *testing.T) {
 	}
 }
 
+func TestMockClientStreamsProviderReasoningSummary(t *testing.T) {
+	client := NewMockClient()
+	var reasoning strings.Builder
+	reply, err := client.Complete(t.Context(), agent.ModelRequest{
+		Config:         agent.NewAgentConfig(),
+		Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "/reason Checked constraints | Ready to proceed"}},
+		WriteAssistant: discardText,
+		WriteReasoning: func(chunk string) error {
+			_, err := reasoning.WriteString(chunk)
+			return err
+		},
+		WriteActivity: discardActivity,
+		FlowID:        agent.FlowID("flow-reasoning"),
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if reasoning.String() != "Checked constraints" || reply.Content != "Ready to proceed" {
+		t.Fatalf("reasoning/reply = %q/%q", reasoning.String(), reply.Content)
+	}
+}
+
 func TestMockPlanAdvancesOneTaskAtATime(t *testing.T) {
 	tasks := []agent.PlanTask{
 		{Content: "one", Status: agent.TaskStatusPending},
@@ -135,6 +157,9 @@ func TestMockPlanAdvancesOneTaskAtATime(t *testing.T) {
 	second := nextMockPlanTasks(first)
 	if second[0].Status != agent.TaskStatusCompleted || second[1].Status != agent.TaskStatusInProgress {
 		t.Fatalf("second = %+v", second)
+	}
+	if hasInProgressTask(tasks) || !hasInProgressTask(first) || !hasInProgressTask(second) {
+		t.Fatalf("in-progress detection = %v/%v/%v", tasks, first, second)
 	}
 }
 

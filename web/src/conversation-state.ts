@@ -11,6 +11,7 @@ import {
   type AgentDescription,
   type AgentEvent,
   type AgentSnapshot,
+  type CallId,
   type HistoryPage,
   type MessageId,
   type PendingUserMessage,
@@ -26,6 +27,7 @@ export type QueueCommandAction = "delete" | "steer" | "edit";
 export interface SendCommand {
   kind: "send";
   value: UserMessage;
+  pendingUserInputCallID: CallId | null;
   submittedAfterSequence: Sequence;
   knownMessageIDs: readonly MessageId[];
 }
@@ -419,9 +421,22 @@ function completeCommand(
   if (state.pendingCommand?.id !== id) return state;
   const command = state.pendingCommand.command;
   if (command.kind === "send") {
+    const pendingUserInput =
+      command.pendingUserInputCallID !== null &&
+      state.snapshot.description.pendingUserInput?.callId ===
+        command.pendingUserInputCallID
+        ? null
+        : state.snapshot.description.pendingUserInput;
     return {
       ...state,
       pendingCommand: null,
+      snapshot: {
+        ...state.snapshot,
+        description: {
+          ...state.snapshot.description,
+          pendingUserInput,
+        },
+      },
       optimisticSubmissions: state.optimisticSubmissions.map((submission) =>
         submission.localID === `submitting-${String(id)}`
           ? { ...submission, phase: "queued" }

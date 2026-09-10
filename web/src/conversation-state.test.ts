@@ -433,6 +433,7 @@ describe("conversationReducer", () => {
       command: {
         kind: "send",
         value: { content: "new work", planMode: true },
+        pendingUserInputCallID: null,
         submittedAfterSequence: 1,
         knownMessageIDs: ["queued-1"],
       },
@@ -473,6 +474,7 @@ describe("conversationReducer", () => {
       command: {
         kind: "send",
         value: { content: "new work", planMode: false },
+        pendingUserInputCallID: null,
         submittedAfterSequence: 1,
         knownMessageIDs: ["queued-1"],
       },
@@ -509,6 +511,7 @@ describe("conversationReducer", () => {
         command: {
           kind: "send",
           value: { content, planMode },
+          pendingUserInputCallID: null,
           submittedAfterSequence: 1,
           knownMessageIDs: ["queued-1"],
         },
@@ -538,6 +541,54 @@ describe("conversationReducer", () => {
       snapshot: durable,
     });
     expect(state).toMatchObject({ optimisticSubmissions: [] });
+  });
+
+  it("hides only the answered durable input after send acceptance", () => {
+    const pending = snapshot("run-1", "queued-1", "existing");
+    if (pending.description === null)
+      throw new Error("expected active Snapshot");
+    pending.description.pendingUserInput = {
+      callId: "input-call-1",
+      prompt: "Choose a pace",
+      choices: ["Relaxed", "Fast"],
+    };
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: pending,
+    });
+    state = conversationReducer(state, {
+      type: "command-started",
+      id: 12,
+      command: {
+        kind: "send",
+        value: { content: "Relaxed", planMode: false },
+        pendingUserInputCallID: "input-call-1",
+        submittedAfterSequence: 1,
+        knownMessageIDs: ["queued-1"],
+      },
+    });
+    expect(state).toMatchObject({
+      snapshot: {
+        description: { pendingUserInput: { callId: "input-call-1" } },
+      },
+    });
+
+    state = conversationReducer(state, { type: "command-succeeded", id: 12 });
+    expect(state).toMatchObject({
+      pendingCommand: null,
+      snapshot: { description: { pendingUserInput: null } },
+      optimisticSubmissions: [{ phase: "queued" }],
+    });
+
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: pending,
+    });
+    expect(state).toMatchObject({
+      snapshot: {
+        description: { pendingUserInput: { callId: "input-call-1" } },
+      },
+    });
   });
 
   it("preserves loaded archive chunks across Snapshot reconciliation", () => {

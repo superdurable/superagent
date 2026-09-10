@@ -459,6 +459,46 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Submit answer" })).toBeEnabled();
   });
 
+  it("hides an answered input immediately after server acceptance", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.WAITING_FOR_MESSAGE,
+        pendingUserInput: {
+          callId: "call-1",
+          prompt: "Choose a pace",
+          choices: ["Relaxed", "Fast"],
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Relaxed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: {
+            flowId: "flow-existing",
+            content: "Relaxed",
+            planMode: false,
+          },
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Choose a pace")).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Submit answer" }),
+    ).not.toBeInTheDocument();
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Relaxed")).toBeInTheDocument();
+  });
+
   it("renders assistant Markdown without exposing built-in tool records", async () => {
     vi.mocked(getPortal).mockResolvedValueOnce({
       ...portal,

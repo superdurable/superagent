@@ -92,7 +92,9 @@ keeps replayed reasoning summaries in a completed state.
 Every poll, Snapshot, and command owns cancellation and rejects stale responses.
 Message send displays one local, non-actionable `Submitting` item and changes it
 to `Queued` after HTTP acceptance. Failure restores its composer text and plan
-mode. Queue edit, delete, and steer optimistically remove one stable message ID.
+mode. An accepted answer immediately hides only its matching pending input;
+Snapshot can restore it if the durable state disagrees. Queue edit, delete, and
+steer optimistically remove one stable message ID.
 The backend resolves a steer value from the loaded
 Channel snapshot; the browser cannot replace the queued content during that
 operation.
