@@ -4,11 +4,13 @@
 
 - Flow type: `AIAgentFlow`
 - Business identity: one stable Flow ID per durable Agent conversation
-- Start input: typed `AgentConfig`
+- Start input: typed `AgentConfig`; `EnsureStarted` also persists opaque
+  application context and can compose an idempotent first message
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
-- Command RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
-  and `ExecutePlan`
+- Command RPCs: `ConfirmStart`, `SendMessage`, `AnswerQuestions`,
+  `SteerMessage`, `DeleteQueuedMessage`, `ApproveTool`, `ExecutePlan`, and
+  `AcceptCancellation`
 - Read RPC: `Snapshot`
 - Browser synchronization Attribute: `AgentInteractionStatus`
 
@@ -72,11 +74,15 @@ application history, and makes the model replan.
 | Resource | Kind | Purpose |
 |---|---|---|
 | `AgentConfig` | Attribute | Immutable execution configuration |
+| `ApplicationContext` | Attribute | Opaque trusted-application routing context; never model or browser context |
+| `AgentInitialized` | Attribute | Initialization boundary used by `EnsureStarted` replay |
 | `AgentState` | Attribute | Sequence range, mode, status, plan revision, and pending-call cursor |
 | `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
 | `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
 | `CurrentMessages` | AttributeMap | Recent provider-neutral messages keyed by sequence |
 | `ArchivedMessages` | AttributeMap | Ten-message chunks keyed by first sequence |
+| `AcceptedUserMessages` | AttributeMap | Message ID, payload fingerprint, and first acceptance time; no content copy |
+| `DurableCommands` | AttributeMap | Exact replay outcome keyed by command and caller request ID |
 | `AgentPlan` | Attribute | Atomically replaced short plan |
 | `PendingApproval` | Attribute | Reloadable approval request |
 | `PendingTimer` | Attribute | Reloadable durable wait description |
@@ -111,8 +117,11 @@ still retained by Dex and does not guarantee a complete activity history.
 Application history is `CurrentMessages`, `ArchivedMessages`, and range metadata
 in `AgentState`. It is not Dex execution history.
 
-Sequence keys are fixed-width monotonic values. Context reconstruction reads
-known keys from the retained range and does not enumerate an unbounded map.
+Sequence keys are fixed-width monotonic values. Every committed message has a
+stable application message ID. A user message keeps its first durable
+acceptance timestamp when it moves from a Channel into history. Assistant and
+tool message IDs are deterministic from Flow ID, Run ID, and sequence. Context
+reconstruction reads known keys from the retained range and does not enumerate an unbounded map.
 Compaction commits a cumulative summary with its exact covered sequence before
 deleting messages.
 
@@ -135,6 +144,14 @@ exact chunk by sequence and top scrolling requests only the adjacent chunk.
 Retention is at least twenty and a multiple of ten. A complete archive chunk is
 deleted only after the cumulative compaction summary covers its full range.
 
+`Client.MessagesAfter` reads a bounded ascending page from the canonical
+current and archived maps. Its exclusive cursor, last-sequence watermark, and
+first-retained sequence let an adapter implement forward pagination and detect
+retention gaps. A page contains at most 200 messages. A concurrent archive move
+is retried through the immutable archive chunk; a concurrent retention trim
+returns a typed missing-sequence error instead of reconstructing from Dex
+execution history or a Stream.
+
 The RPC returns the invocation Run ID from Dex context. Consecutive reads retain
 Channel FIFO order, values, and stable message IDs. Closed Flows follow the SDK
 terminal result and visibility contracts. A terminal Snapshot contains the
@@ -144,12 +161,30 @@ being rendered as current state.
 
 ## Retry and failure policy
 
+- `EnsureStarted` uses Dex's released `AlreadyStarted.IgnoreError` behavior and
+  waits only for the durable initialization marker. It verifies persisted
+  config and application context before recording an exact start receipt, so a
+  replay does not wait for an active model or tool turn.
+- Every valid mutation stores its payload fingerprint and outcome under
+  `(command, request ID)`. Equal retries replay the first timestamp and outcome;
+  unequal retries return a typed conflict.
+- Message IDs have an independent durable ledger. Reusing one with equal
+  content and mode is a replay even under a new request ID; different content
+  is a typed conflict.
+- `Client.Cancel` first records cancellation acceptance, then invokes released
+  Dex 0.4 `StopFlow`, and returns only after observing terminal `canceled`.
+  Dex 0.4 does not accept a caller request ID on `StopFlow`; the preceding
+  durable command record makes a crash between those operations safely
+  retryable. A different request against a terminal Flow returns a typed
+  terminal error and never fabricates success.
 - Model calls have bounded attempts, total duration, method timeout, and a
   heartbeat timeout sized for expected provider silence.
 - Read-only MCP tools may retry within an explicit budget.
 - Write or unknown MCP tools require approval and default to one attempt.
-- Stable Flow and call IDs are passed together through the tool boundary so an
-  integration can derive one idempotency key across retries and Worker replacement.
+- Stable Flow and call IDs plus opaque application context are loaded from Dex
+  and passed together through the tool boundary. An integration can recover
+  sandbox or workspace routing and derive one idempotency key across retries
+  and Worker replacement.
 - A timeout after an unprotected write records an unknown outcome; it never
   claims success or a known failure.
 - Failed durable commits retry without exposing staged Attribute or Channel

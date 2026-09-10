@@ -432,9 +432,8 @@ describe("conversationReducer", () => {
       id: 7,
       command: {
         kind: "send",
+        messageID: "queued-2",
         value: { content: "new work", planMode: true },
-        submittedAfterSequence: 1,
-        knownMessageIDs: ["queued-1"],
       },
     });
 
@@ -472,9 +471,8 @@ describe("conversationReducer", () => {
       id: 8,
       command: {
         kind: "send",
+        messageID: "queued-2",
         value: { content: "new work", planMode: false },
-        submittedAfterSequence: 1,
-        knownMessageIDs: ["queued-1"],
       },
     });
     state = conversationReducer(state, { type: "command-succeeded", id: 8 });
@@ -508,9 +506,8 @@ describe("conversationReducer", () => {
         id,
         command: {
           kind: "send",
+          messageID: `queued-${String(id - 8)}`,
           value: { content, planMode },
-          submittedAfterSequence: 1,
-          knownMessageIDs: ["queued-1"],
         },
       });
       state = conversationReducer(state, { type: "command-succeeded", id });
@@ -528,6 +525,7 @@ describe("conversationReducer", () => {
     firstQueued.value.planMode = true;
     durable.queued.push({
       messageId: "queued-3",
+      acceptedAt: "2026-09-03T00:00:00Z",
       value: { content: "second", planMode: false },
     });
     if (durable.description === null)
@@ -656,6 +654,7 @@ function sequencedMessage(sequence: number, content: string) {
   return {
     sequence,
     message: {
+      messageId: `history-${String(sequence)}`,
       role: MessageRole.USER,
       content,
       toolCalls: [],
@@ -681,6 +680,7 @@ function snapshot(
         {
           sequence: 1,
           message: {
+            messageId,
             role: MessageRole.USER,
             content,
             toolCalls: [],
@@ -713,6 +713,7 @@ function snapshot(
     queued: [
       {
         messageId,
+        acceptedAt: "2026-09-03T00:00:00Z",
         value: { content, planMode: false },
       },
     ],

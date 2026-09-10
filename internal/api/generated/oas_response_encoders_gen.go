@@ -889,7 +889,7 @@ func encodeReadEventResponse(response ReadEventRes, w http.ResponseWriter) error
 
 func encodeSendMessageResponse(response SendMessageRes, w http.ResponseWriter) error {
 	switch response := response.(type) {
-	case *Accepted:
+	case *MessageReceipt:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err

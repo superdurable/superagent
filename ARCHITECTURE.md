@@ -21,17 +21,17 @@ Agent state. Streams reduce latency but never become recovery state.
 
 ## Package ownership
 
-| Package | Owns | Must not own |
-|---|---|---|
-| `agent` | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle |
-| `model` | Public built-in provider adapters, router, and process-memory credentials | Dex resources, provider protocol implementation, process lifecycle |
-| `internal/agent` | Domain IDs/enums, Flow graph, private Dex descriptors, command client | Provider protocols, HTTP transport models, global configuration |
-| `internal/api` | ogen implementation, validation mapping, problem responses | Handwritten routes, generated-model duplicates, durable state |
-| `internal/app` | Dependency construction, goroutine ownership, startup and shutdown | Domain decisions or provider-specific payloads |
-| `internal/config` | Environment parsing and validated immutable sections | Runtime singletons or secret logging |
-| `internal/model` | Provider routing, protocol adapters, in-memory credential lookup | Dex resources or HTTP API responses |
-| `internal/mcp` | Trusted server config, discovery, policy, sessions, retries, brokers | Agent state transitions or exported Dex resource access |
-| `web` | React portal and generated Fetch client | Handwritten API response types or durable-state reconstruction |
+| Package           | Owns                                                                           | Must not own                                                       |
+| ----------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `agent`           | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle     |
+| `model`           | Public built-in provider adapters, router, and process-memory credentials      | Dex resources, provider protocol implementation, process lifecycle |
+| `internal/agent`  | Domain IDs/enums, Flow graph, private Dex descriptors, command client          | Provider protocols, HTTP transport models, global configuration    |
+| `internal/api`    | ogen implementation, validation mapping, problem responses                     | Handwritten routes, generated-model duplicates, durable state      |
+| `internal/app`    | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
+| `internal/config` | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
+| `internal/model`  | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
+| `internal/mcp`    | Trusted server config, discovery, policy, sessions, retries, brokers           | Agent state transitions or exported Dex resource access            |
+| `web`             | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
 
 Interfaces live at their consuming boundary. Concrete single-use components do
 not receive speculative interfaces, and there is no general-purpose helpers
@@ -50,12 +50,23 @@ depending on `internal/model` or duplicating provider wiring.
 
 ## Durable Agent model
 
-One stable `FlowID` identifies one conversation. `CurrentMessages` and
+One stable `FlowID` identifies one conversation. `EnsureStarted` binds that ID
+to immutable `AgentConfig` plus an opaque application context. The context is
+available only to trusted tool implementations and is never sent to the model,
+browser, or live Streams. `CurrentMessages` and
 `ArchivedMessages` are the typed application history; they are not Dex
 execution history. `AgentState` owns the retained sequence range, interaction
 mode, status, pending tool cursor, and plan revision. Plans, pending approvals,
 timers, input prompts, and cumulative context summaries are separate typed
 Attributes.
+
+Every mutation carries a caller-stable request ID. `DurableCommands` stores a
+small fingerprint, first acceptance timestamp, and outcome for each
+`(command, request ID)`. An equal replay returns the original result; a
+different payload returns a typed idempotency conflict. `AcceptedUserMessages`
+independently deduplicates application message IDs without copying message
+content. Dex Channel UUIDs remain internal and queue mutations resolve the
+application message ID against a loaded Channel snapshot.
 
 Queued messages and validated question answers use `QueuedUserMessages`.
 Steering uses its own Channel. A queued message enters application history only
@@ -71,19 +82,22 @@ boundary. Waiting state is written in the `WaitFor` that establishes the wait.
 Provider and MCP calls occur only in `Execute`. The complete graph and resource
 table are in `docs/flow-model.md`.
 
-History-reading Steps declare bounded AttributeMap loads explicitly. Tool
-invocations receive the stable Flow ID and model call ID as one durable identity.
+History-reading Steps declare bounded AttributeMap loads explicitly. The public
+client can read at most 200 canonical retained messages after an exclusive
+sequence cursor without using Dex execution history or Streams. Tool
+invocations receive the stable Flow ID, model call ID, and opaque application
+context as one durable routing identity, including after Worker replacement.
 
 ## Durable and live reconciliation
 
-| Data | Durability | Recovery role |
-|---|---|---|
-| Attributes, AttributeMaps, Channels | Dex durable state | Authoritative |
-| assistant/reasoning buffered Streams | Best effort | UI latency only |
-| structured activity Stream | Best effort | Observability and UI latency |
-| BlobCache | Disposable local acceleration | Never authoritative |
-| provider/MCP session | Per invocation | Recreated after failure |
-| generated browser state | In-memory projection | Replaced from Snapshot |
+| Data                                 | Durability                    | Recovery role                |
+| ------------------------------------ | ----------------------------- | ---------------------------- |
+| Attributes, AttributeMaps, Channels  | Dex durable state             | Authoritative                |
+| assistant/reasoning buffered Streams | Best effort                   | UI latency only              |
+| structured activity Stream           | Best effort                   | Observability and UI latency |
+| BlobCache                            | Disposable local acceleration | Never authoritative          |
+| provider/MCP session                 | Per invocation                | Recreated after failure      |
+| generated browser state              | In-memory projection          | Replaced from Snapshot       |
 
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
@@ -116,7 +130,8 @@ Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot
 replace newer durable state.
-Message send displays one local, non-actionable `Submitting` item and changes it
+Message send creates one application message ID, displays one local,
+non-actionable `Submitting` item, and changes it
 to `Queued` after HTTP acceptance. Failure restores its composer text and plan
 mode. Pending input uses the dedicated `answerQuestions` operation. The browser
 collects every answer locally, permits review, and submits the complete batch.
@@ -136,7 +151,8 @@ domain package.
 
 The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
 one exact archive-chunk read, interaction-status long polling, queue deletion
-and steering, typed event polling, health, and readiness. The API
+and steering, typed event polling, health, and readiness. Message acceptance
+returns its stable ID, first acceptance time, and replay status. The API
 process does not serve React files. Long-poll expiry has a generated typed body,
 so the browser can distinguish normal polling cadence from a transport failure.
 Snapshot responses carry the generated `Cache-Control: no-store` contract.

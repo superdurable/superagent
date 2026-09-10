@@ -67,7 +67,45 @@ func TestCommandRejectionMapsToConflict(t *testing.T) {
 	service := &fakeAgentService{sendErr: &agent.CommandRejectedError{Command: agent.CommandSendMessage}}
 	handler := newTestHandler(service, fakeCredentials{})
 	response, err := handler.SendMessage(context.Background(), &transportapi.SendMessageRequest{
-		FlowId: "flow-1", Content: "hello", PlanMode: false,
+		FlowId: "flow-1", MessageId: "message-1", Content: "hello", PlanMode: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response.(*transportapi.SendMessageConflict); !ok {
+		t.Fatalf("response type = %T", response)
+	}
+}
+
+func TestSendMessageMapsCallerIdentityAndDurableReceipt(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{sendReplayed: true}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.SendMessage(context.Background(), &transportapi.SendMessageRequest{
+		FlowId: "flow-1", MessageId: "message-1", Content: "hello", PlanMode: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, ok := response.(*transportapi.MessageReceipt)
+	if !ok || receipt.MessageId != "message-1" || receipt.AcceptedAt != time.Unix(1, 0).UTC() || !receipt.Replayed {
+		t.Fatalf("send response = %#v", response)
+	}
+	if service.sendRequest.RequestID != "message-1" || service.sendRequest.Message.MessageID != "message-1" ||
+		service.sendRequest.Message.Content != "hello" || !service.sendRequest.Message.PlanMode ||
+		!service.sendRequest.Message.AcceptedAt.IsZero() {
+		t.Fatalf("domain send request = %#v", service.sendRequest)
+	}
+}
+
+func TestCommandIdempotencyConflictMapsToConflict(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{sendErr: &agent.CommandIdempotencyConflictError{
+		Command: agent.CommandSendMessage, RequestID: "request-1",
+	}}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.SendMessage(context.Background(), &transportapi.SendMessageRequest{
+		FlowId: "flow-1", MessageId: "message-1", Content: "hello", PlanMode: false,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +223,7 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 		History: agent.HistoryPage{Messages: []agent.SequencedMessage{{
 			Sequence: 1,
 			Message: agent.AgentMessage{
+				MessageID:  "history-1",
 				Role:       agent.MessageRoleAssistant,
 				Content:    "hello",
 				ToolCalls:  []agent.ToolCall{{ID: callID, Name: toolName, Arguments: agent.MustJSONObject(`{"path":"README.md"}`)}},
@@ -207,7 +246,12 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 			AvailableMCPServers:        []string{"files"},
 			AvailableTools:             []agent.ToolName{"lookup"},
 		},
-		Queued:  []agent.PendingUserMessage{{MessageID: "message-1", Value: agent.UserMessage{Content: "later"}}},
+		Queued: []agent.PendingUserMessage{{
+			MessageID: "message-1",
+			Value: agent.UserMessage{
+				MessageID: "message-1", Content: "later", AcceptedAt: time.Unix(1, 0).UTC(),
+			},
+		}},
 		Steered: []agent.PendingUserMessage{},
 	}}
 	handler := newTestHandler(service, fakeCredentials{})
@@ -326,7 +370,9 @@ func TestGetArchivedMessagesMapsExactChunkAndBoundary(t *testing.T) {
 	service := &fakeAgentService{archived: agent.HistoryPage{
 		Messages: []agent.SequencedMessage{{
 			Sequence: 1,
-			Message:  agent.AgentMessage{Role: agent.MessageRoleUser, Content: "old", CreatedAt: time.Unix(1, 0).UTC()},
+			Message: agent.AgentMessage{
+				MessageID: "history-1", Role: agent.MessageRoleUser, Content: "old", CreatedAt: time.Unix(1, 0).UTC(),
+			},
 		}},
 	}}
 	handler := newTestHandler(service, fakeCredentials{})
@@ -478,6 +524,8 @@ type fakeAgentService struct {
 	answeredFlowID   agent.FlowID
 	answer           agent.AnswerQuestionsRequest
 	answerErr        error
+	sendRequest      agent.SendMessageRequest
+	sendReplayed     bool
 	snapshot         agent.AgentSnapshot
 	snapshotErr      error
 	archived         agent.HistoryPage
@@ -494,14 +542,30 @@ type fakeAgentService struct {
 
 var _ AgentService = (*fakeAgentService)(nil)
 
-func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, config agent.AgentConfig) (agent.RunID, error) {
+func (service *fakeAgentService) EnsureStarted(
+	_ context.Context,
+	flowID agent.FlowID,
+	request agent.EnsureStartRequest,
+) (agent.StartReceipt, error) {
 	service.startCalls++
-	service.started = config
-	return "run-1", nil
+	service.started = request.Config
+	return agent.StartReceipt{
+		RequestID: request.RequestID, FlowID: flowID, RunID: "run-1", AcceptedAt: time.Unix(1, 0).UTC(),
+	}, nil
 }
 
-func (service *fakeAgentService) SendMessage(context.Context, agent.FlowID, agent.UserMessage) error {
-	return service.sendErr
+func (service *fakeAgentService) SendMessage(
+	_ context.Context,
+	_ agent.FlowID,
+	request agent.SendMessageRequest,
+) (agent.MessageReceipt, error) {
+	service.sendRequest = request
+	return agent.MessageReceipt{
+		RequestID:  request.RequestID,
+		MessageID:  request.Message.MessageID,
+		AcceptedAt: time.Unix(1, 0).UTC(),
+		IsReplay:   service.sendReplayed,
+	}, service.sendErr
 }
 
 func (service *fakeAgentService) AnswerQuestions(
@@ -541,27 +605,27 @@ func (service *fakeAgentService) WaitForInteractionStatus(
 func (service *fakeAgentService) DeleteQueuedMessage(
 	_ context.Context,
 	_ agent.FlowID,
-	messageID agent.MessageID,
-) error {
-	service.deletedMessageID = messageID
-	return service.deleteErr
+	request agent.DeleteQueuedMessageRequest,
+) (agent.CommandReceipt, error) {
+	service.deletedMessageID = request.MessageID
+	return agent.CommandReceipt{}, service.deleteErr
 }
 
 func (service *fakeAgentService) SteerMessage(
 	_ context.Context,
 	_ agent.FlowID,
 	request agent.SteerMessageRequest,
-) error {
+) (agent.CommandReceipt, error) {
 	service.steeredMessageID = request.MessageID
-	return service.steerErr
+	return agent.CommandReceipt{}, service.steerErr
 }
 
-func (*fakeAgentService) ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error {
-	return nil
+func (*fakeAgentService) ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) (agent.CommandReceipt, error) {
+	return agent.CommandReceipt{}, nil
 }
 
-func (*fakeAgentService) ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error {
-	return nil
+func (*fakeAgentService) ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) (agent.CommandReceipt, error) {
+	return agent.CommandReceipt{}, nil
 }
 
 func (service *fakeAgentService) ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error) {

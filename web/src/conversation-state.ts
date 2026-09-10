@@ -27,9 +27,8 @@ export type QueueCommandAction = "delete" | "steer" | "edit";
 
 export interface SendCommand {
   kind: "send";
+  messageID: MessageId;
   value: UserMessage;
-  submittedAfterSequence: Sequence;
-  knownMessageIDs: readonly MessageId[];
 }
 
 export interface AnswerCommand {
@@ -84,9 +83,8 @@ interface HistoryRequest {
 
 interface OptimisticSubmission {
   localID: string;
+  messageID: MessageId;
   value: UserMessage;
-  submittedAfterSequence: Sequence;
-  knownMessageIDs: readonly MessageId[];
   phase: "submitting" | "queued";
 }
 
@@ -405,9 +403,8 @@ function beginCommand(
         ...state.optimisticSubmissions,
         {
           localID: `submitting-${String(id)}`,
+          messageID: command.messageID,
           value: command.value,
-          submittedAfterSequence: command.submittedAfterSequence,
-          knownMessageIDs: command.knownMessageIDs,
           phase: "submitting",
         },
       ],
@@ -591,10 +588,9 @@ function reconcileOptimisticSubmissions(
 ): OptimisticSubmission[] {
   const claimed = new Set<string>();
   return submissions.filter((submission) => {
-    const knownIDs = new Set(submission.knownMessageIDs);
     const queued = [...snapshot.queued, ...snapshot.steered].find(
       (message) =>
-        !knownIDs.has(message.messageId) &&
+        message.messageId === submission.messageID &&
         !claimed.has(`queue:${message.messageId}`) &&
         sameUserMessage(message.value, submission.value),
     );
@@ -604,10 +600,9 @@ function reconcileOptimisticSubmissions(
     }
     const durable = snapshot.history.messages.find(
       ({ sequence, message }) =>
-        sequence > submission.submittedAfterSequence &&
         !claimed.has(`history:${String(sequence)}`) &&
         message.role === "user" &&
-        message.content === submission.value.content,
+        message.messageId === submission.messageID,
     );
     if (durable !== undefined) {
       claimed.add(`history:${String(durable.sequence)}`);

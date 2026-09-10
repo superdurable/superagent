@@ -20,10 +20,14 @@ import "github.com/superdurable/dex/sdk-go/dex"
 
 var (
 	agentConfigAttribute            = dex.DefineAttribute[AgentConfig]("AgentConfig")
+	applicationContextAttribute     = dex.DefineAttribute[string]("ApplicationContext")
+	agentInitializedAttribute       = dex.DefineAttribute[bool]("AgentInitialized")
 	agentStateAttribute             = dex.DefineAttribute[AgentState]("AgentState")
 	agentInteractionStatusAttribute = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
 	contextSummaryAttribute         = dex.DefineAttribute[ContextSummary]("ContextSummary")
 	currentMessagesAttribute        = dex.DefineAttributeMap[AgentMessage]("CurrentMessages")
+	acceptedUserMessagesAttribute   = dex.DefineAttributeMap[acceptedUserMessage]("AcceptedUserMessages")
+	durableCommandsAttribute        = dex.DefineAttributeMap[durableCommandRecord]("DurableCommands")
 	archivedMessagesAttribute       = dex.DefineAttributeMap[ArchivedMessageChunk]("ArchivedMessages")
 	agentPlanAttribute              = dex.DefineAttribute[AgentPlan]("AgentPlan")
 	pendingApprovalAttribute        = dex.DefineAttribute[PendingApproval]("PendingApproval")

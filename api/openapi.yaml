@@ -16,7 +16,7 @@
 openapi: 3.0.3
 info:
   title: SuperAgent API
-  version: 0.3.0
+  version: 0.4.0
   description: >-
     Command, atomic Snapshot, queue mutation, and live-event contract for the
     durable AI Agent.
@@ -99,7 +99,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Accepted"
+                $ref: "#/components/schemas/MessageReceipt"
         "400":
           $ref: "#/components/responses/Problem"
         "404":
@@ -406,7 +406,8 @@ components:
     MessageId:
       type: string
       minLength: 1
-      maxLength: 255
+      maxLength: 256
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
       x-ogen-name: MessageID
     Sequence:
       type: integer
@@ -671,11 +672,14 @@ components:
       additionalProperties: false
       required:
         - flowId
+        - messageId
         - content
         - planMode
       properties:
         flowId:
           $ref: "#/components/schemas/FlowId"
+        messageId:
+          $ref: "#/components/schemas/MessageId"
         content:
           type: string
           minLength: 1
@@ -852,6 +856,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - messageId
         - role
         - content
         - toolCalls
@@ -859,6 +864,8 @@ components:
         - toolName
         - createdAt
       properties:
+        messageId:
+          $ref: "#/components/schemas/MessageId"
         role:
           $ref: "#/components/schemas/MessageRole"
         content:
@@ -898,10 +905,14 @@ components:
       additionalProperties: false
       required:
         - messageId
+        - acceptedAt
         - value
       properties:
         messageId:
           $ref: "#/components/schemas/MessageId"
+        acceptedAt:
+          type: string
+          format: date-time
         value:
           $ref: "#/components/schemas/UserMessage"
     UserMessage:
@@ -1120,6 +1131,21 @@ components:
           type: boolean
           enum:
             - true
+    MessageReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - messageId
+        - acceptedAt
+        - replayed
+      properties:
+        messageId:
+          $ref: "#/components/schemas/MessageId"
+        acceptedAt:
+          type: string
+          format: date-time
+        replayed:
+          type: boolean
     PollTimeout:
       type: object
       additionalProperties: false

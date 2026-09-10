@@ -59,10 +59,16 @@ func (toolRegistry) Execute(context.Context, agent.ToolInvocation) (agent.ToolEx
 }
 
 var (
-	_ agent.ModelClient                            = modelClient{}
-	_ agent.ToolRegistry                           = toolRegistry{}
-	_ dex.Flow                                     = (*agent.Flow)(nil)
-	_ func(*dex.Client, *agent.Flow) *agent.Client = agent.NewClient
+	_ agent.ModelClient                                                                                                  = modelClient{}
+	_ agent.ToolRegistry                                                                                                 = toolRegistry{}
+	_ dex.Flow                                                                                                           = (*agent.Flow)(nil)
+	_ func(*dex.Client, *agent.Flow) *agent.Client                                                                       = agent.NewClient
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.EnsureStartRequest) (agent.StartReceipt, error)           = (*agent.Client).EnsureStarted
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.SendMessageRequest) (agent.MessageReceipt, error)         = (*agent.Client).SendMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) (agent.CommandReceipt, error)        = (*agent.Client).SteerMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.DeleteQueuedMessageRequest) (agent.CommandReceipt, error) = (*agent.Client).DeleteQueuedMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.RequestID) (agent.CancellationReceipt, error)             = (*agent.Client).Cancel
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence, int) (agent.ForwardHistoryPage, error)          = (*agent.Client).MessagesAfter
 )
 
 func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
@@ -77,6 +83,10 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	flow := agent.NewFlow(modelClient{}, toolRegistry{})
 	if _, err := dex.NewRegistry([]dex.Flow{flow}); err != nil {
 		t.Fatalf("register public Agent Flow: %v", err)
+	}
+	invocation := agent.ToolInvocation{ApplicationContext: `{"sandbox_id":"sandbox-1"}`}
+	if invocation.ApplicationContext == "" {
+		t.Fatal("public ToolInvocation application context is empty")
 	}
 }
 

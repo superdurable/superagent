@@ -33,6 +33,10 @@ const (
 	DefaultContextTokens = agentinternal.DefaultContextTokens
 	// DefaultMessageRetention bounds retained summarized messages.
 	DefaultMessageRetention = agentinternal.DefaultMessageRetention
+	// DefaultForwardHistoryLimit is used when MessagesAfter receives a zero limit.
+	DefaultForwardHistoryLimit = agentinternal.DefaultForwardHistoryLimit
+	// MaximumForwardHistoryLimit bounds one canonical forward-history read.
+	MaximumForwardHistoryLimit = agentinternal.MaximumForwardHistoryLimit
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
 	DefaultSystemPrompt = agentinternal.DefaultSystemPrompt
 
@@ -131,10 +135,14 @@ const (
 	EventKindToolFailed         = agentinternal.EventKindToolFailed
 	EventKindToolCompleted      = agentinternal.EventKindToolCompleted
 
-	CommandSendMessage = agentinternal.CommandSendMessage
-	CommandSteer       = agentinternal.CommandSteer
-	CommandApproveTool = agentinternal.CommandApproveTool
-	CommandExecutePlan = agentinternal.CommandExecutePlan
+	CommandSendMessage     = agentinternal.CommandSendMessage
+	CommandAnswerQuestions = agentinternal.CommandAnswerQuestions
+	CommandStart           = agentinternal.CommandStart
+	CommandSteer           = agentinternal.CommandSteer
+	CommandDelete          = agentinternal.CommandDelete
+	CommandApproveTool     = agentinternal.CommandApproveTool
+	CommandExecutePlan     = agentinternal.CommandExecutePlan
+	CommandCancel          = agentinternal.CommandCancel
 )
 
 // Public types intentionally alias the implementation's stable application boundary.
@@ -146,6 +154,7 @@ type (
 
 	FlowID      = agentinternal.FlowID
 	RunID       = agentinternal.RunID
+	RequestID   = agentinternal.RequestID
 	CallID      = agentinternal.CallID
 	MessageID   = agentinternal.MessageID
 	Sequence    = agentinternal.Sequence
@@ -170,43 +179,61 @@ type (
 	ToolOutcome            = agentinternal.ToolOutcome
 	Command                = agentinternal.Command
 
-	EnumValidationError           = agentinternal.EnumValidationError
-	CommandRejectedError          = agentinternal.CommandRejectedError
-	PendingMessageNotFoundError   = agentinternal.PendingMessageNotFoundError
-	ArchivedMessagesNotFoundError = agentinternal.ArchivedMessagesNotFoundError
-	JSONObject                    = agentinternal.JSONObject
-	JSONValue                     = agentinternal.JSONValue
-	AgentConfig                   = agentinternal.AgentConfig
-	ToolCall                      = agentinternal.ToolCall
-	ProviderContextItem           = agentinternal.ProviderContextItem
-	AgentMessage                  = agentinternal.AgentMessage
-	SequencedMessage              = agentinternal.SequencedMessage
-	HistoryPage                   = agentinternal.HistoryPage
-	PendingUserMessage            = agentinternal.PendingUserMessage
-	AgentDescription              = agentinternal.AgentDescription
-	AgentSnapshot                 = agentinternal.AgentSnapshot
-	UserMessage                   = agentinternal.UserMessage
-	SteerMessageRequest           = agentinternal.SteerMessageRequest
-	PlanTask                      = agentinternal.PlanTask
-	AgentPlan                     = agentinternal.AgentPlan
-	PlanExecutionRequest          = agentinternal.PlanExecutionRequest
-	ToolApprovalRequest           = agentinternal.ToolApprovalRequest
-	PendingApproval               = agentinternal.PendingApproval
-	PendingTimer                  = agentinternal.PendingTimer
-	PendingUserInput              = agentinternal.PendingUserInput
-	AgentEvent                    = agentinternal.AgentEvent
-	StreamEvent                   = agentinternal.StreamEvent
-	ModelReply                    = agentinternal.ModelReply
-	ToolDefinition                = agentinternal.ToolDefinition
-	ToolExecutionResult           = agentinternal.ToolExecutionResult
-	TextWriter                    = agentinternal.TextWriter
-	ActivityWriter                = agentinternal.ActivityWriter
-	ModelRequest                  = agentinternal.ModelRequest
-	SummarizeRequest              = agentinternal.SummarizeRequest
-	ModelClient                   = agentinternal.ModelClient
-	ToolInvocation                = agentinternal.ToolInvocation
-	ToolRegistry                  = agentinternal.ToolRegistry
-	RegisteredTool                = agentinternal.RegisteredTool
+	EnumValidationError             = agentinternal.EnumValidationError
+	CommandRejectedError            = agentinternal.CommandRejectedError
+	PendingMessageNotFoundError     = agentinternal.PendingMessageNotFoundError
+	MessageIdempotencyConflictError = agentinternal.MessageIdempotencyConflictError
+	CommandIdempotencyConflictError = agentinternal.CommandIdempotencyConflictError
+	StartIdentityConflictError      = agentinternal.StartIdentityConflictError
+	AgentAlreadyTerminalError       = agentinternal.AgentAlreadyTerminalError
+	ArchivedMessagesNotFoundError   = agentinternal.ArchivedMessagesNotFoundError
+	HistoryMessageNotFoundError     = agentinternal.HistoryMessageNotFoundError
+	JSONObject                      = agentinternal.JSONObject
+	JSONValue                       = agentinternal.JSONValue
+	AgentConfig                     = agentinternal.AgentConfig
+	EnsureStartRequest              = agentinternal.EnsureStartRequest
+	StartReceipt                    = agentinternal.StartReceipt
+	CancellationReceipt             = agentinternal.CancellationReceipt
+	ToolCall                        = agentinternal.ToolCall
+	ProviderContextItem             = agentinternal.ProviderContextItem
+	AgentMessage                    = agentinternal.AgentMessage
+	SequencedMessage                = agentinternal.SequencedMessage
+	HistoryPage                     = agentinternal.HistoryPage
+	ForwardHistoryPage              = agentinternal.ForwardHistoryPage
+	PendingUserMessage              = agentinternal.PendingUserMessage
+	AgentDescription                = agentinternal.AgentDescription
+	AgentSnapshot                   = agentinternal.AgentSnapshot
+	UserMessage                     = agentinternal.UserMessage
+	SendMessageRequest              = agentinternal.SendMessageRequest
+	MessageReceipt                  = agentinternal.MessageReceipt
+	CommandReceipt                  = agentinternal.CommandReceipt
+	SteerMessageRequest             = agentinternal.SteerMessageRequest
+	DeleteQueuedMessageRequest      = agentinternal.DeleteQueuedMessageRequest
+	PlanTask                        = agentinternal.PlanTask
+	AgentPlan                       = agentinternal.AgentPlan
+	PlanExecutionRequest            = agentinternal.PlanExecutionRequest
+	ToolApprovalRequest             = agentinternal.ToolApprovalRequest
+	PendingApproval                 = agentinternal.PendingApproval
+	PendingTimer                    = agentinternal.PendingTimer
+	PendingUserInput                = agentinternal.PendingUserInput
+	AnswerQuestionsRequest          = agentinternal.AnswerQuestionsRequest
+	UserInputAnswer                 = agentinternal.UserInputAnswer
+	UserInputQuestion               = agentinternal.UserInputQuestion
+	UserInputQuestionID             = agentinternal.UserInputQuestionID
+	UserInputOption                 = agentinternal.UserInputOption
+	AgentEvent                      = agentinternal.AgentEvent
+	StreamEvent                     = agentinternal.StreamEvent
+	ModelReply                      = agentinternal.ModelReply
+	ToolDefinition                  = agentinternal.ToolDefinition
+	ToolExecutionResult             = agentinternal.ToolExecutionResult
+	TextWriter                      = agentinternal.TextWriter
+	ActivityWriter                  = agentinternal.ActivityWriter
+	ModelRequest                    = agentinternal.ModelRequest
+	SummarizeRequest                = agentinternal.SummarizeRequest
+	ModelClient                     = agentinternal.ModelClient
+	ToolInvocation                  = agentinternal.ToolInvocation
+	ToolRegistry                    = agentinternal.ToolRegistry
+	RegisteredTool                  = agentinternal.RegisteredTool
 )
 
 // NewFlow constructs an Agent from its model and trusted tool boundaries.

@@ -247,6 +247,7 @@ test("loads one adjacent archive chunk into the narrow-screen DOM on top scroll"
     const sent = await request.post(`${apiOrigin}/products/ai-agent/messages`, {
       data: {
         flowId,
+        messageId: `archive-ui-message-${String(index)}`,
         content: `archive ui ${String(index).padStart(2, "0")}`,
         planMode: false,
       },

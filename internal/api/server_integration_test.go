@@ -112,7 +112,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 		submitted <- requestJSONError(http.MethodGet, url, nil, http.StatusOK, nil)
 	}()
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
-		FlowId: transportapi.FlowID(flowID), Content: "through HTTP", PlanMode: false,
+		FlowId: transportapi.FlowID(flowID), MessageId: "http-message-1", Content: "through HTTP", PlanMode: false,
 	}, http.StatusAccepted, nil)
 	if err := <-submitted; err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	for index := 2; index <= 10; index++ {
 		content := fmt.Sprintf("HTTP archive %02d", index)
 		requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
-			FlowId: transportapi.FlowID(flowID), Content: content, PlanMode: false,
+			FlowId: transportapi.FlowID(flowID), MessageId: transportapi.MessageID(fmt.Sprintf("http-message-%d", index)), Content: content, PlanMode: false,
 		}, http.StatusAccepted, nil)
 		requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
 	}

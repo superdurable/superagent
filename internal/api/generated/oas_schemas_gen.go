@@ -27,7 +27,6 @@ func (s *Accepted) SetAccepted(val AcceptedAccepted) {
 func (*Accepted) answerQuestionsRes() {}
 func (*Accepted) approveToolRes()     {}
 func (*Accepted) executePlanRes()     {}
-func (*Accepted) sendMessageRes()     {}
 
 type AcceptedAccepted bool
 
@@ -484,12 +483,18 @@ func (s *AgentInteractionStatus) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/AgentMessage
 type AgentMessage struct {
+	MessageId  MessageID   `json:"messageId"`
 	Role       MessageRole `json:"role"`
 	Content    string      `json:"content"`
 	ToolCalls  []ToolCall  `json:"toolCalls"`
 	ToolCallId NilCallID   `json:"toolCallId"`
 	ToolName   NilToolName `json:"toolName"`
 	CreatedAt  time.Time   `json:"createdAt"`
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *AgentMessage) GetMessageId() MessageID {
+	return s.MessageId
 }
 
 // GetRole returns the value of Role.
@@ -520,6 +525,11 @@ func (s *AgentMessage) GetToolName() NilToolName {
 // GetCreatedAt returns the value of CreatedAt.
 func (s *AgentMessage) GetCreatedAt() time.Time {
 	return s.CreatedAt
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *AgentMessage) SetMessageId(val MessageID) {
+	s.MessageId = val
 }
 
 // SetRole sets the value of Role.
@@ -1540,6 +1550,45 @@ func (*HistoryPageHeaders) getArchivedMessagesRes() {}
 
 type MessageID string
 
+// Ref: #/components/schemas/MessageReceipt
+type MessageReceipt struct {
+	MessageId  MessageID `json:"messageId"`
+	AcceptedAt time.Time `json:"acceptedAt"`
+	Replayed   bool      `json:"replayed"`
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *MessageReceipt) GetMessageId() MessageID {
+	return s.MessageId
+}
+
+// GetAcceptedAt returns the value of AcceptedAt.
+func (s *MessageReceipt) GetAcceptedAt() time.Time {
+	return s.AcceptedAt
+}
+
+// GetReplayed returns the value of Replayed.
+func (s *MessageReceipt) GetReplayed() bool {
+	return s.Replayed
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *MessageReceipt) SetMessageId(val MessageID) {
+	s.MessageId = val
+}
+
+// SetAcceptedAt sets the value of AcceptedAt.
+func (s *MessageReceipt) SetAcceptedAt(val time.Time) {
+	s.AcceptedAt = val
+}
+
+// SetReplayed sets the value of Replayed.
+func (s *MessageReceipt) SetReplayed(val bool) {
+	s.Replayed = val
+}
+
+func (*MessageReceipt) sendMessageRes() {}
+
 // Ref: #/components/schemas/MessageRole
 type MessageRole string
 
@@ -2558,13 +2607,19 @@ func (s *PendingUserInput) SetQuestions(val []UserInputQuestion) {
 
 // Ref: #/components/schemas/PendingUserMessage
 type PendingUserMessage struct {
-	MessageId MessageID   `json:"messageId"`
-	Value     UserMessage `json:"value"`
+	MessageId  MessageID   `json:"messageId"`
+	AcceptedAt time.Time   `json:"acceptedAt"`
+	Value      UserMessage `json:"value"`
 }
 
 // GetMessageId returns the value of MessageId.
 func (s *PendingUserMessage) GetMessageId() MessageID {
 	return s.MessageId
+}
+
+// GetAcceptedAt returns the value of AcceptedAt.
+func (s *PendingUserMessage) GetAcceptedAt() time.Time {
+	return s.AcceptedAt
 }
 
 // GetValue returns the value of Value.
@@ -2575,6 +2630,11 @@ func (s *PendingUserMessage) GetValue() UserMessage {
 // SetMessageId sets the value of MessageId.
 func (s *PendingUserMessage) SetMessageId(val MessageID) {
 	s.MessageId = val
+}
+
+// SetAcceptedAt sets the value of AcceptedAt.
+func (s *PendingUserMessage) SetAcceptedAt(val time.Time) {
+	s.AcceptedAt = val
 }
 
 // SetValue sets the value of Value.
@@ -3228,14 +3288,20 @@ func (*SendMessageNotFound) sendMessageRes() {}
 
 // Ref: #/components/schemas/SendMessageRequest
 type SendMessageRequest struct {
-	FlowId   FlowID `json:"flowId"`
-	Content  string `json:"content"`
-	PlanMode bool   `json:"planMode"`
+	FlowId    FlowID    `json:"flowId"`
+	MessageId MessageID `json:"messageId"`
+	Content   string    `json:"content"`
+	PlanMode  bool      `json:"planMode"`
 }
 
 // GetFlowId returns the value of FlowId.
 func (s *SendMessageRequest) GetFlowId() FlowID {
 	return s.FlowId
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *SendMessageRequest) GetMessageId() MessageID {
+	return s.MessageId
 }
 
 // GetContent returns the value of Content.
@@ -3251,6 +3317,11 @@ func (s *SendMessageRequest) GetPlanMode() bool {
 // SetFlowId sets the value of FlowId.
 func (s *SendMessageRequest) SetFlowId(val FlowID) {
 	s.FlowId = val
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *SendMessageRequest) SetMessageId(val MessageID) {
+	s.MessageId = val
 }
 
 // SetContent sets the value of Content.

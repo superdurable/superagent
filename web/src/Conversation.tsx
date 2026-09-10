@@ -28,6 +28,7 @@ import {
   waitForAgentInteractionStatus,
   type CallId,
   type FlowId,
+  type MessageId,
   type PendingUserMessage,
   type ResumeToken,
   type StreamEvent,
@@ -252,22 +253,22 @@ export function Conversation({
       content,
       planMode: state.isPlanMode,
     };
-    const submission = {
-      value,
-      submittedAfterSequence: state.snapshot.description.lastSequence,
-      knownMessageIDs: [
-        ...state.snapshot.queued.map((message) => message.messageId),
-        ...state.snapshot.steered.map((message) => message.messageId),
-      ],
-    };
-    runCommand({ kind: "send", ...submission }, (signal) =>
-      sendMessage({
-        body: {
-          flowId,
-          ...value,
-        },
-        signal,
-      }),
+    const messageID = crypto.randomUUID() as MessageId;
+    runCommand(
+      {
+        kind: "send",
+        messageID,
+        value,
+      },
+      (signal) =>
+        sendMessage({
+          body: {
+            flowId,
+            messageId: messageID,
+            ...value,
+          },
+          signal,
+        }),
     );
   };
   const submitAnswers = (callID: CallId, answers: UserInputAnswer[]) => {

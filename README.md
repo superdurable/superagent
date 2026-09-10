@@ -48,6 +48,15 @@ The optional `github.com/superdurable/superagent/model` package exposes the
 built-in provider router, provider adapters, and process-memory credential
 store. Embedders can use it without importing SuperAgent internals.
 
+Cloud control planes can call `Client.EnsureStarted` with a stable request ID,
+configuration, opaque application context, and optional initial message. Every
+message and mutation has caller-stable identity and durable exact-replay
+receipts. `Client.MessagesAfter` provides bounded forward canonical-history
+pagination, and `Client.Cancel` records a durable cancellation request before
+using the released Dex lifecycle API. Trusted tools receive the opaque
+application context to recover workspace or sandbox routing after Worker
+replacement; providers and browser snapshots never receive it.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph
 and resource model.

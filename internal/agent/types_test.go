@@ -20,7 +20,9 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestAgentConfigDefaultsValidate(t *testing.T) {
@@ -132,5 +134,55 @@ func TestJSONObjectRoundTripsAsObject(t *testing.T) {
 	}
 	if _, err := ParseJSONObject(`[]`); err == nil {
 		t.Fatal("ParseJSONObject(array) error = nil")
+	}
+}
+
+func TestNewUserMessageValidationProtectsCallerIdentityAndBodyBounds(t *testing.T) {
+	t.Parallel()
+	valid := UserMessage{MessageID: "message-1", Content: "hello"}
+	if err := validateNewUserMessage(valid); err != nil {
+		t.Fatalf("valid message: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*UserMessage)
+	}{
+		{name: "missing ID", mutate: func(message *UserMessage) { message.MessageID = "" }},
+		{name: "unsafe ID", mutate: func(message *UserMessage) { message.MessageID = "message id" }},
+		{name: "accepted timestamp", mutate: func(message *UserMessage) { message.AcceptedAt = time.Now() }},
+		{name: "blank content", mutate: func(message *UserMessage) { message.Content = " \n" }},
+		{name: "NUL content", mutate: func(message *UserMessage) { message.Content = "hello\x00world" }},
+		{name: "oversized content", mutate: func(message *UserMessage) {
+			message.Content = strings.Repeat("x", maximumUserMessageBytes+1)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := valid
+			test.mutate(&candidate)
+			if err := validateNewUserMessage(candidate); err == nil {
+				t.Fatal("validation error = nil")
+			}
+		})
+	}
+}
+
+func TestRequestAndApplicationContextValidation(t *testing.T) {
+	t.Parallel()
+	if err := validateRequestID("request-1/path:part"); err != nil {
+		t.Fatalf("valid request ID: %v", err)
+	}
+	for _, requestID := range []RequestID{"", "request id", RequestID(strings.Repeat("x", maximumMessageIDBytes+1))} {
+		if err := validateRequestID(requestID); err == nil {
+			t.Fatalf("request ID %q was accepted", requestID)
+		}
+	}
+	if err := validateApplicationContext(`{"sandbox_id":"sandbox-1"}`); err != nil {
+		t.Fatalf("valid application context: %v", err)
+	}
+	for _, value := range []string{"context\x00value", strings.Repeat("x", maximumAppContextBytes+1)} {
+		if err := validateApplicationContext(value); err == nil {
+			t.Fatalf("application context of %d bytes was accepted", len(value))
+		}
 	}
 }

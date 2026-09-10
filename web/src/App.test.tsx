@@ -142,7 +142,11 @@ describe("App", () => {
         }),
     );
     vi.mocked(startAgent).mockResolvedValue({ flowId: "flow-created" });
-    vi.mocked(sendMessage).mockResolvedValue({ accepted: true });
+    vi.mocked(sendMessage).mockResolvedValue({
+      messageId: "message-send",
+      acceptedAt: "2026-09-03T00:00:00Z",
+      replayed: false,
+    });
     vi.mocked(steerQueuedMessage).mockResolvedValue({
       messageId: "message-1",
       action: "steered",
@@ -235,6 +239,7 @@ describe("App", () => {
       queued: [
         {
           messageId: "message-1",
+          acceptedAt: "2026-09-03T00:00:00Z",
           value: { content: "Please prioritize this", planMode: false },
         },
       ],
@@ -642,6 +647,7 @@ describe("App", () => {
           {
             sequence: 1,
             message: {
+              messageId: "assistant-1",
               role: "assistant",
               content: "**Durable reply**",
               toolCalls: [
@@ -659,6 +665,7 @@ describe("App", () => {
           {
             sequence: 2,
             message: {
+              messageId: "tool-1",
               role: "tool",
               content: '{"status":"waiting_for_user"}',
               toolCalls: [],
