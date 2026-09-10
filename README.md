@@ -18,8 +18,8 @@ transport boundaries from one contract.
 
 The browser restores durable state through one
 `GET /products/ai-agent/snapshot` request. It applies Stream updates for low
-latency and reconciles from Snapshot after reconnects, mutations, and detected
-gaps.
+latency and reconciles after durable waits, server errors, explicit requests,
+and a visible-page ten-second lifecycle fallback.
 
 ## Architecture
 

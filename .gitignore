@@ -1,6 +1,7 @@
 /.env
 /.env.*
 !/.env.example
+/.idea/
 /.cache/
 /.cache/dexcli
 /.cache/dexcli-v0.1.21

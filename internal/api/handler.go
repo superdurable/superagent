@@ -34,6 +34,7 @@ import (
 type AgentService interface {
 	Start(context.Context, agent.FlowID, agent.AgentConfig) (agent.RunID, error)
 	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
+	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
 	Snapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
 	ArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
 	WaitForInteractionStatus(context.Context, agent.FlowID, agent.AgentInteractionStatus) error
@@ -186,6 +187,29 @@ func (handler *Handler) SendMessage(ctx context.Context, request *transportapi.S
 	})
 	if err != nil {
 		return handler.sendMessageError(ctx, agent.FlowID(request.FlowId), err), nil
+	}
+	return accepted(), nil
+}
+
+// AnswerQuestions durably answers and closes one exact pending input batch.
+func (handler *Handler) AnswerQuestions(
+	ctx context.Context,
+	request *transportapi.AnswerQuestionsRequest,
+) (transportapi.AnswerQuestionsRes, error) {
+	flowID := agent.FlowID(request.FlowId)
+	answers := make([]agent.UserInputAnswer, 0, len(request.Answers))
+	for _, answer := range request.Answers {
+		answers = append(answers, agent.UserInputAnswer{
+			QuestionID: agent.UserInputQuestionID(answer.QuestionId),
+			Answer:     answer.Answer,
+		})
+	}
+	err := handler.agent.AnswerQuestions(ctx, flowID, agent.AnswerQuestionsRequest{
+		CallID:  agent.CallID(request.CallId),
+		Answers: answers,
+	})
+	if err != nil {
+		return handler.answerQuestionsError(ctx, flowID, err), nil
 	}
 	return accepted(), nil
 }
@@ -672,10 +696,25 @@ func transportOptionalPendingUserInput(pending *agent.PendingUserInput) transpor
 		result.SetToNull()
 		return result
 	}
+	questions := make([]transportapi.UserInputQuestion, 0, len(pending.Questions))
+	for _, question := range pending.Questions {
+		options := make([]transportapi.UserInputOption, 0, len(question.Options))
+		for _, option := range question.Options {
+			options = append(options, transportapi.UserInputOption{
+				Label:       option.Label,
+				Description: option.Description,
+			})
+		}
+		questions = append(questions, transportapi.UserInputQuestion{
+			ID:       string(question.ID),
+			Header:   question.Header,
+			Question: question.Question,
+			Options:  options,
+		})
+	}
 	result.SetTo(transportapi.PendingUserInput{
-		CallId:  transportapi.CallID(pending.CallID),
-		Prompt:  pending.Prompt,
-		Choices: append([]string(nil), pending.Choices...),
+		CallId:    transportapi.CallID(pending.CallID),
+		Questions: questions,
 	})
 	return result
 }
@@ -860,12 +899,36 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 	} else {
 		messageSequence.SetTo(transportapi.Sequence(*event.MessageSequence))
 	}
+	planBaseRevision := transportapi.OptNilInt64{}
+	if event.PlanBaseRevision != nil {
+		planBaseRevision.SetTo(int64(*event.PlanBaseRevision))
+	}
+	planRevision := transportapi.OptNilInt64{}
+	if event.PlanRevision != nil {
+		planRevision.SetTo(int64(*event.PlanRevision))
+	}
+	planTaskIndex := transportapi.OptNilInt{}
+	if event.PlanTaskIndex != nil {
+		planTaskIndex.SetTo(int(*event.PlanTaskIndex))
+	}
+	planTaskStatus := transportapi.OptNilTaskStatus{}
+	if event.PlanTaskStatus != nil {
+		status, statusErr := transportTaskStatus(*event.PlanTaskStatus)
+		if statusErr != nil {
+			return transportapi.AgentEvent{}, statusErr
+		}
+		planTaskStatus.SetTo(status)
+	}
 	return transportapi.AgentEvent{
-		Kind:            kind,
-		Message:         event.Message,
-		CallId:          callID,
-		ToolName:        toolName,
-		MessageSequence: messageSequence,
+		Kind:             kind,
+		Message:          event.Message,
+		CallId:           callID,
+		ToolName:         toolName,
+		MessageSequence:  messageSequence,
+		PlanBaseRevision: planBaseRevision,
+		PlanRevision:     planRevision,
+		PlanTaskIndex:    planTaskIndex,
+		PlanTaskStatus:   planTaskStatus,
 	}, nil
 }
 
@@ -875,6 +938,8 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindPlanStarted, nil
 	case agent.EventKindPlanUpdated:
 		return transportapi.EventKindPlanUpdated, nil
+	case agent.EventKindPlanTaskUpdated:
+		return transportapi.EventKindPlanTaskUpdated, nil
 	case agent.EventKindSteeringApplied:
 		return transportapi.EventKindSteeringApplied, nil
 	case agent.EventKindCompactionFailed:
@@ -986,6 +1051,23 @@ func (handler *Handler) sendMessageError(ctx context.Context, flowID agent.FlowI
 		return (*transportapi.SendMessageConflict)(&problem)
 	default:
 		return (*transportapi.SendMessageServiceUnavailable)(&problem)
+	}
+}
+
+func (handler *Handler) answerQuestionsError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) transportapi.AnswerQuestionsRes {
+	handler.logFailure(ctx, flowID, err)
+	problem, kind := commandProblem(err)
+	switch kind {
+	case failureNotFound:
+		return (*transportapi.AnswerQuestionsNotFound)(&problem)
+	case failureConflict:
+		return (*transportapi.AnswerQuestionsConflict)(&problem)
+	default:
+		return (*transportapi.AnswerQuestionsServiceUnavailable)(&problem)
 	}
 }
 

@@ -86,7 +86,7 @@ paths:
   /products/ai-agent/messages:
     post:
       operationId: sendMessage
-      summary: Queue a user message or answer pending user input
+      summary: Queue a user message
       requestBody:
         required: true
         content:
@@ -96,6 +96,31 @@ paths:
       responses:
         "202":
           description: The command was durably accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /products/ai-agent/questions/answer:
+    post:
+      operationId: answerQuestions
+      summary: Answer the exact pending Agent input batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerQuestionsRequest"
+      responses:
+        "202":
+          description: The answers were durably accepted and the input batch was closed.
           content:
             application/json:
               schema:
@@ -415,6 +440,7 @@ components:
       enum:
         - plan_started
         - plan_updated
+        - plan_task_updated
         - steering_applied
         - compaction_failed
         - compacted
@@ -656,6 +682,39 @@ components:
           maxLength: 1000000
         planMode:
           type: boolean
+    AnswerQuestionsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - flowId
+        - callId
+        - answers
+      properties:
+        flowId:
+          $ref: "#/components/schemas/FlowId"
+        callId:
+          $ref: "#/components/schemas/CallId"
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/UserInputAnswer"
+    UserInputAnswer:
+      type: object
+      additionalProperties: false
+      required:
+        - questionId
+        - answer
+      properties:
+        questionId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        answer:
+          type: string
+          minLength: 1
+          maxLength: 1000000
     ExecutePlanRequest:
       type: object
       additionalProperties: false
@@ -971,19 +1030,55 @@ components:
       additionalProperties: false
       required:
         - callId
-        - prompt
-        - choices
+        - questions
       properties:
         callId:
           $ref: "#/components/schemas/CallId"
-        prompt:
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/UserInputQuestion"
+    UserInputQuestion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - header
+        - question
+        - options
+      properties:
+        id:
           type: string
           minLength: 1
-        choices:
+          maxLength: 255
+        header:
+          type: string
+          minLength: 1
+          maxLength: 12
+        question:
+          type: string
+          minLength: 1
+        options:
           type: array
+          minItems: 2
+          maxItems: 3
           items:
-            type: string
-            minLength: 1
+            $ref: "#/components/schemas/UserInputOption"
+    UserInputOption:
+      type: object
+      additionalProperties: false
+      required:
+        - label
+        - description
+      properties:
+        label:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          minLength: 1
     AgentPlan:
       type: object
       additionalProperties: false
@@ -1137,6 +1232,30 @@ components:
           description: Durable assistant message produced by this model invocation, or null for unrelated activity.
           allOf:
             - $ref: "#/components/schemas/Sequence"
+          nullable: true
+        planBaseRevision:
+          description: Plan revision the browser must currently render before applying a task update, or null.
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          nullable: true
+        planRevision:
+          description: Durable Plan revision produced by a task update, or null.
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          nullable: true
+        planTaskIndex:
+          description: Zero-based index of an unchanged Plan task, or null.
+          type: integer
+          minimum: 0
+          nullable: true
+        planTaskStatus:
+          description: Updated status of the indexed Plan task, or null.
+          allOf:
+            - $ref: "#/components/schemas/TaskStatus"
           nullable: true
     Problem:
       type: object

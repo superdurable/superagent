@@ -108,6 +108,18 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 			request.WriteActivity,
 		)
 	}
+	if strings.EqualFold(userRequest, "/questions") && hasTool(available, agent.ToolNameRequestUserInput) {
+		arguments, err := userInputQuestionsObject(mockQuestionBatch())
+		if err != nil {
+			return agent.ModelReply{}, err
+		}
+		return calls.toolReply(
+			"I need three details before I continue.",
+			agent.ToolNameRequestUserInput,
+			arguments,
+			request.WriteActivity,
+		)
+	}
 	if strings.HasPrefix(strings.ToLower(userRequest), "/ask-many ") &&
 		hasTool(available, agent.ToolNameRequestUserInput) && hasTool(available, agent.ToolNameDurableWait) {
 		prompt := strings.TrimSpace(userRequest[len("/ask-many "):])
@@ -141,6 +153,22 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 		}
 		return calls.toolReply(content, agent.ToolNameRequestUserInput, arguments, request.WriteActivity)
 	}
+	if strings.HasPrefix(strings.ToLower(userRequest), "/reason ") {
+		parts := splitReasoningCommand(userRequest)
+		if len(parts) != 2 {
+			return agent.ModelReply{}, errors.New("local /reason syntax is /reason <summary> | <response>")
+		}
+		if err := request.WriteReasoning(parts[0]); err != nil {
+			return agent.ModelReply{}, err
+		}
+		if err := waitContext(ctx, 1200*time.Millisecond); err != nil {
+			return agent.ModelReply{}, err
+		}
+		if err := streamMockContent(ctx, parts[1], request.WriteAssistant); err != nil {
+			return agent.ModelReply{}, err
+		}
+		return agent.ModelReply{Content: parts[1], ToolCalls: []agent.ToolCall{}}, nil
+	}
 
 	activeTasks := activePlan(request.Messages)
 	if activeTasks != nil && hasUnfinishedTask(activeTasks) {
@@ -150,6 +178,11 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 				return agent.ModelReply{}, err
 			}
 			return agent.ModelReply{Content: content, ToolCalls: []agent.ToolCall{}}, nil
+		}
+		if hasInProgressTask(activeTasks) {
+			if err := waitContext(ctx, 800*time.Millisecond); err != nil {
+				return agent.ModelReply{}, err
+			}
 		}
 		arguments, err := writeTodosObject(nextMockPlanTasks(activeTasks))
 		if err != nil {
@@ -308,14 +341,58 @@ func writeTodosObject(tasks []agent.PlanTask) (agent.JSONObject, error) {
 }
 
 func userInputObject(prompt string, choices []string) (agent.JSONObject, error) {
+	if len(choices) == 0 {
+		choices = []string{"Yes", "No"}
+	}
+	options := make([]agent.UserInputOption, 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, agent.UserInputOption{
+			Label:       choice,
+			Description: "Choose " + choice + ".",
+		})
+	}
+	return userInputQuestionsObject([]agent.UserInputQuestion{{
+		ID:       "answer",
+		Header:   "Details",
+		Question: prompt,
+		Options:  options,
+	}})
+}
+
+func userInputQuestionsObject(questions []agent.UserInputQuestion) (agent.JSONObject, error) {
 	encoded, err := json.Marshal(struct {
-		Prompt  string   `json:"prompt"`
-		Choices []string `json:"choices,omitempty"`
-	}{Prompt: prompt, Choices: choices})
+		Questions []agent.UserInputQuestion `json:"questions"`
+	}{Questions: questions})
 	if err != nil {
 		return "", fmt.Errorf("encode mock user-input arguments: %w", err)
 	}
 	return agent.ParseJSONObject(string(encoded))
+}
+
+func mockQuestionBatch() []agent.UserInputQuestion {
+	return []agent.UserInputQuestion{
+		{
+			ID: "region", Header: "Region", Question: "Which region should I use?",
+			Options: []agent.UserInputOption{
+				{Label: "US West", Description: "Use the western US region."},
+				{Label: "EU Central", Description: "Use the central EU region."},
+			},
+		},
+		{
+			ID: "pace", Header: "Pace", Question: "How quickly should I proceed?",
+			Options: []agent.UserInputOption{
+				{Label: "Fast", Description: "Prioritize speed."},
+				{Label: "Careful", Description: "Prioritize verification."},
+			},
+		},
+		{
+			ID: "format", Header: "Format", Question: "Which output format should I use?",
+			Options: []agent.UserInputOption{
+				{Label: "Summary", Description: "Return a short summary."},
+				{Label: "Detailed", Description: "Return a detailed response."},
+			},
+		},
+	}
 }
 
 func durableWaitObject(durationSeconds int64, reason string) (agent.JSONObject, error) {
@@ -356,6 +433,17 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 
 func splitChoiceCommand(request string) []string {
 	parts := strings.Split(request[len("/choose "):], "|")
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
+		if parts[index] == "" {
+			return nil
+		}
+	}
+	return parts
+}
+
+func splitReasoningCommand(request string) []string {
+	parts := strings.SplitN(request[len("/reason "):], "|", 2)
 	for index := range parts {
 		parts[index] = strings.TrimSpace(parts[index])
 		if parts[index] == "" {
@@ -427,6 +515,15 @@ func planStatus(messages []agent.AgentMessage) agent.PlanStatus {
 func hasUnfinishedTask(tasks []agent.PlanTask) bool {
 	for _, task := range tasks {
 		if task.Status != agent.TaskStatusCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+func hasInProgressTask(tasks []agent.PlanTask) bool {
+	for _, task := range tasks {
+		if task.Status == agent.TaskStatusInProgress {
 			return true
 		}
 	}

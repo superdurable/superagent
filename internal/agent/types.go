@@ -110,6 +110,9 @@ func (kind *StreamEventKind) UnmarshalJSON(data []byte) error {
 // PlanRevision identifies one immutable plan revision.
 type PlanRevision int64
 
+// PlanTaskIndex identifies one task position inside a Plan revision.
+type PlanTaskIndex int
+
 // Model identifies a provider-qualified model.
 type Model string
 
@@ -344,6 +347,7 @@ type EventKind string
 const (
 	EventKindPlanStarted        EventKind = "plan_started"
 	EventKindPlanUpdated        EventKind = "plan_updated"
+	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
 	EventKindCompacted          EventKind = "compacted"
@@ -362,6 +366,7 @@ func (kind EventKind) Validate() error {
 	switch kind {
 	case EventKindPlanStarted,
 		EventKindPlanUpdated,
+		EventKindPlanTaskUpdated,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
 		EventKindCompacted,
@@ -738,8 +743,9 @@ type ContextSummary struct {
 
 // UserMessage is a queued or steered user request.
 type UserMessage struct {
-	Content  string `json:"content"`
-	PlanMode bool   `json:"plan_mode"`
+	Content             string  `json:"content"`
+	PlanMode            bool    `json:"plan_mode"`
+	AnsweredInputCallID *CallID `json:"answered_input_call_id,omitempty"`
 }
 
 // SteerMessageRequest atomically moves one queued message into steering.
@@ -790,20 +796,52 @@ type PendingTimer struct {
 	Reason          string `json:"reason"`
 }
 
-// PendingUserInput describes a durable prompt awaiting a message.
+// UserInputQuestionID identifies one question within a pending input batch.
+type UserInputQuestionID string
+
+// UserInputOption describes one suggested answer.
+type UserInputOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// UserInputQuestion describes one question within a pending input batch.
+type UserInputQuestion struct {
+	ID       UserInputQuestionID `json:"id"`
+	Header   string              `json:"header"`
+	Question string              `json:"question"`
+	Options  []UserInputOption   `json:"options"`
+}
+
+// PendingUserInput describes one durable batch awaiting answers.
 type PendingUserInput struct {
-	CallID  CallID   `json:"call_id"`
-	Prompt  string   `json:"prompt"`
-	Choices []string `json:"choices"`
+	CallID    CallID              `json:"call_id"`
+	Questions []UserInputQuestion `json:"questions"`
+}
+
+// AnswerQuestionsRequest identifies and answers one pending batch.
+type AnswerQuestionsRequest struct {
+	CallID  CallID            `json:"call_id"`
+	Answers []UserInputAnswer `json:"answers"`
+}
+
+// UserInputAnswer answers one question in a pending input batch.
+type UserInputAnswer struct {
+	QuestionID UserInputQuestionID `json:"question_id"`
+	Answer     string              `json:"answer"`
 }
 
 // AgentEvent is emitted to the best-effort activity Stream.
 type AgentEvent struct {
-	Kind            EventKind `json:"kind"`
-	Message         string    `json:"message"`
-	CallID          *CallID   `json:"call_id,omitempty"`
-	ToolName        *ToolName `json:"tool_name,omitempty"`
-	MessageSequence *Sequence `json:"message_sequence,omitempty"`
+	Kind             EventKind      `json:"kind"`
+	Message          string         `json:"message"`
+	CallID           *CallID        `json:"call_id,omitempty"`
+	ToolName         *ToolName      `json:"tool_name,omitempty"`
+	MessageSequence  *Sequence      `json:"message_sequence,omitempty"`
+	PlanBaseRevision *PlanRevision  `json:"plan_base_revision,omitempty"`
+	PlanRevision     *PlanRevision  `json:"plan_revision,omitempty"`
+	PlanTaskIndex    *PlanTaskIndex `json:"plan_task_index,omitempty"`
+	PlanTaskStatus   *TaskStatus    `json:"plan_task_status,omitempty"`
 }
 
 // StreamEvent is one typed best-effort Stream message.
@@ -821,10 +859,11 @@ type StreamEvent struct {
 type Command string
 
 const (
-	CommandSendMessage Command = "send_message"
-	CommandSteer       Command = "steer_message"
-	CommandApproveTool Command = "approve_tool"
-	CommandExecutePlan Command = "execute_plan"
+	CommandSendMessage     Command = "send_message"
+	CommandAnswerQuestions Command = "answer_questions"
+	CommandSteer           Command = "steer_message"
+	CommandApproveTool     Command = "approve_tool"
+	CommandExecutePlan     Command = "execute_plan"
 )
 
 // CommandRejectedError reports a valid command that does not match current durable state.

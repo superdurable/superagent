@@ -8,6 +8,12 @@ import (
 
 // Handler handles operations described by OpenAPI v3 specification.
 type Handler interface {
+	// AnswerQuestions implements answerQuestions operation.
+	//
+	// Answer the exact pending Agent input batch.
+	//
+	// POST /products/ai-agent/questions/answer
+	AnswerQuestions(ctx context.Context, req *AnswerQuestionsRequest) (AnswerQuestionsRes, error)
 	// ApproveTool implements approveTool operation.
 	//
 	// Resolve one exact pending tool approval.
@@ -66,7 +72,7 @@ type Handler interface {
 	ReadEvent(ctx context.Context, params ReadEventParams) (ReadEventRes, error)
 	// SendMessage implements sendMessage operation.
 	//
-	// Queue a user message or answer pending user input.
+	// Queue a user message.
 	//
 	// POST /products/ai-agent/messages
 	SendMessage(ctx context.Context, req *SendMessageRequest) (SendMessageRes, error)

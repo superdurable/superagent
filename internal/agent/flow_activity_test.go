@@ -31,3 +31,47 @@ func TestCondenseActivityMessageProducesBoundedSingleLineSummary(t *testing.T) {
 		t.Fatalf("summary is not bounded: %d runes, %q", len([]rune(summary)), summary)
 	}
 }
+
+func TestPlanTaskActivitiesIdentifyOnlyStableChangedTasks(t *testing.T) {
+	previous := &AgentPlan{
+		Revision: 7,
+		Status:   PlanStatusActive,
+		Tasks: []PlanTask{
+			{Content: "inspect", Status: TaskStatusPending},
+			{Content: "implement", Status: TaskStatusInProgress},
+			{Content: "old verification", Status: TaskStatusPending},
+		},
+	}
+	events := planTaskActivities(previous, 8, []PlanTask{
+		{Content: "inspect", Status: TaskStatusInProgress},
+		{Content: "implement", Status: TaskStatusCompleted},
+		{Content: "new verification", Status: TaskStatusInProgress},
+		{Content: "publish", Status: TaskStatusPending},
+	})
+	if len(events) != 2 {
+		t.Fatalf("events = %#v", events)
+	}
+	for index, event := range events {
+		if event.Kind != EventKindPlanTaskUpdated || event.PlanBaseRevision == nil ||
+			*event.PlanBaseRevision != 7 || event.PlanRevision == nil || *event.PlanRevision != 8 ||
+			event.PlanTaskIndex == nil || int(*event.PlanTaskIndex) != index || event.PlanTaskStatus == nil {
+			t.Fatalf("event %d = %#v", index, event)
+		}
+	}
+	if *events[0].PlanTaskStatus != TaskStatusInProgress ||
+		*events[1].PlanTaskStatus != TaskStatusCompleted {
+		t.Fatalf("statuses = %#v", events)
+	}
+	if events[0].Message != "Started plan task 1." || events[1].Message != "Completed plan task 2." {
+		t.Fatalf("messages = %#v", events)
+	}
+}
+
+func TestPlanTaskActivitiesRequireAPreviousPlan(t *testing.T) {
+	if events := planTaskActivities(nil, 1, []PlanTask{{
+		Content: "inspect",
+		Status:  TaskStatusInProgress,
+	}}); len(events) != 0 {
+		t.Fatalf("events = %#v", events)
+	}
+}

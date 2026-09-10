@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetArchivedMessagesData, GetArchivedMessagesErrors, GetArchivedMessagesResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses, WaitForAgentInteractionStatusData, WaitForAgentInteractionStatusErrors, WaitForAgentInteractionStatusResponses } from './types.gen';
+import type { AnswerQuestionsData, AnswerQuestionsErrors, AnswerQuestionsResponses, ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetArchivedMessagesData, GetArchivedMessagesErrors, GetArchivedMessagesResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses, WaitForAgentInteractionStatusData, WaitForAgentInteractionStatusErrors, WaitForAgentInteractionStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -59,11 +59,24 @@ export const startAgent = <ThrowOnError extends boolean = true>(options: Options
 });
 
 /**
- * Queue a user message or answer pending user input
+ * Queue a user message
  */
 export const sendMessage = <ThrowOnError extends boolean = true>(options: Options<SendMessageData, ThrowOnError>): RequestResult<SendMessageResponses, SendMessageErrors, ThrowOnError, 'data'> => (options.client ?? client).post<SendMessageResponses, SendMessageErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',
     url: '/products/ai-agent/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Answer the exact pending Agent input batch
+ */
+export const answerQuestions = <ThrowOnError extends boolean = true>(options: Options<AnswerQuestionsData, ThrowOnError>): RequestResult<AnswerQuestionsResponses, AnswerQuestionsErrors, ThrowOnError, 'data'> => (options.client ?? client).post<AnswerQuestionsResponses, AnswerQuestionsErrors, ThrowOnError, 'data'>({
+    responseStyle: 'data',
+    url: '/products/ai-agent/questions/answer',
     ...options,
     headers: {
         'Content-Type': 'application/json',

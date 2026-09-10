@@ -24,9 +24,10 @@ func (s *Accepted) SetAccepted(val AcceptedAccepted) {
 	s.Accepted = val
 }
 
-func (*Accepted) approveToolRes() {}
-func (*Accepted) executePlanRes() {}
-func (*Accepted) sendMessageRes() {}
+func (*Accepted) answerQuestionsRes() {}
+func (*Accepted) approveToolRes()     {}
+func (*Accepted) executePlanRes()     {}
+func (*Accepted) sendMessageRes()     {}
 
 type AcceptedAccepted bool
 
@@ -322,6 +323,14 @@ type AgentEvent struct {
 	ToolName NilToolName `json:"toolName"`
 	// Durable assistant message produced by this model invocation, or null for unrelated activity.
 	MessageSequence NilSequence `json:"messageSequence"`
+	// Plan revision the browser must currently render before applying a task update, or null.
+	PlanBaseRevision OptNilInt64 `json:"planBaseRevision"`
+	// Durable Plan revision produced by a task update, or null.
+	PlanRevision OptNilInt64 `json:"planRevision"`
+	// Zero-based index of an unchanged Plan task, or null.
+	PlanTaskIndex OptNilInt `json:"planTaskIndex"`
+	// Updated status of the indexed Plan task, or null.
+	PlanTaskStatus OptNilTaskStatus `json:"planTaskStatus"`
 }
 
 // GetKind returns the value of Kind.
@@ -349,6 +358,26 @@ func (s *AgentEvent) GetMessageSequence() NilSequence {
 	return s.MessageSequence
 }
 
+// GetPlanBaseRevision returns the value of PlanBaseRevision.
+func (s *AgentEvent) GetPlanBaseRevision() OptNilInt64 {
+	return s.PlanBaseRevision
+}
+
+// GetPlanRevision returns the value of PlanRevision.
+func (s *AgentEvent) GetPlanRevision() OptNilInt64 {
+	return s.PlanRevision
+}
+
+// GetPlanTaskIndex returns the value of PlanTaskIndex.
+func (s *AgentEvent) GetPlanTaskIndex() OptNilInt {
+	return s.PlanTaskIndex
+}
+
+// GetPlanTaskStatus returns the value of PlanTaskStatus.
+func (s *AgentEvent) GetPlanTaskStatus() OptNilTaskStatus {
+	return s.PlanTaskStatus
+}
+
 // SetKind sets the value of Kind.
 func (s *AgentEvent) SetKind(val EventKind) {
 	s.Kind = val
@@ -372,6 +401,26 @@ func (s *AgentEvent) SetToolName(val NilToolName) {
 // SetMessageSequence sets the value of MessageSequence.
 func (s *AgentEvent) SetMessageSequence(val NilSequence) {
 	s.MessageSequence = val
+}
+
+// SetPlanBaseRevision sets the value of PlanBaseRevision.
+func (s *AgentEvent) SetPlanBaseRevision(val OptNilInt64) {
+	s.PlanBaseRevision = val
+}
+
+// SetPlanRevision sets the value of PlanRevision.
+func (s *AgentEvent) SetPlanRevision(val OptNilInt64) {
+	s.PlanRevision = val
+}
+
+// SetPlanTaskIndex sets the value of PlanTaskIndex.
+func (s *AgentEvent) SetPlanTaskIndex(val OptNilInt) {
+	s.PlanTaskIndex = val
+}
+
+// SetPlanTaskStatus sets the value of PlanTaskStatus.
+func (s *AgentEvent) SetPlanTaskStatus(val OptNilTaskStatus) {
+	s.PlanTaskStatus = val
 }
 
 // Ref: #/components/schemas/AgentInteractionState
@@ -751,6 +800,59 @@ func (s *AgentStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+type AnswerQuestionsBadRequest Problem
+
+func (*AnswerQuestionsBadRequest) answerQuestionsRes() {}
+
+type AnswerQuestionsConflict Problem
+
+func (*AnswerQuestionsConflict) answerQuestionsRes() {}
+
+type AnswerQuestionsNotFound Problem
+
+func (*AnswerQuestionsNotFound) answerQuestionsRes() {}
+
+// Ref: #/components/schemas/AnswerQuestionsRequest
+type AnswerQuestionsRequest struct {
+	FlowId  FlowID            `json:"flowId"`
+	CallId  CallID            `json:"callId"`
+	Answers []UserInputAnswer `json:"answers"`
+}
+
+// GetFlowId returns the value of FlowId.
+func (s *AnswerQuestionsRequest) GetFlowId() FlowID {
+	return s.FlowId
+}
+
+// GetCallId returns the value of CallId.
+func (s *AnswerQuestionsRequest) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetAnswers returns the value of Answers.
+func (s *AnswerQuestionsRequest) GetAnswers() []UserInputAnswer {
+	return s.Answers
+}
+
+// SetFlowId sets the value of FlowId.
+func (s *AnswerQuestionsRequest) SetFlowId(val FlowID) {
+	s.FlowId = val
+}
+
+// SetCallId sets the value of CallId.
+func (s *AnswerQuestionsRequest) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetAnswers sets the value of Answers.
+func (s *AnswerQuestionsRequest) SetAnswers(val []UserInputAnswer) {
+	s.Answers = val
+}
+
+type AnswerQuestionsServiceUnavailable Problem
+
+func (*AnswerQuestionsServiceUnavailable) answerQuestionsRes() {}
+
 type ApproveToolBadRequest Problem
 
 func (*ApproveToolBadRequest) approveToolRes() {}
@@ -885,6 +987,7 @@ type EventKind string
 const (
 	EventKindPlanStarted        EventKind = "plan_started"
 	EventKindPlanUpdated        EventKind = "plan_updated"
+	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
 	EventKindCompacted          EventKind = "compacted"
@@ -903,6 +1006,7 @@ func (EventKind) AllValues() []EventKind {
 	return []EventKind{
 		EventKindPlanStarted,
 		EventKindPlanUpdated,
+		EventKindPlanTaskUpdated,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
 		EventKindCompacted,
@@ -923,6 +1027,8 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindPlanStarted:
 		return []byte(s), nil
 	case EventKindPlanUpdated:
+		return []byte(s), nil
+	case EventKindPlanTaskUpdated:
 		return []byte(s), nil
 	case EventKindSteeringApplied:
 		return []byte(s), nil
@@ -959,6 +1065,9 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindPlanUpdated:
 		*s = EventKindPlanUpdated
+		return nil
+	case EventKindPlanTaskUpdated:
+		*s = EventKindPlanTaskUpdated
 		return nil
 	case EventKindSteeringApplied:
 		*s = EventKindSteeringApplied
@@ -1983,6 +2092,142 @@ func (o OptFloat64) Or(d float64) float64 {
 	return d
 }
 
+// NewOptNilInt returns new OptNilInt with value set to v.
+func NewOptNilInt(v int) OptNilInt {
+	return OptNilInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt is optional nullable int.
+type OptNilInt struct {
+	Value int
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt was set.
+func (o OptNilInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt) SetTo(v int) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt) Get() (v int, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilInt64 returns new OptNilInt64 with value set to v.
+func NewOptNilInt64(v int64) OptNilInt64 {
+	return OptNilInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt64 is optional nullable int64.
+type OptNilInt64 struct {
+	Value int64
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt64 was set.
+func (o OptNilInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt64) SetTo(v int64) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt64) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt64) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int64
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt64) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt64) Get() (v int64, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -2045,6 +2290,74 @@ func (o OptNilString) Get() (v string, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilTaskStatus returns new OptNilTaskStatus with value set to v.
+func NewOptNilTaskStatus(v TaskStatus) OptNilTaskStatus {
+	return OptNilTaskStatus{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilTaskStatus is optional nullable TaskStatus.
+type OptNilTaskStatus struct {
+	Value TaskStatus
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilTaskStatus was set.
+func (o OptNilTaskStatus) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilTaskStatus) Reset() {
+	var v TaskStatus
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilTaskStatus) SetTo(v TaskStatus) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilTaskStatus) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilTaskStatus) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v TaskStatus
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilTaskStatus) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilTaskStatus) Get() (v TaskStatus, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilTaskStatus) Or(d TaskStatus) TaskStatus {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2219,9 +2532,8 @@ func (s *PendingTimer) SetReason(val string) {
 
 // Ref: #/components/schemas/PendingUserInput
 type PendingUserInput struct {
-	CallId  CallID   `json:"callId"`
-	Prompt  string   `json:"prompt"`
-	Choices []string `json:"choices"`
+	CallId    CallID              `json:"callId"`
+	Questions []UserInputQuestion `json:"questions"`
 }
 
 // GetCallId returns the value of CallId.
@@ -2229,14 +2541,9 @@ func (s *PendingUserInput) GetCallId() CallID {
 	return s.CallId
 }
 
-// GetPrompt returns the value of Prompt.
-func (s *PendingUserInput) GetPrompt() string {
-	return s.Prompt
-}
-
-// GetChoices returns the value of Choices.
-func (s *PendingUserInput) GetChoices() []string {
-	return s.Choices
+// GetQuestions returns the value of Questions.
+func (s *PendingUserInput) GetQuestions() []UserInputQuestion {
+	return s.Questions
 }
 
 // SetCallId sets the value of CallId.
@@ -2244,14 +2551,9 @@ func (s *PendingUserInput) SetCallId(val CallID) {
 	s.CallId = val
 }
 
-// SetPrompt sets the value of Prompt.
-func (s *PendingUserInput) SetPrompt(val string) {
-	s.Prompt = val
-}
-
-// SetChoices sets the value of Choices.
-func (s *PendingUserInput) SetChoices(val []string) {
-	s.Choices = val
+// SetQuestions sets the value of Questions.
+func (s *PendingUserInput) SetQuestions(val []UserInputQuestion) {
+	s.Questions = val
 }
 
 // Ref: #/components/schemas/PendingUserMessage
@@ -3392,6 +3694,106 @@ func (s *ToolCall) SetArgumentsJson(val string) {
 }
 
 type ToolName string
+
+// Ref: #/components/schemas/UserInputAnswer
+type UserInputAnswer struct {
+	QuestionId string `json:"questionId"`
+	Answer     string `json:"answer"`
+}
+
+// GetQuestionId returns the value of QuestionId.
+func (s *UserInputAnswer) GetQuestionId() string {
+	return s.QuestionId
+}
+
+// GetAnswer returns the value of Answer.
+func (s *UserInputAnswer) GetAnswer() string {
+	return s.Answer
+}
+
+// SetQuestionId sets the value of QuestionId.
+func (s *UserInputAnswer) SetQuestionId(val string) {
+	s.QuestionId = val
+}
+
+// SetAnswer sets the value of Answer.
+func (s *UserInputAnswer) SetAnswer(val string) {
+	s.Answer = val
+}
+
+// Ref: #/components/schemas/UserInputOption
+type UserInputOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// GetLabel returns the value of Label.
+func (s *UserInputOption) GetLabel() string {
+	return s.Label
+}
+
+// GetDescription returns the value of Description.
+func (s *UserInputOption) GetDescription() string {
+	return s.Description
+}
+
+// SetLabel sets the value of Label.
+func (s *UserInputOption) SetLabel(val string) {
+	s.Label = val
+}
+
+// SetDescription sets the value of Description.
+func (s *UserInputOption) SetDescription(val string) {
+	s.Description = val
+}
+
+// Ref: #/components/schemas/UserInputQuestion
+type UserInputQuestion struct {
+	ID       string            `json:"id"`
+	Header   string            `json:"header"`
+	Question string            `json:"question"`
+	Options  []UserInputOption `json:"options"`
+}
+
+// GetID returns the value of ID.
+func (s *UserInputQuestion) GetID() string {
+	return s.ID
+}
+
+// GetHeader returns the value of Header.
+func (s *UserInputQuestion) GetHeader() string {
+	return s.Header
+}
+
+// GetQuestion returns the value of Question.
+func (s *UserInputQuestion) GetQuestion() string {
+	return s.Question
+}
+
+// GetOptions returns the value of Options.
+func (s *UserInputQuestion) GetOptions() []UserInputOption {
+	return s.Options
+}
+
+// SetID sets the value of ID.
+func (s *UserInputQuestion) SetID(val string) {
+	s.ID = val
+}
+
+// SetHeader sets the value of Header.
+func (s *UserInputQuestion) SetHeader(val string) {
+	s.Header = val
+}
+
+// SetQuestion sets the value of Question.
+func (s *UserInputQuestion) SetQuestion(val string) {
+	s.Question = val
+}
+
+// SetOptions sets the value of Options.
+func (s *UserInputQuestion) SetOptions(val []UserInputOption) {
+	s.Options = val
+}
 
 // Ref: #/components/schemas/UserMessage
 type UserMessage struct {

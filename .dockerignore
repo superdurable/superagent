@@ -6,6 +6,7 @@
 .cache/temporal-v1.8.2
 .env
 .env.*
+.idea
 bin/superagent
 bin/superagent-mcp-fixture.test
 coverage

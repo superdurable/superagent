@@ -39,6 +39,7 @@ export type EventStream = typeof EventStream[keyof typeof EventStream];
 export const EventKind = {
     PLAN_STARTED: 'plan_started',
     PLAN_UPDATED: 'plan_updated',
+    PLAN_TASK_UPDATED: 'plan_task_updated',
     STEERING_APPLIED: 'steering_applied',
     COMPACTION_FAILED: 'compaction_failed',
     COMPACTED: 'compacted',
@@ -165,6 +166,17 @@ export type SendMessageRequest = {
     planMode: boolean;
 };
 
+export type AnswerQuestionsRequest = {
+    flowId: FlowId;
+    callId: CallId;
+    answers: Array<UserInputAnswer>;
+};
+
+export type UserInputAnswer = {
+    questionId: string;
+    answer: string;
+};
+
 export type ExecutePlanRequest = {
     flowId: FlowId;
     revision: number;
@@ -287,8 +299,19 @@ export type PendingTimer = {
 
 export type PendingUserInput = {
     callId: CallId;
-    prompt: string;
-    choices: Array<string>;
+    questions: Array<UserInputQuestion>;
+};
+
+export type UserInputQuestion = {
+    id: string;
+    header: string;
+    question: string;
+    options: Array<UserInputOption>;
+};
+
+export type UserInputOption = {
+    label: string;
+    description: string;
 };
 
 export type AgentPlan = {
@@ -350,6 +373,22 @@ export type AgentEvent = {
      * Durable assistant message produced by this model invocation, or null for unrelated activity.
      */
     messageSequence: Sequence | null;
+    /**
+     * Plan revision the browser must currently render before applying a task update, or null.
+     */
+    planBaseRevision?: number | null;
+    /**
+     * Durable Plan revision produced by a task update, or null.
+     */
+    planRevision?: number | null;
+    /**
+     * Zero-based index of an unchanged Plan task, or null.
+     */
+    planTaskIndex?: number | null;
+    /**
+     * Updated status of the indexed Plan task, or null.
+     */
+    planTaskStatus?: TaskStatus | null;
 };
 
 export type Problem = {
@@ -495,6 +534,43 @@ export type SendMessageResponses = {
 };
 
 export type SendMessageResponse = SendMessageResponses[keyof SendMessageResponses];
+
+export type AnswerQuestionsData = {
+    body: AnswerQuestionsRequest;
+    path?: never;
+    query?: never;
+    url: '/products/ai-agent/questions/answer';
+};
+
+export type AnswerQuestionsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    409: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type AnswerQuestionsError = AnswerQuestionsErrors[keyof AnswerQuestionsErrors];
+
+export type AnswerQuestionsResponses = {
+    /**
+     * The answers were durably accepted and the input batch was closed.
+     */
+    202: Accepted;
+};
+
+export type AnswerQuestionsResponse = AnswerQuestionsResponses[keyof AnswerQuestionsResponses];
 
 export type GetAgentSnapshotData = {
     body?: never;

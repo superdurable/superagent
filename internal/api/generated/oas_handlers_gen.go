@@ -28,6 +28,90 @@ func (c *codeRecorder) Unwrap() http.ResponseWriter {
 
 func recordError(string, error) {}
 
+// handleAnswerQuestionsRequest handles answerQuestions operation.
+//
+// Answer the exact pending Agent input batch.
+//
+// POST /products/ai-agent/questions/answer
+func (s *Server) handleAnswerQuestionsRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: AnswerQuestionsOperation,
+			ID:   "answerQuestions",
+		}
+	)
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeAnswerQuestionsRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response AnswerQuestionsRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    AnswerQuestionsOperation,
+			OperationSummary: "Answer the exact pending Agent input batch",
+			OperationID:      "answerQuestions",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *AnswerQuestionsRequest
+			Params   = struct{}
+			Response = AnswerQuestionsRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.AnswerQuestions(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.AnswerQuestions(ctx, request)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeAnswerQuestionsResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleApproveToolRequest handles approveTool operation.
 //
 // Resolve one exact pending tool approval.
@@ -743,7 +827,7 @@ func (s *Server) handleReadEventRequest(args [0]string, argsEscaped bool, w http
 
 // handleSendMessageRequest handles sendMessage operation.
 //
-// Queue a user message or answer pending user input.
+// Queue a user message.
 //
 // POST /products/ai-agent/messages
 func (s *Server) handleSendMessageRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -781,7 +865,7 @@ func (s *Server) handleSendMessageRequest(args [0]string, argsEscaped bool, w ht
 		mreq := middleware.Request{
 			Context:          ctx,
 			OperationName:    SendMessageOperation,
-			OperationSummary: "Queue a user message or answer pending user input",
+			OperationSummary: "Queue a user message",
 			OperationID:      "sendMessage",
 			Body:             request,
 			RawBody:          rawBody,

@@ -10,21 +10,26 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type KeyboardEvent,
   type SyntheticEvent,
 } from "react";
 
 import {
-  AgentInteractionStatus,
+  EventKind,
   MessageRole,
   PlanStatus,
   TaskStatus,
+  type AgentEvent,
   type CallId,
   type FlowId,
   type PendingUserMessage,
+  type PendingUserInput,
   type ToolName,
+  type UserInputAnswer,
 } from "./api/generated";
 import {
+  displayedPlanTaskStatus,
   pendingQueueMessageID,
   type ConnectionState,
   type QueueCommandAction,
@@ -43,6 +48,7 @@ interface ConversationViewProps {
   onComposerChange: (value: string) => void;
   onPlanModeChange: (value: boolean) => void;
   onSubmit: () => void;
+  onSubmitAnswers: (callId: CallId, answers: UserInputAnswer[]) => void;
   onExecutePlan: (revision: number) => void;
   onApproveTool: (callId: CallId, approved: boolean) => void;
   onMutateQueue: (
@@ -61,6 +67,7 @@ export function ConversationView({
   onComposerChange,
   onPlanModeChange,
   onSubmit,
+  onSubmitAnswers,
   onExecutePlan,
   onApproveTool,
   onMutateQueue,
@@ -72,12 +79,18 @@ export function ConversationView({
   const { snapshot } = state;
   const description = snapshot.description;
   const isBusy = state.pendingCommand !== null;
+  const areMutationsDisabled = isBusy || state.reconciliation !== "open";
   const pendingMessageID = pendingQueueMessageID(state);
   const builtInToolNames = new Set(builtInTools);
+  const hasSidebar =
+    description.pendingApproval !== null ||
+    description.pendingTimer !== null ||
+    description.plan !== null;
   const timeline = buildConversationTimeline(
     snapshot.history.messages,
     state.reasoning,
     state.activities,
+    state.assistant,
   );
   const liveContentVersion =
     state.activities.length +
@@ -143,7 +156,15 @@ export function ConversationView({
         </div>
       )}
 
-      <section className="conversation-grid">
+      {state.reconciliation === "syncing" && (
+        <div className="sync-status" role="status">
+          Syncing durable state…
+        </div>
+      )}
+
+      <section
+        className={`conversation-grid${hasSidebar ? "" : " no-sidebar"}`}
+      >
         <div className="conversation-main">
           <section className="messages-card" aria-label="Conversation history">
             {snapshot.history.nextBeforeSequence !== null && (
@@ -161,7 +182,7 @@ export function ConversationView({
                   : "Loading history…"}
               </button>
             )}
-            {snapshot.history.messages.length === 0 && (
+            {timeline.length === 0 && (
               <div className="empty-state">
                 <h2>Start the conversation</h2>
                 <p>Your messages and durable Agent replies will appear here.</p>
@@ -177,11 +198,50 @@ export function ConversationView({
                     onToggle={revealOpenedDetails}
                   >
                     <summary>
-                      Reasoning summary · {formatTime(entry.value.createdAt)} ·{" "}
-                      {entry.value.isComplete ? "Complete" : "Streaming"}
+                      Reasoning summary ·{" "}
+                      <time dateTime={entry.value.createdAt}>
+                        {formatTime(entry.value.createdAt)}
+                      </time>{" "}
+                      · {entry.value.isComplete ? "Complete" : "Streaming"}
                     </summary>
                     <RichText value={entry.value.value} />
                   </details>
+                );
+              }
+              if (entry.kind === "activity") {
+                return (
+                  <article
+                    className={`activity-entry ${entry.value.value.kind}`}
+                    key={`activity:${entry.value.resumeToken}`}
+                  >
+                    <span className="activity-icon" aria-hidden="true">
+                      {activityIcon(entry.value.value.kind)}
+                    </span>
+                    <div>
+                      <strong>{activityLabel(entry.value.value)}</strong>
+                      <span>{entry.value.value.message}</span>
+                    </div>
+                    <time dateTime={entry.value.createdAt}>
+                      {formatTime(entry.value.createdAt)}
+                    </time>
+                  </article>
+                );
+              }
+              if (entry.kind === "assistant") {
+                return (
+                  <article
+                    className="message-bubble assistant live-message"
+                    key={`assistant:${entry.value.source}`}
+                  >
+                    <div className="message-meta">
+                      <strong>Assistant</strong>
+                      <span>
+                        {formatTime(entry.value.createdAt)} ·{" "}
+                        {entry.value.isComplete ? "Finalizing" : "Streaming"}
+                      </span>
+                    </div>
+                    <RichText value={entry.value.value} />
+                  </article>
                 );
               }
               const { sequence, message } = entry.value;
@@ -226,198 +286,64 @@ export function ConversationView({
                 </article>
               );
             })}
-            {state.assistant !== null && (
-              <article className="message-bubble assistant live-message">
-                <div className="message-meta">
-                  <strong>Assistant</strong>
-                  <span>
-                    {formatTime(state.assistant.createdAt)} ·{" "}
-                    {state.assistant.isComplete ? "Finalizing" : "Streaming"}
-                  </span>
-                </div>
-                <RichText value={state.assistant.value} />
-              </article>
-            )}
           </section>
-
-          {description.plan !== null && (
-            <section className="plan-card">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">
-                    Plan revision {description.plan.revision}
-                  </p>
-                  <h2>{statusLabel(description.plan.status)}</h2>
-                </div>
-                {description.plan.status !== PlanStatus.COMPLETED && (
-                  <button
-                    type="button"
-                    disabled={isBusy || description.isPlanExecutionRequested}
-                    onClick={() => {
-                      const revision = description.plan?.revision;
-                      if (revision !== undefined) onExecutePlan(revision);
-                    }}
-                  >
-                    {state.pendingCommand?.command.kind === "execute-plan"
-                      ? "Requesting execution…"
-                      : description.isPlanExecutionRequested
-                        ? "Execution requested"
-                        : description.plan.status === PlanStatus.DRAFT
-                          ? "Execute plan"
-                          : "Continue plan"}
-                  </button>
-                )}
-              </div>
-              <ol className="plan-tasks">
-                {description.plan.tasks.map((task, index) => (
-                  <li
-                    className={task.status}
-                    key={`${String(index)}:${task.content}`}
-                  >
-                    <span aria-hidden="true">{taskIcon(task.status)}</span>
-                    <div>
-                      <strong>{statusLabel(task.status)}</strong>
-                      <p>{task.content}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )}
         </div>
 
-        <aside className="conversation-sidebar">
-          {description.pendingApproval !== null && (
-            <section className="side-card approval-card">
-              <p className="eyebrow">Approval required</p>
-              <h2>{description.pendingApproval.toolName}</h2>
-              <pre>{description.pendingApproval.argumentsJson}</pre>
-              <div className="button-row">
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    const callId = description.pendingApproval?.callId;
-                    if (callId !== undefined) onApproveTool(callId, true);
-                  }}
-                >
-                  {state.pendingCommand?.command.kind === "approve"
-                    ? "Processing…"
-                    : "Approve"}
-                </button>
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    const callId = description.pendingApproval?.callId;
-                    if (callId !== undefined) onApproveTool(callId, false);
-                  }}
-                >
-                  {state.pendingCommand?.command.kind === "approve"
-                    ? "Processing…"
-                    : "Reject"}
-                </button>
-              </div>
-            </section>
-          )}
+        {hasSidebar && (
+          <aside className="conversation-sidebar">
+            {description.pendingApproval !== null && (
+              <section className="side-card approval-card">
+                <p className="eyebrow">Approval required</p>
+                <h2>{description.pendingApproval.toolName}</h2>
+                <pre>{description.pendingApproval.argumentsJson}</pre>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    disabled={areMutationsDisabled}
+                    onClick={() => {
+                      const callId = description.pendingApproval?.callId;
+                      if (callId !== undefined) onApproveTool(callId, true);
+                    }}
+                  >
+                    {state.pendingCommand?.command.kind === "approve"
+                      ? "Processing…"
+                      : "Approve"}
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    disabled={areMutationsDisabled}
+                    onClick={() => {
+                      const callId = description.pendingApproval?.callId;
+                      if (callId !== undefined) onApproveTool(callId, false);
+                    }}
+                  >
+                    {state.pendingCommand?.command.kind === "approve"
+                      ? "Processing…"
+                      : "Reject"}
+                  </button>
+                </div>
+              </section>
+            )}
 
-          {description.pendingTimer !== null && (
-            <section className="side-card timer-card">
-              <p className="eyebrow">Durable timer</p>
-              <h2>{description.pendingTimer.durationSeconds}s</h2>
-              <p>{description.pendingTimer.reason}</p>
-              <small>Steering interrupts this wait at a safe boundary.</small>
-            </section>
-          )}
+            {description.pendingTimer !== null && (
+              <section className="side-card timer-card">
+                <p className="eyebrow">Durable timer</p>
+                <h2>{description.pendingTimer.durationSeconds}s</h2>
+                <p>{description.pendingTimer.reason}</p>
+                <small>Steering interrupts this wait at a safe boundary.</small>
+              </section>
+            )}
 
-          {(snapshot.queued.length > 0 ||
-            snapshot.steered.length > 0 ||
-            state.optimisticSubmissions.length > 0) && (
-            <section className="side-card queue-card">
-              <div className="section-heading compact">
-                <div>
-                  <p className="eyebrow">Message queue</p>
-                  <h2>
-                    {String(
-                      snapshot.queued.length +
-                        state.optimisticSubmissions.length,
-                    )}{" "}
-                    queued · {String(snapshot.steered.length)} steering
-                  </h2>
-                </div>
-              </div>
-              {snapshot.steered.map((message) => (
-                <div className="queue-message steered" key={message.messageId}>
-                  <strong>Steering</strong>
-                  <p>{message.value.content}</p>
-                </div>
-              ))}
-              {state.optimisticSubmissions.map((submission) => (
-                <div
-                  className="queue-message submitting"
-                  key={submission.localID}
-                >
-                  <strong>
-                    {submission.phase === "submitting"
-                      ? "Submitting…"
-                      : "Queued"}
-                  </strong>
-                  <small>{submission.value.planMode ? "Plan" : "Chat"}</small>
-                  <p>{submission.value.content}</p>
-                </div>
-              ))}
-              {snapshot.queued.map((message) => (
-                <div className="queue-message" key={message.messageId}>
-                  <strong>{message.value.planMode ? "Plan" : "Chat"}</strong>
-                  <p>{message.value.content}</p>
-                  <div className="queue-actions">
-                    {(["steer", "edit", "delete"] as const).map((action) => (
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={isBusy}
-                        key={action}
-                        onClick={() => {
-                          onMutateQueue(message, action);
-                        }}
-                      >
-                        {pendingMessageID === message.messageId
-                          ? "Updating…"
-                          : statusLabel(action)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </section>
-          )}
-
-          <section
-            className="side-card activity-card"
-            aria-label="Agent activity"
-          >
-            <p className="eyebrow">Activity</p>
-            <div className="activity-summary">
-              {state.activities[0] !== undefined &&
-              description.interactionStatus ===
-                AgentInteractionStatus.SUBMITTED ? (
-                <>
-                  <strong>{statusLabel(state.activities[0].value.kind)}</strong>
-                  <span>{state.activities[0].value.message}</span>
-                  <time dateTime={state.activities[0].createdAt}>
-                    {formatTime(state.activities[0].createdAt)}
-                  </time>
-                </>
-              ) : (
-                <>
-                  <strong>{statusLabel(description.status)}</strong>
-                  <span>Durable Agent status</span>
-                </>
-              )}
-            </div>
-          </section>
-        </aside>
+            {description.plan !== null && (
+              <PlanPanel
+                state={state}
+                areMutationsDisabled={areMutationsDisabled}
+                onExecutePlan={onExecutePlan}
+              />
+            )}
+          </aside>
+        )}
       </section>
 
       <section
@@ -425,28 +351,20 @@ export function ConversationView({
         aria-label="Message composer"
         ref={composerRef}
       >
+        <QueueTray
+          state={state}
+          areMutationsDisabled={areMutationsDisabled}
+          pendingMessageID={pendingMessageID}
+          onMutateQueue={onMutateQueue}
+        />
         {description.pendingUserInput !== null && (
-          <div className="pending-input">
-            <p className="eyebrow">Agent needs your input</p>
-            <strong>{description.pendingUserInput.prompt}</strong>
-            {description.pendingUserInput.choices.length > 0 && (
-              <div className="choice-row">
-                {description.pendingUserInput.choices.map((choice) => (
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={isBusy}
-                    key={choice}
-                    onClick={() => {
-                      onComposerChange(choice);
-                    }}
-                  >
-                    {choice}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <QuestionsPanel
+            key={`${flowId}:${description.pendingUserInput.callId}`}
+            pendingInput={description.pendingUserInput}
+            disabled={areMutationsDisabled}
+            isSubmitting={state.pendingCommand?.command.kind === "answer"}
+            onSubmit={onSubmitAnswers}
+          />
         )}
         {description.pendingUserInput === null && (
           <label className="plan-mode">
@@ -461,43 +379,37 @@ export function ConversationView({
             Plan mode
           </label>
         )}
-        <div className="composer-row">
-          <textarea
-            ref={textareaRef}
-            aria-label={
-              description.pendingUserInput === null
-                ? "Message"
-                : "Answer Agent question"
-            }
-            value={state.composer}
-            disabled={isBusy}
-            placeholder={
-              description.pendingUserInput === null
-                ? state.isPlanMode
+        {description.pendingUserInput === null && (
+          <div className="composer-row">
+            <textarea
+              ref={textareaRef}
+              aria-label="Message"
+              value={state.composer}
+              disabled={isBusy}
+              placeholder={
+                state.isPlanMode
                   ? "Describe what you want the Agent to plan…"
                   : "Message the Agent…"
-                : "Type your answer…"
-            }
-            rows={3}
-            onChange={(event) => {
-              onComposerChange(event.target.value);
-            }}
-            onKeyDown={handleComposerKeyDown}
-          />
-          <button
-            type="button"
-            disabled={isBusy || state.composer.trim() === ""}
-            onClick={onSubmit}
-          >
-            {state.pendingCommand?.command.kind === "send"
-              ? "Sending…"
-              : description.pendingUserInput === null
-                ? state.isPlanMode
+              }
+              rows={3}
+              onChange={(event) => {
+                onComposerChange(event.target.value);
+              }}
+              onKeyDown={handleComposerKeyDown}
+            />
+            <button
+              type="button"
+              disabled={areMutationsDisabled || state.composer.trim() === ""}
+              onClick={onSubmit}
+            >
+              {state.pendingCommand?.command.kind === "send"
+                ? "Sending…"
+                : state.isPlanMode
                   ? "Create plan"
-                  : "Send"
-                : "Submit answer"}
-          </button>
-        </div>
+                  : "Send"}
+            </button>
+          </div>
+        )}
         <div className="composer-footer">
           <small>⌘/Ctrl/Alt + Enter sends · Enter adds a new line</small>
           <button
@@ -511,6 +423,413 @@ export function ConversationView({
       </section>
     </main>
   );
+}
+
+interface QuestionsPanelProps {
+  pendingInput: PendingUserInput;
+  disabled: boolean;
+  isSubmitting: boolean;
+  onSubmit: (callId: CallId, answers: UserInputAnswer[]) => void;
+}
+
+interface QuestionDraft {
+  answer: string;
+  isOther: boolean;
+}
+
+function QuestionsPanel({
+  pendingInput,
+  disabled,
+  isSubmitting,
+  onSubmit,
+}: QuestionsPanelProps) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({});
+  const question = pendingInput.questions[currentIndex];
+  if (question === undefined) return null;
+  const currentDraft = drafts[question.id];
+  const hasAllAnswers = pendingInput.questions.every(
+    ({ id }) => (drafts[id]?.answer.trim().length ?? 0) > 0,
+  );
+  const isLast = currentIndex === pendingInput.questions.length - 1;
+  const setAnswer = (answer: string, isOther: boolean) => {
+    setDrafts((current) => ({
+      ...current,
+      [question.id]: { answer, isOther },
+    }));
+  };
+  const chooseOption = (answer: string) => {
+    setAnswer(answer, false);
+    if (!isLast) setCurrentIndex((index) => index + 1);
+  };
+  const submit = () => {
+    if (!hasAllAnswers || disabled) return;
+    onSubmit(
+      pendingInput.callId,
+      pendingInput.questions.map(({ id }) => ({
+        questionId: id,
+        answer: drafts[id]?.answer.trim() ?? "",
+      })),
+    );
+  };
+
+  return (
+    <section className="pending-input" aria-label="Agent questions">
+      <div className="question-heading">
+        <div>
+          <p className="eyebrow">Agent needs your input</p>
+          <strong>
+            Question {String(currentIndex + 1)} of{" "}
+            {String(pendingInput.questions.length)}
+          </strong>
+        </div>
+        <div className="question-tabs" aria-label="Questions">
+          {pendingInput.questions.map((candidate, index) => (
+            <button
+              type="button"
+              className={index === currentIndex ? "active" : "secondary"}
+              aria-current={index === currentIndex ? "step" : undefined}
+              key={candidate.id}
+              onClick={() => {
+                setCurrentIndex(index);
+              }}
+            >
+              {candidate.header}
+              {(drafts[candidate.id]?.answer.trim().length ?? 0) > 0 && (
+                <span className="answered-mark" aria-label="Answered">
+                  ✓
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+      <fieldset className="question-content" disabled={disabled}>
+        <legend>{question.header}</legend>
+        <p>{question.question}</p>
+        <div className="choice-row">
+          {question.options.map((option) => (
+            <button
+              type="button"
+              className={
+                currentDraft?.isOther === false &&
+                currentDraft.answer === option.label
+                  ? "question-option selected"
+                  : "question-option secondary"
+              }
+              key={option.label}
+              onClick={() => {
+                chooseOption(option.label);
+              }}
+            >
+              <strong>{option.label}</strong>
+              <small>{option.description}</small>
+            </button>
+          ))}
+          <button
+            type="button"
+            className={
+              currentDraft?.isOther === true
+                ? "question-option selected"
+                : "question-option secondary"
+            }
+            onClick={() => {
+              setAnswer(
+                currentDraft?.isOther === true ? currentDraft.answer : "",
+                true,
+              );
+            }}
+          >
+            <strong>Other</strong>
+            <small>Enter a different answer.</small>
+          </button>
+        </div>
+        {currentDraft?.isOther === true && (
+          <label className="other-answer">
+            Other answer
+            <input
+              aria-label={`Other answer for ${question.header}`}
+              value={currentDraft.answer}
+              onChange={(event) => {
+                setAnswer(event.target.value, true);
+              }}
+            />
+          </label>
+        )}
+      </fieldset>
+      <div className="question-navigation">
+        <button
+          type="button"
+          className="secondary"
+          disabled={disabled || currentIndex === 0}
+          onClick={() => {
+            setCurrentIndex((index) => Math.max(0, index - 1));
+          }}
+        >
+          Previous
+        </button>
+        {!isLast && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={disabled || currentDraft?.answer.trim() === ""}
+            onClick={() => {
+              setCurrentIndex((index) => index + 1);
+            }}
+          >
+            Next
+          </button>
+        )}
+        {isLast && (
+          <button
+            type="button"
+            disabled={disabled || !hasAllAnswers}
+            onClick={submit}
+          >
+            {isSubmitting ? "Submitting answers…" : "Submit all"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+interface PlanPanelProps {
+  state: ActiveConversationState;
+  areMutationsDisabled: boolean;
+  onExecutePlan: (revision: number) => void;
+}
+
+function PlanPanel({
+  state,
+  areMutationsDisabled,
+  onExecutePlan,
+}: PlanPanelProps) {
+  const { description } = state.snapshot;
+  const plan = description.plan;
+  const isNarrow = useMediaQuery("(max-width: 620px)");
+  const [isExpanded, setIsExpanded] = useState(false);
+  if (plan === null) return null;
+  const taskStatuses = plan.tasks.map(
+    (_task, index) =>
+      displayedPlanTaskStatus(state, index) ?? TaskStatus.PENDING,
+  );
+  const completedCount = taskStatuses.filter(
+    (status) => status === TaskStatus.COMPLETED,
+  ).length;
+  const hasRunningTask = taskStatuses.some(
+    (status) => status === TaskStatus.IN_PROGRESS,
+  );
+  const isContentVisible = !isNarrow || isExpanded;
+  return (
+    <section className="plan-card plan-panel" aria-label="Agent plan">
+      {isNarrow && (
+        <button
+          type="button"
+          className="plan-toggle"
+          aria-controls="agent-plan-content"
+          aria-expanded={isExpanded}
+          onClick={() => {
+            setIsExpanded((value) => !value);
+          }}
+        >
+          <span>
+            Plan · {String(completedCount)}/{String(plan.tasks.length)} complete
+          </span>
+          {hasRunningTask && (
+            <TaskStatusIndicator status={TaskStatus.IN_PROGRESS} />
+          )}
+          <span aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
+        </button>
+      )}
+      {isContentVisible && (
+        <div className="plan-content" id="agent-plan-content">
+          <div className="section-heading plan-heading">
+            <div>
+              <p className="eyebrow">Plan revision {plan.revision}</p>
+              <h2>{statusLabel(plan.status)}</h2>
+            </div>
+            {plan.status !== PlanStatus.COMPLETED && (
+              <button
+                type="button"
+                disabled={
+                  areMutationsDisabled || description.isPlanExecutionRequested
+                }
+                onClick={() => {
+                  onExecutePlan(plan.revision);
+                }}
+              >
+                {state.pendingCommand?.command.kind === "execute-plan"
+                  ? "Requesting execution…"
+                  : description.isPlanExecutionRequested
+                    ? "Execution requested"
+                    : plan.status === PlanStatus.DRAFT
+                      ? "Execute plan"
+                      : "Continue plan"}
+              </button>
+            )}
+          </div>
+          <ol className="plan-tasks">
+            {plan.tasks.map((task, index) => {
+              const status = taskStatuses[index] ?? task.status;
+              return (
+                <li className={status} key={`${String(index)}:${task.content}`}>
+                  <TaskStatusIndicator status={status} />
+                  <div>
+                    <strong>{statusLabel(status)}</strong>
+                    <p>{task.content}</p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TaskStatusIndicator({ status }: { status: TaskStatus }) {
+  if (status === TaskStatus.IN_PROGRESS) {
+    return (
+      <span className="task-status" aria-label="In progress">
+        <span className="task-spinner" aria-hidden="true" />
+      </span>
+    );
+  }
+  return (
+    <span className="task-status" aria-label={statusLabel(status)}>
+      <span aria-hidden="true">{taskIcon(status)}</span>
+    </span>
+  );
+}
+
+interface QueueTrayProps {
+  state: ActiveConversationState;
+  areMutationsDisabled: boolean;
+  pendingMessageID: string | null;
+  onMutateQueue: (
+    message: PendingUserMessage,
+    action: QueueCommandAction,
+  ) => void;
+}
+
+function QueueTray({
+  state,
+  areMutationsDisabled,
+  pendingMessageID,
+  onMutateQueue,
+}: QueueTrayProps) {
+  const { queued, steered } = state.snapshot;
+  const hasMessages =
+    queued.length > 0 ||
+    steered.length > 0 ||
+    state.optimisticSubmissions.length > 0;
+  const signature = [
+    ...steered.map(({ messageId }) => `steered:${messageId}`),
+    ...queued.map(({ messageId }) => `queued:${messageId}`),
+    ...state.optimisticSubmissions.map(({ localID }) => `local:${localID}`),
+  ].join("|");
+  const [collapsedSignature, setCollapsedSignature] = useState<string | null>(
+    null,
+  );
+  const isExpanded = collapsedSignature !== signature;
+  if (!hasMessages) return null;
+  return (
+    <section className="queue-tray" aria-label="Message queue">
+      <button
+        type="button"
+        className="queue-toggle"
+        aria-controls="message-queue-items"
+        aria-expanded={isExpanded}
+        onClick={() => {
+          setCollapsedSignature(isExpanded ? signature : null);
+        }}
+      >
+        <span>Message queue</span>
+        <strong>
+          {String(queued.length + state.optimisticSubmissions.length)} queued ·{" "}
+          {String(steered.length)} steering
+        </strong>
+        <span aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
+      </button>
+      {isExpanded && (
+        <div className="queue-items" id="message-queue-items">
+          {steered.map((message) => (
+            <div className="queue-message steered" key={message.messageId}>
+              <strong>Steering</strong>
+              <small>{message.value.planMode ? "Plan" : "Chat"}</small>
+              <p>{message.value.content}</p>
+            </div>
+          ))}
+          {queued.map((message) => (
+            <div className="queue-message" key={message.messageId}>
+              <strong>{message.value.planMode ? "Plan" : "Chat"}</strong>
+              <p>{message.value.content}</p>
+              <div className="queue-actions">
+                {(["steer", "edit", "delete"] as const).map((action) => (
+                  <button
+                    type="button"
+                    className={
+                      action === "steer"
+                        ? "queue-action steer-action"
+                        : "queue-action text-button"
+                    }
+                    disabled={areMutationsDisabled}
+                    key={action}
+                    onClick={() => {
+                      onMutateQueue(message, action);
+                    }}
+                  >
+                    {pendingMessageID === message.messageId ? (
+                      "Updating…"
+                    ) : action === "steer" ? (
+                      <>
+                        <span aria-hidden="true">↪</span>
+                        Steer now
+                      </>
+                    ) : (
+                      statusLabel(action)
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {state.optimisticSubmissions.map((submission) => (
+            <div className="queue-message submitting" key={submission.localID}>
+              <strong>
+                {submission.phase === "submitting" ? "Submitting…" : "Queued"}
+              </strong>
+              <small>{submission.value.planMode ? "Plan" : "Chat"}</small>
+              <p>{submission.value.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(
+    () =>
+      typeof window.matchMedia === "function" &&
+      window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(query);
+    const update = () => {
+      setMatches(media.matches);
+    };
+    update();
+    media.addEventListener("change", update);
+    return () => {
+      media.removeEventListener("change", update);
+    };
+  }, [query]);
+  return matches;
 }
 
 function useComposerClearance(): {
@@ -657,6 +976,36 @@ function statusLabel(value: string): string {
 
 function messageRoleLabel(role: MessageRole): string {
   return role === "tool" ? "Tool result" : statusLabel(role);
+}
+
+function activityLabel(event: AgentEvent): string {
+  const label = statusLabel(event.kind);
+  return event.toolName === null ? label : `${label} · ${event.toolName}`;
+}
+
+function activityIcon(kind: AgentEvent["kind"]): string {
+  switch (kind) {
+    case EventKind.PLAN_STARTED:
+    case EventKind.PLAN_UPDATED:
+    case EventKind.PLAN_TASK_UPDATED:
+      return "☷";
+    case EventKind.STEERING_APPLIED:
+      return "↪";
+    case EventKind.COMPACTION_FAILED:
+    case EventKind.COMPACTED:
+      return "↻";
+    case EventKind.MODEL_STARTED:
+    case EventKind.MODEL_FAILED:
+    case EventKind.MODEL_COMPLETED:
+      return "✦";
+    case EventKind.MODEL_TOOL_CALL:
+    case EventKind.TOOL_PROGRESS:
+    case EventKind.TOOL_FAILED:
+    case EventKind.TOOL_COMPLETED:
+      return "⚙";
+    case EventKind.USER_INPUT_REQUESTED:
+      return "?";
+  }
 }
 
 function taskIcon(status: TaskStatus): string {

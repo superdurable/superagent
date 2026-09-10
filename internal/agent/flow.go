@@ -98,12 +98,47 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 	}
 }
 
-// SendMessage queues one non-empty user message.
+// SendMessage queues one non-empty user message when no question is pending.
 func (*Flow) SendMessage(ctx dex.Context, input UserMessage) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(input.Content) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
+	pending, err := getPendingUserInput(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pending != nil {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
 	if err := queuedUserMessagesChannel.Publish(ctx, input); err != nil {
+		return nil, err
+	}
+	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+		return nil, err
+	}
+	return &dex.RPCResult[bool]{Output: true}, nil
+}
+
+// AnswerQuestions closes and answers one exact pending input batch atomically.
+func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
+	if strings.TrimSpace(string(input.CallID)) == "" {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	pending, err := getPendingUserInput(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pending == nil || pending.CallID != input.CallID {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	message, isValid := acceptedAnsweredUserMessage(*pending, input.Answers)
+	if !isValid {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if err := pendingUserInputAttribute.Delete(ctx); err != nil {
+		return nil, err
+	}
+	if err := queuedUserMessagesChannel.Publish(ctx, message); err != nil {
 		return nil, err
 	}
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
@@ -404,16 +439,12 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
 	if err != nil {
 		return err
 	}
-	pendingInput, err := getPendingUserInput(ctx)
-	if err != nil {
-		return err
-	}
 	switch {
 	case message.PlanMode:
 		state.InteractionMode = InteractionModePlanning
 		state.PlanningRequiresWrite = true
 		state.PlanningAllowsWrite = true
-	case pendingInput != nil && plan != nil && plan.Status == PlanStatusActive:
+	case message.AnsweredInputCallID != nil && plan != nil && plan.Status == PlanStatusActive:
 		state.InteractionMode = InteractionModeExecuting
 		state.PlanningRequiresWrite = false
 		state.PlanningAllowsWrite = false
@@ -432,11 +463,6 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
 	state.PendingPlanExecutionRevision = nil
 	if setErr := agentStateAttribute.Set(ctx, state); setErr != nil {
 		return setErr
-	}
-	if pendingInput != nil {
-		if deleteErr := pendingUserInputAttribute.Delete(ctx); deleteErr != nil {
-			return deleteErr
-		}
 	}
 	_, err = flow.appendMessage(ctx, AgentMessage{
 		Role:                 MessageRoleUser,
@@ -497,6 +523,10 @@ func (flow *Flow) getPlan(ctx dex.Context) (*AgentPlan, error) {
 }
 
 func (flow *Flow) replacePlan(ctx dex.Context, tasks []PlanTask) (PlanRevision, error) {
+	previousPlan, err := flow.getPlan(ctx)
+	if err != nil {
+		return 0, err
+	}
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
 		return 0, err
@@ -536,7 +566,70 @@ func (flow *Flow) replacePlan(ctx dex.Context, tasks []PlanTask) (PlanRevision, 
 	if err := flow.writeActivity(ctx, AgentEvent{Kind: EventKindPlanUpdated, Message: message}); err != nil {
 		return 0, err
 	}
+	if err := flow.writePlanTaskActivities(ctx, previousPlan, revision, tasks); err != nil {
+		return 0, err
+	}
 	return revision, nil
+}
+
+func (flow *Flow) writePlanTaskActivities(
+	ctx dex.Context,
+	previousPlan *AgentPlan,
+	revision PlanRevision,
+	tasks []PlanTask,
+) error {
+	for _, event := range planTaskActivities(previousPlan, revision, tasks) {
+		if err := flow.writeActivity(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func planTaskActivities(
+	previousPlan *AgentPlan,
+	revision PlanRevision,
+	tasks []PlanTask,
+) []AgentEvent {
+	if previousPlan == nil {
+		return nil
+	}
+	result := []AgentEvent{}
+	for index, task := range tasks {
+		if index >= len(previousPlan.Tasks) {
+			break
+		}
+		previousTask := previousPlan.Tasks[index]
+		if previousTask.Content != task.Content || previousTask.Status == task.Status {
+			continue
+		}
+		baseRevision := previousPlan.Revision
+		taskIndex := PlanTaskIndex(index)
+		taskStatus := task.Status
+		result = append(result, AgentEvent{
+			Kind:             EventKindPlanTaskUpdated,
+			Message:          planTaskActivityMessage(taskIndex, taskStatus),
+			PlanBaseRevision: &baseRevision,
+			PlanRevision:     &revision,
+			PlanTaskIndex:    &taskIndex,
+			PlanTaskStatus:   &taskStatus,
+		})
+	}
+	return result
+}
+
+func planTaskActivityMessage(index PlanTaskIndex, status TaskStatus) string {
+	position := int(index) + 1
+	switch status {
+	case TaskStatusInProgress:
+		return fmt.Sprintf("Started plan task %d.", position)
+	case TaskStatusCompleted:
+		return fmt.Sprintf("Completed plan task %d.", position)
+	case TaskStatusPending:
+		return fmt.Sprintf("Reset plan task %d to pending.", position)
+	default:
+		return fmt.Sprintf("Updated plan task %d.", position)
+	}
 }
 
 func (flow *Flow) appendMessage(ctx dex.Context, message AgentMessage) (Sequence, error) {
@@ -705,7 +798,7 @@ func (flow *Flow) contextMessages(ctx dex.Context, config AgentConfig, state Age
 	if state.InteractionMode != InteractionModePlanning {
 		result = append(result, AgentMessage{
 			Role:    MessageRoleSystem,
-			Content: "When you need a user reply, call request_user_input instead of asking only in assistant text. Provide choices when the valid answers are known. If no reply is required, finish without a follow-up question.",
+			Content: "When you need user input, call request_user_input instead of asking only in assistant text. Ask 1-3 related questions in one batch. If no reply is required, finish without a follow-up question.",
 		})
 	}
 	summary, err := flow.getSummary(ctx)
@@ -754,7 +847,7 @@ func (flow *Flow) planContextMessage(ctx dex.Context, state AgentState) (*AgentM
 	if state.InteractionMode == InteractionModePlanning {
 		instruction = "This is a planning-only turn. Do not execute business tools or claim that planned work was performed."
 	} else if plan != nil && plan.Status == PlanStatusActive {
-		instruction = "The user approved this plan. Execute it and use write_todos to keep task statuses accurate. If required information is missing, keep dependent tasks pending, call request_user_input with one concise question, and stop until the user answers."
+		instruction = "The user approved this plan. Execute it and use write_todos to keep task statuses accurate. If required information is missing, keep dependent tasks pending, call request_user_input with 1-3 related questions, and stop until the user answers."
 	}
 	return &AgentMessage{
 		Role:    MessageRoleSystem,
@@ -1081,12 +1174,14 @@ type toolHeartbeat struct {
 var (
 	messageMutationStepOptions = &dex.StepOptions{
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
+		ExecuteLockAttributes:    []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
 	}
 	messageContextStepOptions = &dex.StepOptions{
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{
 			currentMessagesAttribute,
 			archivedMessagesAttribute,
 		},
+		ExecuteLockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
 	}
 	modelStepOptions = &dex.StepOptions{
 		ExecuteMethodTimeout:     10 * time.Minute,
@@ -1151,11 +1246,15 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err != nil {
 		return nil, err
 	}
+	pendingInput, err := getPendingUserInput(ctx)
+	if err != nil {
+		return nil, err
+	}
 	conditions := []dex.Condition{
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
 		queuedUserMessagesChannel.ForOne(),
 	}
-	if plan != nil && plan.Status != PlanStatusCompleted {
+	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
 		conditions = append(conditions, planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)))
 	}
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
@@ -1614,6 +1713,23 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueDurableWait), nil
 	}
 	if call.Name == ToolNameRequestUserInput {
+		pendingInput, pendingErr := getPendingUserInput(ctx)
+		if pendingErr != nil {
+			return nil, pendingErr
+		}
+		if pendingInput != nil {
+			result, encodeErr := encodeToolResult(toolResultPayload{
+				Status: toolResultStatusFailed,
+				Error:  toolErrorUserInputPending,
+			}, ToolOutcomeKnownFailure, true)
+			if encodeErr != nil {
+				return nil, encodeErr
+			}
+			if err := step.flow.appendToolResult(ctx, call, result); err != nil {
+				return nil, err
+			}
+			return step.flow.continueAfterTool(ctx)
+		}
 		arguments, parseErr := userInputArgumentsFor(call)
 		if parseErr != nil {
 			result, encodeErr := encodeToolResult(toolResultPayload{
@@ -1630,16 +1746,14 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 			return step.flow.continueAfterTool(ctx)
 		}
 		if err := pendingUserInputAttribute.Set(ctx, PendingUserInput{
-			CallID:  call.ID,
-			Prompt:  arguments.Prompt,
-			Choices: arguments.Choices,
+			CallID:    call.ID,
+			Questions: arguments.Questions,
 		}); err != nil {
 			return nil, err
 		}
 		result, encodeErr := encodeToolResult(toolResultPayload{
-			Status:  toolResultStatusWaitingForUser,
-			Prompt:  arguments.Prompt,
-			Choices: arguments.Choices,
+			Status:    toolResultStatusWaitingForUser,
+			Questions: arguments.Questions,
 		}, ToolOutcomeSucceeded, false)
 		if encodeErr != nil {
 			return nil, encodeErr
@@ -1656,7 +1770,7 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		toolName := call.Name
 		if err := step.flow.writeActivity(ctx, AgentEvent{
 			Kind:     EventKindUserInputRequested,
-			Message:  arguments.Prompt,
+			Message:  fmt.Sprintf("Requested answers to %d question(s).", len(arguments.Questions)),
 			CallID:   &callID,
 			ToolName: &toolName,
 		}); err != nil {
