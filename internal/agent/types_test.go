@@ -244,7 +244,7 @@ func TestAnswerQuestionsValidationAndFingerprint(t *testing.T) {
 			candidate := valid
 			candidate.Answers = append([]UserInputAnswer(nil), valid.Answers...)
 			test.mutate(&candidate)
-			if err := validateAnswerQuestionsRequest(candidate); err == nil {
+			if validationErr := validateAnswerQuestionsRequest(candidate); validationErr == nil {
 				t.Fatal("validation error = nil")
 			}
 		})
