@@ -115,7 +115,7 @@ test-dex-integration:
 		-run '$(INTEGRATION_TEST_RUN)' -timeout '$(INTEGRATION_TEST_TIMEOUT)' ./internal/agent
 
 test-server-integration:
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=integration -count=1 \
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -p 1 -tags=integration -count=1 \
 		-run '$(INTEGRATION_TEST_RUN)' -timeout '$(INTEGRATION_TEST_TIMEOUT)' ./internal/agent ./internal/api
 
 test-full-stack-e2e: build-api build-web
