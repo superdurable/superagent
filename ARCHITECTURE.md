@@ -66,6 +66,9 @@ boundary. Waiting state is written in the `WaitFor` that establishes the wait.
 Provider and MCP calls occur only in `Execute`. The complete graph and resource
 table are in `docs/flow-model.md`.
 
+History-reading Steps declare bounded AttributeMap loads explicitly. Tool
+invocations receive the stable Flow ID and model call ID as one durable identity.
+
 ## Durable and live reconciliation
 
 | Data | Durability | Recovery role |

@@ -962,6 +962,7 @@ type ModelClient interface {
 
 // ToolInvocation contains one trusted-registry execution request.
 type ToolInvocation struct {
+	FlowID         FlowID
 	Name           ToolName
 	Arguments      JSONObject
 	EnabledServers []string

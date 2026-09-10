@@ -1901,6 +1901,7 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
 	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
+		FlowID:         FlowID(ctx.FlowID()),
 		Name:           call.Name,
 		Arguments:      call.Arguments,
 		EnabledServers: config.EnabledMCPServers,

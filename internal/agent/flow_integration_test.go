@@ -116,7 +116,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
 	})
-	toolRegistry.assertCallsUseID(t, approval.CallID)
+	toolRegistry.assertCallsUseIdentity(t, flowID, approval.CallID)
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
@@ -1452,8 +1452,13 @@ func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool)
 }
 
 type integrationToolRegistry struct {
-	mutex   sync.Mutex
-	callIDs []CallID
+	mutex      sync.Mutex
+	identities []toolInvocationIdentity
+}
+
+type toolInvocationIdentity struct {
+	flowID FlowID
+	callID CallID
 }
 
 var _ ToolRegistry = (*integrationToolRegistry)(nil)
@@ -1483,7 +1488,10 @@ func (registry *integrationToolRegistry) Execute(ctx context.Context, invocation
 		return ToolExecutionResult{}, fmt.Errorf("unexpected integration tool %q", invocation.Name)
 	}
 	registry.mutex.Lock()
-	registry.callIDs = append(registry.callIDs, invocation.CallID)
+	registry.identities = append(registry.identities, toolInvocationIdentity{
+		flowID: invocation.FlowID,
+		callID: invocation.CallID,
+	})
 	registry.mutex.Unlock()
 	if err := invocation.WriteProgress("integration tool completed"); err != nil {
 		return ToolExecutionResult{}, err
@@ -1491,16 +1499,19 @@ func (registry *integrationToolRegistry) Execute(ctx context.Context, invocation
 	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
 }
 
-func (registry *integrationToolRegistry) assertCallsUseID(t *testing.T, callID CallID) {
+func (registry *integrationToolRegistry) assertCallsUseIdentity(t *testing.T, flowID FlowID, callID CallID) {
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	if len(registry.callIDs) != 1 {
-		t.Fatalf("tool executions = %d, want exactly one", len(registry.callIDs))
+	if len(registry.identities) != 1 {
+		t.Fatalf("tool executions = %d, want exactly one", len(registry.identities))
 	}
-	for _, actual := range registry.callIDs {
-		if actual != callID {
-			t.Fatalf("tool call ID changed across Worker replacement: got %q, want %q", actual, callID)
+	for _, actual := range registry.identities {
+		if actual.flowID != flowID {
+			t.Fatalf("tool Flow ID changed across Worker replacement: got %q, want %q", actual.flowID, flowID)
+		}
+		if actual.callID != callID {
+			t.Fatalf("tool call ID changed across Worker replacement: got %q, want %q", actual.callID, callID)
 		}
 	}
 }
@@ -1509,8 +1520,8 @@ func (registry *integrationToolRegistry) assertExecutionCount(t *testing.T, expe
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	if len(registry.callIDs) != expected {
-		t.Fatalf("tool executions = %d, want %d", len(registry.callIDs), expected)
+	if len(registry.identities) != expected {
+		t.Fatalf("tool executions = %d, want %d", len(registry.identities), expected)
 	}
 }
 

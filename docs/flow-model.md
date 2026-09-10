@@ -116,6 +116,13 @@ known keys from the retained range and does not enumerate an unbounded map.
 Compaction commits a cumulative summary with its exact covered sequence before
 deleting messages.
 
+Dex loads ordinary Attributes automatically, but not AttributeMap instances.
+Steps that append history explicitly load the bounded `CurrentMessages` map.
+`CompactContext`, `CallModel`, and `CheckSteered` also load
+`ArchivedMessages` because they can reconstruct or measure retained context.
+`WaitFor` handlers do not load either map; their independent snapshots only
+need ordinary Attributes and Channel conditions.
+
 `Snapshot` explicitly loads all `CurrentMessages` entries and the pending values
 of `QueuedUserMessages` and `SteeredUserMessages`. Ordinary Attributes used for
 the description are available under the released RPC semantics. Loading is
@@ -141,8 +148,8 @@ being rendered as current state.
   heartbeat timeout sized for expected provider silence.
 - Read-only MCP tools may retry within an explicit budget.
 - Write or unknown MCP tools require approval and default to one attempt.
-- Stable call IDs are passed through the application boundary for integrations
-  that support idempotency.
+- Stable Flow and call IDs are passed together through the tool boundary so an
+  integration can derive one idempotency key across retries and Worker replacement.
 - A timeout after an unprotected write records an unknown outcome; it never
   claims success or a known failure.
 - Failed durable commits retry without exposing staged Attribute or Channel
