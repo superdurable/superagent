@@ -149,16 +149,6 @@ export function ConversationView({
         </div>
       </header>
 
-      <div className="status-stack" role="group" aria-label="Agent status">
-        <span className={`connection-pill ${state.connection}`}>
-          {connectionLabel(state.connection)}
-        </span>
-        <span className="status-copy">
-          <strong>{statusLabel(description.status)}</strong>
-          <small>{description.model}</small>
-        </span>
-      </div>
-
       {hasUnseenContent && (
         <button
           type="button"
@@ -385,13 +375,18 @@ export function ConversationView({
           onMutateQueue={onMutateQueue}
         />
         {description.pendingUserInput !== null && (
-          <QuestionsPanel
-            key={`${flowId}:${description.pendingUserInput.callId}`}
-            pendingInput={description.pendingUserInput}
-            disabled={areMutationsDisabled}
-            isSubmitting={state.pendingCommand?.command.kind === "answer"}
-            onSubmit={onSubmitAnswers}
-          />
+          <>
+            <QuestionsPanel
+              key={`${flowId}:${description.pendingUserInput.callId}`}
+              pendingInput={description.pendingUserInput}
+              disabled={areMutationsDisabled}
+              isSubmitting={state.pendingCommand?.command.kind === "answer"}
+              onSubmit={onSubmitAnswers}
+            />
+            <div className="composer-status-only">
+              <AgentRuntimeStatus state={state} />
+            </div>
+          </>
         )}
         {description.pendingUserInput === null && (
           <label className="plan-mode">
@@ -424,17 +419,20 @@ export function ConversationView({
               }}
               onKeyDown={handleComposerKeyDown}
             />
-            <button
-              type="button"
-              disabled={areMutationsDisabled || state.composer.trim() === ""}
-              onClick={onSubmit}
-            >
-              {state.pendingCommand?.command.kind === "send"
-                ? "Sending…"
-                : state.isPlanMode
-                  ? "Create plan"
-                  : "Send"}
-            </button>
+            <div className="composer-actions">
+              <AgentRuntimeStatus state={state} />
+              <button
+                type="button"
+                disabled={areMutationsDisabled || state.composer.trim() === ""}
+                onClick={onSubmit}
+              >
+                {state.pendingCommand?.command.kind === "send"
+                  ? "Sending…"
+                  : state.isPlanMode
+                    ? "Create plan"
+                    : "Send"}
+              </button>
+            </div>
           </div>
         )}
         <div className="composer-footer">
@@ -449,6 +447,20 @@ export function ConversationView({
         </div>
       </section>
     </main>
+  );
+}
+
+function AgentRuntimeStatus({ state }: { state: ActiveConversationState }) {
+  return (
+    <div className="status-stack" role="group" aria-label="Agent status">
+      <span className={`connection-pill ${state.connection}`}>
+        {connectionLabel(state.connection)}
+      </span>
+      <span className="status-copy">
+        <strong>{statusLabel(state.snapshot.description.status)}</strong>
+        <small>{state.snapshot.description.model}</small>
+      </span>
+    </div>
   );
 }
 

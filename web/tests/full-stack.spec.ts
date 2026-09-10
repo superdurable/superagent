@@ -30,23 +30,23 @@ test("renders chronological transient activity and durable queue interactions", 
   await startAgent(page);
   expect(snapshots).toEqual([200]);
 
-  const shellBox = await page.locator(".conversation-shell").boundingBox();
-  const statusBox = await page
-    .getByRole("group", { name: "Agent status" })
+  const composerCard = page.locator(".composer-card");
+  const agentStatus = page.getByRole("group", { name: "Agent status" });
+  const statusBox = await agentStatus.boundingBox();
+  const composerCardBox = await composerCard.boundingBox();
+  const sendBox = await page
+    .getByRole("button", { name: "Send" })
     .boundingBox();
-  const composerCardBox = await page.locator(".composer-card").boundingBox();
-  expect(shellBox).not.toBeNull();
   expect(statusBox).not.toBeNull();
   expect(composerCardBox).not.toBeNull();
-  await expect(page.getByRole("group", { name: "Agent status" })).toHaveCSS(
-    "position",
-    "fixed",
-  );
-  expect(
-    Math.abs((shellBox?.x ?? 0) - (statusBox?.x ?? 0)),
-  ).toBeLessThanOrEqual(1);
+  expect(sendBox).not.toBeNull();
+  await expect(agentStatus).toHaveCSS("position", "static");
+  await expect(
+    composerCard.getByRole("group", { name: "Agent status" }),
+  ).toBeVisible();
+  expect(statusBox?.x).toBeGreaterThanOrEqual(composerCardBox?.x ?? 0);
   expect((statusBox?.y ?? 0) + (statusBox?.height ?? 0)).toBeLessThan(
-    composerCardBox?.y ?? 0,
+    sendBox?.y ?? 0,
   );
 
   const composer = page.getByRole("textbox", { name: "Message" });
@@ -306,13 +306,19 @@ test("preserves a reading position and jumps to new content on a narrow screen",
   const status = page.getByRole("group", { name: "Agent status" });
   const initialStatusBox = await status.boundingBox();
   const initialComposerBox = await page.locator(".composer-card").boundingBox();
+  const initialSendBox = await page
+    .getByRole("button", { name: "Send" })
+    .boundingBox();
   expect(initialStatusBox).not.toBeNull();
   expect(initialComposerBox).not.toBeNull();
-  await expect(status).toHaveCSS("position", "fixed");
-  expect(initialStatusBox?.x).toBe(10);
+  expect(initialSendBox).not.toBeNull();
+  await expect(status).toHaveCSS("position", "static");
+  expect(initialStatusBox?.x).toBeGreaterThanOrEqual(
+    initialComposerBox?.x ?? 0,
+  );
   expect(
     (initialStatusBox?.y ?? 0) + (initialStatusBox?.height ?? 0),
-  ).toBeLessThan(initialComposerBox?.y ?? 0);
+  ).toBeLessThan(initialSendBox?.y ?? 0);
 
   await page.evaluate(() => {
     window.scrollTo(0, 0);
@@ -368,10 +374,14 @@ test("preserves a reading position and jumps to new content on a narrow screen",
     .boundingBox();
   expect(statusWhileReadingBox).not.toBeNull();
   expect(composerWhileReadingBox).not.toBeNull();
-  expect(statusWhileReadingBox?.x).toBe(10);
+  expect(statusWhileReadingBox?.x).toBeGreaterThanOrEqual(
+    composerWhileReadingBox?.x ?? 0,
+  );
   expect(
     (statusWhileReadingBox?.y ?? 0) + (statusWhileReadingBox?.height ?? 0),
-  ).toBeLessThan(composerWhileReadingBox?.y ?? 0);
+  ).toBeLessThanOrEqual(
+    (composerWhileReadingBox?.y ?? 0) + (composerWhileReadingBox?.height ?? 0),
+  );
 
   await page.getByRole("button", { name: "Jump to latest message" }).click();
   await expect

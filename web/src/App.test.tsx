@@ -482,6 +482,12 @@ describe("App", () => {
 
     const composer = await screen.findByLabelText("Message composer");
     const queue = within(composer).getByLabelText("Message queue");
+    const agentStatus = within(composer).getByRole("group", {
+      name: "Agent status",
+    });
+    const sendButton = within(composer).getByRole("button", { name: "Send" });
+    expect(agentStatus.parentElement).toHaveClass("composer-actions");
+    expect(agentStatus.nextElementSibling).toBe(sendButton);
     expect(within(queue).getByText("Follow up")).toBeInTheDocument();
     const plan = screen.getByLabelText("Agent plan");
     expect(plan.closest("aside")).not.toBeNull();

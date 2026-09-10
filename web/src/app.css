@@ -303,20 +303,14 @@ button.secondary {
   overflow-wrap: anywhere;
 }
 .status-stack {
-  position: fixed;
-  z-index: 11;
-  bottom: calc(var(--composer-height) + 32px);
-  left: max(16px, calc((100vw - 1220px) / 2));
   display: flex;
-  max-width: min(360px, calc(100vw - 32px));
+  min-width: 0;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+  gap: 6px;
+  padding: 5px 7px;
   border: 1px solid #dce2ea;
-  border-radius: 14px;
-  background: rgb(255 255 255 / 94%);
-  box-shadow: 0 10px 30px rgb(34 45 66 / 14%);
-  backdrop-filter: blur(10px);
+  border-radius: 8px;
+  background: #f7f9fb;
 }
 .status-copy {
   display: grid;
@@ -329,8 +323,12 @@ button.secondary {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.status-copy strong {
+  font-size: 11px;
+}
 .status-stack small {
   color: #667085;
+  font-size: 10px;
 }
 .jump-to-latest {
   position: fixed;
@@ -355,11 +353,11 @@ button.secondary {
   background: #f7f8ff;
 }
 .connection-pill {
-  padding: 5px 9px;
+  padding: 3px 6px;
   border-radius: 999px;
   color: #17633f;
   background: #e8f7ef;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -907,7 +905,7 @@ pre {
 }
 .composer-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 190px;
   gap: 10px;
   align-items: end;
 }
@@ -915,8 +913,21 @@ pre {
   min-height: 76px;
   resize: vertical;
 }
-.composer-row > button {
-  min-width: 112px;
+.composer-actions {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.composer-actions > button {
+  width: 100%;
+}
+.composer-status-only {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.composer-status-only .status-stack {
+  width: min(230px, 100%);
 }
 .composer-footer {
   justify-content: space-between;
@@ -957,14 +968,9 @@ pre {
   .conversation-header h1 {
     font-size: 25px;
   }
-  .status-stack {
-    bottom: calc(var(--composer-height) + 26px);
-    left: 10px;
-    max-width: calc(100vw - 20px);
-  }
   .jump-to-latest {
     right: 10px;
-    bottom: calc(var(--composer-height) + 94px);
+    bottom: calc(var(--composer-height) + 26px);
     left: auto;
     transform: none;
   }
@@ -1010,8 +1016,11 @@ pre {
   .composer-row textarea {
     min-height: 60px;
   }
-  .composer-row > button {
-    min-width: 100px;
+  .composer-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .composer-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
   .composer-footer {
     align-items: flex-end;
