@@ -14,6 +14,16 @@ npm install @superdurable/superagent-ui react
 React 18.2 and React 19 are supported through the package's peer dependency.
 Import the stylesheet once from the consuming application:
 
+Each GitHub Release also provides a versioned npm-compatible archive. Use the
+matching version when the npm registry package is unavailable:
+
+```bash
+npm install https://github.com/superdurable/superagent/releases/download/v0.1.0/superdurable-superagent-ui-0.1.0.tgz react
+```
+
+The installed package keeps the name `@superdurable/superagent-ui`, so imports
+remain unchanged.
+
 ```tsx
 import {
   ConversationComposer,
