@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Request,
+} from "@playwright/test";
 
 import {
   EventStream,
@@ -299,7 +305,29 @@ test("prioritizes a first message while another Agent tab is polling", async ({
   await startAgent(page);
   const secondPage = await context.newPage();
   try {
+    const pendingLiveReads = new Set<Request>();
+    let didSendAfterLiveReadsSettled = false;
+    const isLiveRead = (request: Request) => {
+      const path = new URL(request.url()).pathname;
+      return (
+        path === "/products/ai-agent/events" ||
+        path === "/products/ai-agent/interaction-status"
+      );
+    };
+    secondPage.on("request", (request) => {
+      if (isLiveRead(request)) pendingLiveReads.add(request);
+      if (new URL(request.url()).pathname === "/products/ai-agent/messages") {
+        didSendAfterLiveReadsSettled = pendingLiveReads.size === 0;
+      }
+    });
+    secondPage.on("requestfinished", (request) => {
+      pendingLiveReads.delete(request);
+    });
+    secondPage.on("requestfailed", (request) => {
+      pendingLiveReads.delete(request);
+    });
     await startAgent(secondPage);
+    await expect.poll(() => pendingLiveReads.size).toBeGreaterThan(0);
     const message = `multi-tab-first-message-${crypto.randomUUID()}`;
     const accepted = secondPage.waitForResponse(
       (response) =>
@@ -311,6 +339,7 @@ test("prioritizes a first message while another Agent tab is polling", async ({
     await composer.fill(message);
     await secondPage.getByRole("button", { name: "Send" }).click();
     await accepted;
+    expect(didSendAfterLiveReadsSettled).toBe(true);
 
     await secondPage.reload();
     await expect(secondPage.getByText(message, { exact: true })).toBeVisible();

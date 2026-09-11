@@ -57,11 +57,12 @@ describe("ConversationComposer", () => {
   });
 
   it("separates input and submit loading states and rejects blank submit", () => {
+    const onSubmit = vi.fn();
     const { rerender } = render(
       <ConversationComposer
         inputDisabled
         onChange={vi.fn()}
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
         submitDisabled={false}
         value="Ready"
       />,
@@ -72,10 +73,28 @@ describe("ConversationComposer", () => {
     rerender(
       <ConversationComposer
         onChange={vi.fn()}
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
+        submitDisabled
+        value="Ready"
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("textbox"), {
+      key: "Enter",
+      ctrlKey: true,
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    rerender(
+      <ConversationComposer
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
         value="   "
       />,
     );
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("textbox"), {
+      key: "Enter",
+      ctrlKey: true,
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

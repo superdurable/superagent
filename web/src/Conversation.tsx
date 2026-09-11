@@ -62,6 +62,11 @@ interface ConversationProps {
   onStartAnother: () => void;
 }
 
+interface LiveReadSession {
+  controller: AbortController;
+  settled: Promise<void>;
+}
+
 export function Conversation({
   flowId,
   builtInTools,
@@ -78,11 +83,15 @@ export function Conversation({
     [EventStream.ASSISTANT]: undefined,
     [EventStream.ACTIVITY]: undefined,
   });
-  const streamController = useRef<AbortController | null>(null);
-  const interactionController = useRef<AbortController | null>(null);
-  const cancelLiveReads = useCallback(() => {
-    streamController.current?.abort();
-    interactionController.current?.abort();
+  const streamSession = useRef<LiveReadSession | null>(null);
+  const interactionSession = useRef<LiveReadSession | null>(null);
+  const cancelLiveReads = useCallback(async () => {
+    const sessions = [streamSession.current, interactionSession.current].filter(
+      (session): session is LiveReadSession => session !== null,
+    );
+    for (const session of sessions) session.controller.abort();
+    await Promise.all(sessions.map((session) => session.settled));
+    await waitForNetworkCancellation();
   }, []);
   const nextHistoryRequestID = useRef(1);
   const isTerminal = state.kind === "ready" && state.lifecycle === "terminal";
@@ -145,7 +154,6 @@ export function Conversation({
   useEffect(() => {
     if (subscriptionGeneration < 0 || !canOpenLiveReads) return;
     const controller = new AbortController();
-    streamController.current = controller;
     let isCurrent = true;
     const poll = async (stream: EventStream): Promise<void> => {
       let resumeToken = resumeTokens.current[stream];
@@ -200,12 +208,16 @@ export function Conversation({
         }
       }
     };
-    for (const stream of eventStreams) void poll(stream);
+    const session: LiveReadSession = {
+      controller,
+      settled: Promise.all(eventStreams.map(poll)).then(() => undefined),
+    };
+    streamSession.current = session;
     return () => {
       isCurrent = false;
       controller.abort();
-      if (streamController.current === controller) {
-        streamController.current = null;
+      if (streamSession.current === session) {
+        streamSession.current = null;
       }
     };
   }, [
@@ -222,7 +234,6 @@ export function Conversation({
   useEffect(() => {
     if (interactionStatus === null) return;
     const controller = new AbortController();
-    interactionController.current = controller;
     let isCurrent = true;
     const wait = async (): Promise<void> => {
       let expectedStatus =
@@ -259,12 +270,16 @@ export function Conversation({
         }
       }
     };
-    void wait();
+    const session: LiveReadSession = {
+      controller,
+      settled: wait(),
+    };
+    interactionSession.current = session;
     return () => {
       isCurrent = false;
       controller.abort();
-      if (interactionController.current === controller) {
-        interactionController.current = null;
+      if (interactionSession.current === session) {
+        interactionSession.current = null;
       }
     };
   }, [flowId, interactionStatus, subscriptionGeneration, requestSnapshot]);
@@ -485,7 +500,7 @@ function useSnapshotCoordinator(
 function useCommandRunner(
   dispatch: Dispatch<ConversationAction>,
   requestSnapshot: (trigger: SnapshotTrigger) => void,
-  cancelLiveReads: () => void,
+  cancelLiveReads: () => Promise<void>,
 ) {
   const nextID = useRef(1);
   const activeController = useRef<AbortController | null>(null);
@@ -504,9 +519,11 @@ function useCommandRunner(
       const id = nextID.current++;
       const controller = new AbortController();
       activeController.current = controller;
-      cancelLiveReads();
       dispatch({ type: "command-started", id, command });
-      void operation(controller.signal)
+      void cancelLiveReads()
+        .then(() =>
+          controller.signal.aborted ? undefined : operation(controller.signal),
+        )
         .then(() => {
           if (!controller.signal.aborted) {
             dispatch({ type: "command-succeeded", id });
@@ -638,5 +655,11 @@ async function waitBeforeNextPoll(signal: AbortSignal): Promise<void> {
     };
     timeout = window.setTimeout(finish, 250);
     signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+async function waitForNetworkCancellation(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
   });
 }

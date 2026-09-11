@@ -420,6 +420,7 @@ describe("App", () => {
 
   it("releases the idle durable wait before sending the first message", async () => {
     let isWaitAborted = false;
+    let isWaitSettled = false;
     vi.mocked(waitForAgentInteractionStatus).mockImplementationOnce(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
@@ -427,7 +428,10 @@ describe("App", () => {
             "abort",
             () => {
               isWaitAborted = true;
-              reject(new DOMException("Aborted", "AbortError"));
+              queueMicrotask(() => {
+                isWaitSettled = true;
+                reject(new DOMException("Aborted", "AbortError"));
+              });
             },
             { once: true },
           );
@@ -435,6 +439,7 @@ describe("App", () => {
     );
     vi.mocked(sendMessage).mockImplementationOnce(() => {
       expect(isWaitAborted).toBe(true);
+      expect(isWaitSettled).toBe(true);
       return Promise.resolve({ accepted: true });
     });
     window.history.replaceState({}, "", "/?flowId=flow-existing");
@@ -465,6 +470,9 @@ describe("App", () => {
 
     fireEvent.change(composer, { target: { value: "first" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
     act(() => {
       command.resolve({ accepted: true });
     });
@@ -472,7 +480,9 @@ describe("App", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Syncing durable state…",
     );
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     fireEvent.change(composer, { target: { value: "draft while syncing" } });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(composer).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     fireEvent.keyDown(composer, { key: "Enter", ctrlKey: true });

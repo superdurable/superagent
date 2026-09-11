@@ -40,7 +40,14 @@ export function ConversationComposer({
   status,
 }: ConversationComposerProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!isSubmitShortcut(event, shortcut)) return;
+    if (
+      !isSubmitShortcut(event, shortcut) ||
+      inputDisabled ||
+      submitDisabled ||
+      value.trim() === ""
+    ) {
+      return;
+    }
     event.preventDefault();
     onSubmit();
   };

@@ -182,4 +182,4 @@ Dex result and visibility contracts and contains no active Agent description.
   required state from Dex.
 - Refresh lists only the configured recent tail of each best-effort Stream.
   Live polling resumes from the newest returned token. Hidden pages and command
-  submission cancel live reads.
+  submission cancel live reads. Commands wait for canceled reads to settle.
