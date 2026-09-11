@@ -251,6 +251,7 @@ test("accepts the first message after Start and retains it across refresh", asyn
     (response) =>
       response.status() === 202 &&
       new URL(response.url()).pathname === "/products/ai-agent/messages",
+    { timeout: 5_000 },
   );
   const composer = page.getByRole("textbox", { name: "Message" });
   await composer.fill(message);
@@ -259,6 +260,35 @@ test("accepts the first message after Start and retains it across refresh", asyn
 
   await page.reload();
   await expect(page.getByText(message, { exact: true })).toBeVisible();
+});
+
+test("recovers a committed first message when refresh loses its response", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+
+  const sendPath = "/products/ai-agent/messages";
+  let markCommitted: () => void = () => undefined;
+  const committed = new Promise<void>((resolve) => {
+    markCommitted = resolve;
+  });
+  await page.route(`**${sendPath}`, async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(202);
+    await route.abort("failed");
+    markCommitted();
+  });
+
+  const message = `lost-first-response-${crypto.randomUUID()}`;
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill(message);
+  await page.getByRole("button", { name: "Send" }).click();
+  await committed;
+
+  await page.reload();
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await page.unroute(`**${sendPath}`);
 });
 
 test("keeps mutations gated until the post-command Snapshot completes", async ({
