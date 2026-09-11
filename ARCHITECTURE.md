@@ -167,7 +167,9 @@ without covering the timeline.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot
-replace newer durable state.
+replace newer durable state. Hidden pages release live reads. A visible page
+cancels its Stream and Attribute waits before sending a mutation, so durable
+commands are not queued behind browser HTTP connection limits.
 Message send displays one local, non-actionable `Submitting` item. Snapshot
 reconciliation replaces it with the queued entry and its Dex-generated message
 ID. Failure restores its composer text and plan mode. The composer retains

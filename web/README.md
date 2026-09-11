@@ -11,7 +11,8 @@ remain in this application.
 
 The application restores a Flow with one generated Snapshot request, lists the
 configured recent tail of each Stream, and resumes generated event polls from
-the newest returned token.
+the newest returned token. Hidden pages and command submission release live
+requests.
 
 ## Commands
 
@@ -58,6 +59,8 @@ queued messages, steered messages, and Run identity from `/snapshot`. Three
 cancellable `/events/recent` reads recover a bounded Stream tail before
 `/events` polls add assistant text, reasoning summaries, and structured
 activity. Disconnects and command completion reconcile with another Snapshot.
+Every command cancels live polls before issuing its mutation request so browser
+connection limits cannot delay durable acceptance.
 Queue mutations optimistically update by stable message ID and then reconcile.
 The timeline follows the latest content until the user scrolls upward. The
 queue starts expanded as a height-bounded list of truncated one-line messages

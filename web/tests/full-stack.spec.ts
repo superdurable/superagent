@@ -291,6 +291,34 @@ test("recovers a committed first message when refresh loses its response", async
   await page.unroute(`**${sendPath}`);
 });
 
+test("prioritizes a first message while another Agent tab is polling", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+  const secondPage = await context.newPage();
+  try {
+    await startAgent(secondPage);
+    const message = `multi-tab-first-message-${crypto.randomUUID()}`;
+    const accepted = secondPage.waitForResponse(
+      (response) =>
+        response.status() === 202 &&
+        new URL(response.url()).pathname === "/products/ai-agent/messages",
+      { timeout: 5_000 },
+    );
+    const composer = secondPage.getByRole("textbox", { name: "Message" });
+    await composer.fill(message);
+    await secondPage.getByRole("button", { name: "Send" }).click();
+    await accepted;
+
+    await secondPage.reload();
+    await expect(secondPage.getByText(message, { exact: true })).toBeVisible();
+  } finally {
+    await secondPage.close();
+  }
+});
+
 test("keeps mutations gated until the post-command Snapshot completes", async ({
   page,
 }) => {

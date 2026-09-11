@@ -347,6 +347,29 @@ describe("App", () => {
     expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it("suspends live reads while hidden and resumes them when visible", async () => {
+    const visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("hidden");
+    try {
+      window.history.replaceState({}, "", "/?flowId=flow-existing");
+      render(<App />);
+      await screen.findByRole("heading", { name: "SuperAgent" });
+
+      expect(listRecentEvents).not.toHaveBeenCalled();
+      expect(waitForAgentInteractionStatus).not.toHaveBeenCalled();
+
+      visibility.mockReturnValue("visible");
+      fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => {
+        expect(listRecentEvents).toHaveBeenCalledTimes(3);
+        expect(waitForAgentInteractionStatus).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
   it("shows a terminal Flow result without opening live subscriptions", async () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       runId: "run-terminal",
@@ -393,6 +416,40 @@ describe("App", () => {
     expect(composer).toHaveFocus();
     fireEvent.change(composer, { target: { value: "next message" } });
     expect(composer).toHaveValue("next message");
+  });
+
+  it("releases the idle durable wait before sending the first message", async () => {
+    let isWaitAborted = false;
+    vi.mocked(waitForAgentInteractionStatus).mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              isWaitAborted = true;
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    vi.mocked(sendMessage).mockImplementationOnce(() => {
+      expect(isWaitAborted).toBe(true);
+      return Promise.resolve({ accepted: true });
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message" });
+    await waitFor(() => {
+      expect(waitForAgentInteractionStatus).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(composer, { target: { value: "first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("gates mutations until the post-command Snapshot succeeds", async () => {
@@ -454,6 +511,11 @@ describe("App", () => {
   it("renders every Activity event inside the chronological conversation", async () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        interactionStatus: AgentInteractionStatus.SUBMITTED,
+      },
       history: {
         messages: [
           message(1, "user", "Start work", "2026-09-03T00:00:00Z"),

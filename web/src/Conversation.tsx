@@ -9,6 +9,7 @@ import {
   useEffect,
   useReducer,
   useRef,
+  useState,
   type Dispatch,
 } from "react";
 
@@ -71,15 +72,26 @@ export function Conversation({
     undefined,
     initialConversationState,
   );
+  const isDocumentVisible = useDocumentVisibility();
   const resumeTokens = useRef<Record<EventStream, ResumeToken | undefined>>({
     [EventStream.REASONING]: undefined,
     [EventStream.ASSISTANT]: undefined,
     [EventStream.ACTIVITY]: undefined,
   });
+  const streamController = useRef<AbortController | null>(null);
+  const interactionController = useRef<AbortController | null>(null);
+  const cancelLiveReads = useCallback(() => {
+    streamController.current?.abort();
+    interactionController.current?.abort();
+  }, []);
   const nextHistoryRequestID = useRef(1);
   const isTerminal = state.kind === "ready" && state.lifecycle === "terminal";
   const requestSnapshot = useSnapshotCoordinator(flowId, dispatch, isTerminal);
-  const runCommand = useCommandRunner(dispatch, requestSnapshot);
+  const runCommand = useCommandRunner(
+    dispatch,
+    requestSnapshot,
+    cancelLiveReads,
+  );
 
   const historyRequest = state.kind === "ready" ? state.historyRequest : null;
   useEffect(() => {
@@ -113,6 +125,12 @@ export function Conversation({
     };
   }, [flowId, historyRequest]);
 
+  const canOpenLiveReads =
+    state.kind === "ready" &&
+    state.lifecycle === "active" &&
+    state.pendingCommand === null &&
+    state.reconciliation === "open" &&
+    isDocumentVisible;
   const subscriptionGeneration =
     state.kind === "ready" && state.lifecycle === "active"
       ? state.subscriptionGeneration
@@ -125,8 +143,9 @@ export function Conversation({
     resetResumeTokens(resumeTokens.current);
   }, [flowId, activeRunID]);
   useEffect(() => {
-    if (subscriptionGeneration < 0) return;
+    if (subscriptionGeneration < 0 || !canOpenLiveReads) return;
     const controller = new AbortController();
+    streamController.current = controller;
     let isCurrent = true;
     const poll = async (stream: EventStream): Promise<void> => {
       let resumeToken = resumeTokens.current[stream];
@@ -185,16 +204,25 @@ export function Conversation({
     return () => {
       isCurrent = false;
       controller.abort();
+      if (streamController.current === controller) {
+        streamController.current = null;
+      }
     };
-  }, [flowId, activeRunID, subscriptionGeneration, requestSnapshot]);
+  }, [
+    flowId,
+    activeRunID,
+    canOpenLiveReads,
+    subscriptionGeneration,
+    requestSnapshot,
+  ]);
 
-  const interactionStatus =
-    state.kind === "ready" && state.lifecycle === "active"
-      ? state.snapshot.description.interactionStatus
-      : null;
+  const interactionStatus = canOpenLiveReads
+    ? state.snapshot.description.interactionStatus
+    : null;
   useEffect(() => {
     if (interactionStatus === null) return;
     const controller = new AbortController();
+    interactionController.current = controller;
     let isCurrent = true;
     const wait = async (): Promise<void> => {
       let expectedStatus =
@@ -235,6 +263,9 @@ export function Conversation({
     return () => {
       isCurrent = false;
       controller.abort();
+      if (interactionController.current === controller) {
+        interactionController.current = null;
+      }
     };
   }, [flowId, interactionStatus, subscriptionGeneration, requestSnapshot]);
 
@@ -454,6 +485,7 @@ function useSnapshotCoordinator(
 function useCommandRunner(
   dispatch: Dispatch<ConversationAction>,
   requestSnapshot: (trigger: SnapshotTrigger) => void,
+  cancelLiveReads: () => void,
 ) {
   const nextID = useRef(1);
   const activeController = useRef<AbortController | null>(null);
@@ -472,6 +504,7 @@ function useCommandRunner(
       const id = nextID.current++;
       const controller = new AbortController();
       activeController.current = controller;
+      cancelLiveReads();
       dispatch({ type: "command-started", id, command });
       void operation(controller.signal)
         .then(() => {
@@ -496,8 +529,24 @@ function useCommandRunner(
           }
         });
     },
-    [dispatch, requestSnapshot],
+    [cancelLiveReads, dispatch, requestSnapshot],
   );
+}
+
+function useDocumentVisibility(): boolean {
+  const [isVisible, setIsVisible] = useState(
+    () => document.visibilityState === "visible",
+  );
+  useEffect(() => {
+    const update = () => {
+      setIsVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  return isVisible;
 }
 
 function liveUpdate(stream: EventStream, event: StreamEvent): LiveUpdate {

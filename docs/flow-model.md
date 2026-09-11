@@ -180,5 +180,6 @@ Dex result and visibility contracts and contains no active Agent description.
   changes.
 - BlobCache and Streams may disappear. A replacement Worker reconstructs all
   required state from Dex.
-- Refresh lists only the configured recent tail of each best-effort Stream,
-  then resumes long polling from the newest returned resume token.
+- Refresh lists only the configured recent tail of each best-effort Stream.
+  Live polling resumes from the newest returned token. Hidden pages and command
+  submission cancel live reads.
