@@ -105,9 +105,9 @@ separate artifacts so either deployment can be released independently.
 ## npm releases
 
 The `npm-release.yml` workflow publishes `@superdurable/superagent-ui` from a
-strict `vX.Y.Z` tag on `main`. Before creating the tag, update the version in
-`web/packages/superagent-ui/package.json`, the Web dependency in
-`web/package.json`, and `web/package-lock.json`.
+strict `vX.Y.Z` tag on `main`. The release workflows derive the package version
+from the tag in the temporary runner checkout. The committed workspace version
+does not require a manual release bump.
 
 The npm package must trust the `superdurable/superagent` GitHub repository with
 workflow filename `npm-release.yml`, no environment, and direct `npm publish`
@@ -119,7 +119,7 @@ The `github-release-ui.yml` workflow attaches the matching npm-compatible
 archive to every published GitHub Release. Its manual dispatch repairs an
 existing Release only when a missing asset is generated, or when the existing
 asset is byte-for-byte identical. It never overwrites a different release
-artifact.
+artifact. The archive package version and filename both use the release tag.
 
 Before committing, run the full applicable gates and `git diff --check`. Do not
 bypass hooks. Inspect the staged diff, commit with a meaningful message, verify
