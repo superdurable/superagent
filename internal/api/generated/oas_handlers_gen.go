@@ -282,7 +282,9 @@ func (s *Server) handleDeleteQueuedMessageRequest(args [0]string, argsEscaped bo
 
 // handleExecutePlanRequest handles executePlan operation.
 //
-// Execute one exact durable plan revision.
+// Accepted only when the Agent is waiting for a message, the requested Plan revision is current, and
+// no pending input, approval, timer, queued message, steering, or execution request blocks it. A
+// conflicting boundary or stale revision returns 409.
 //
 // POST /products/ai-agent/plans/execute
 func (s *Server) handleExecutePlanRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -450,7 +452,7 @@ func (s *Server) handleGetAgentSnapshotRequest(args [0]string, argsEscaped bool,
 
 // handleGetArchivedMessagesRequest handles getArchivedMessages operation.
 //
-// Read one exact archived ten-message chunk.
+// Read one immutable archived ten-message chunk.
 //
 // GET /products/ai-agent/archived-messages
 func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -483,7 +485,7 @@ func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bo
 		mreq := middleware.Request{
 			Context:          ctx,
 			OperationName:    GetArchivedMessagesOperation,
-			OperationSummary: "Read one exact archived ten-message chunk",
+			OperationSummary: "Read one immutable archived ten-message chunk",
 			OperationID:      "getArchivedMessages",
 			Body:             nil,
 			RawBody:          rawBody,

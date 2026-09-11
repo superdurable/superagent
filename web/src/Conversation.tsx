@@ -187,6 +187,8 @@ export function Conversation({
               : AgentInteractionStatus.WAITING;
           if (result.status === AgentInteractionStatus.WAITING) {
             requestSnapshot({ blocking: true });
+          } else {
+            dispatch({ type: "interaction-submitted" });
           }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;

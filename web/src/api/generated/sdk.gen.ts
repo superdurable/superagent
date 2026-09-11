@@ -94,7 +94,7 @@ export const getAgentSnapshot = <ThrowOnError extends boolean = true>(options: O
 });
 
 /**
- * Read one exact archived ten-message chunk
+ * Read one immutable archived ten-message chunk
  */
 export const getArchivedMessages = <ThrowOnError extends boolean = true>(options: Options<GetArchivedMessagesData, ThrowOnError>): RequestResult<GetArchivedMessagesResponses, GetArchivedMessagesErrors, ThrowOnError, 'data'> => (options.client ?? client).get<GetArchivedMessagesResponses, GetArchivedMessagesErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',
@@ -139,6 +139,8 @@ export const steerQueuedMessage = <ThrowOnError extends boolean = true>(options:
 
 /**
  * Execute one exact durable plan revision
+ *
+ * Accepted only when the Agent is waiting for a message, the requested Plan revision is current, and no pending input, approval, timer, queued message, steering, or execution request blocks it. A conflicting boundary or stale revision returns 409.
  */
 export const executePlan = <ThrowOnError extends boolean = true>(options: Options<ExecutePlanData, ThrowOnError>): RequestResult<ExecutePlanResponses, ExecutePlanErrors, ThrowOnError, 'data'> => (options.client ?? client).post<ExecutePlanResponses, ExecutePlanErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',

@@ -36,10 +36,12 @@ not load the skill at application runtime.
 
 ## Snapshot boundary
 
-`GET /products/ai-agent/snapshot` is the only durable browser read model. Do not
-add parallel durable read models. Queue deletion and steering accept only
-message IDs from a Snapshot. Application history means `CurrentMessages` and
-`ArchivedMessages`, never Dex execution history.
+`GET /products/ai-agent/snapshot` is the only durable current-interaction and
+reconciliation read model. Do not add parallel Agent state read models. The
+archive endpoint is an on-demand continuation over immutable application
+history. Queue deletion and steering accept only message IDs from a Snapshot.
+Application history means `CurrentMessages` and `ArchivedMessages`, never Dex
+execution history.
 
 ## Dex application modeling
 
@@ -179,6 +181,8 @@ message IDs from a Snapshot. Application history means `CurrentMessages` and
   constraints, and rationale into separate sentences.
 - Do not introduce `NormalizeXyz` identifiers. Name the concrete operation,
   such as `ValidateAndSortSelections`, `TrimWhitespace`, or `CanonicalizeURL`.
+- Any API retained solely for tests must include `ForTestOnly` in its identifier.
+  Prefer placing it in a test-only source file when production code does not need it.
 - Reuse an existing repository or public API term exactly. Do not invent a
   synonym for an established term such as instance, name, message, or
   definition.

@@ -32,7 +32,7 @@ import (
 
 // AgentService is the command and live-event surface consumed by HTTP.
 type AgentService interface {
-	Start(context.Context, agent.FlowID, agent.AgentConfig) (agent.RunID, error)
+	Start(context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)
 	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
 	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
 	Snapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
@@ -173,7 +173,7 @@ func (handler *Handler) StartAgent(ctx context.Context, request *transportapi.St
 	if err := config.Validate(); err != nil {
 		return startProblem(problemBadRequest(err)), nil
 	}
-	if _, err := handler.agent.Start(ctx, flowID, config); err != nil {
+	if _, err := handler.agent.Start(ctx, flowID, agent.StartRequest{Config: config}); err != nil {
 		return handler.startError(ctx, flowID, err), nil
 	}
 	return &transportapi.StartAgentResponse{FlowId: request.FlowId}, nil
@@ -1073,13 +1073,15 @@ func (handler *Handler) answerQuestionsError(
 
 func (handler *Handler) executePlanError(ctx context.Context, flowID agent.FlowID, err error) transportapi.ExecutePlanRes {
 	handler.logFailure(ctx, flowID, err)
-	problem, kind := commandProblem(err)
-	switch kind {
+	switch classifyFailure(err) {
 	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
 		return (*transportapi.ExecutePlanNotFound)(&problem)
 	case failureConflict:
+		problem := newProblem(409, "Conflict", "the Agent is not at an executable wait or the Plan revision changed")
 		return (*transportapi.ExecutePlanConflict)(&problem)
 	default:
+		problem := newProblem(503, "Service Unavailable", "the command could not be completed")
 		return (*transportapi.ExecutePlanServiceUnavailable)(&problem)
 	}
 }

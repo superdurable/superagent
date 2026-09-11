@@ -37,6 +37,30 @@ The Go process never embeds or serves frontend assets. `web/dist` reads its API
 origin from `config.json`, so frontend deployments can change independently of
 the backend.
 
+The reusable Go package is available at
+`github.com/superdurable/superagent/agent`. An embedding application supplies
+the provider-neutral model and tool boundaries, registers `agent.NewFlow(...)`
+with its Dex Worker, and uses `agent.NewClient(...)` for typed commands,
+Snapshots, history, and live events. The reference API process uses this same
+public package; it does not copy or wrap the Agent loop.
+
+The optional `github.com/superdurable/superagent/model` package exposes the
+built-in provider router, provider adapters, and process-memory credential
+store. Embedders can use it without importing SuperAgent internals.
+
+Embedding applications start a non-reusable `FlowID` with `Client.Start` and a
+typed `StartRequest`. `RuntimeMetadata` is an optional JSON object of at most
+16 KiB for trusted routing data. It is persisted across Worker replacement and
+passed only to tool implementations, never to models, browser Snapshots, or
+Streams. Do not put secrets in it.
+
+Commands use Dex transactional RPC semantics. Callers do not create command or
+message IDs. Snapshot exposes Dex Channel message IDs for queued-message edit,
+delete, and steering. After an ambiguous network result, clients read Snapshot
+to reconcile current durable state instead of consulting stored command
+receipts. `Client.ArchivedMessages` reads one immutable history page without
+loading the current Agent interaction state.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph
 and resource model.
@@ -124,6 +148,9 @@ Run the complete credential-free quality gate:
 ```bash
 make check
 ```
+
+`make test-public-api` also compiles a fixture as a separate Go module. This
+guards the public import boundary independently of access to `internal` code.
 
 Run real-server and provider verification explicitly:
 

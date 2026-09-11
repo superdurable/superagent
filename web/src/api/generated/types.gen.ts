@@ -636,7 +636,7 @@ export type GetArchivedMessagesError = GetArchivedMessagesErrors[keyof GetArchiv
 
 export type GetArchivedMessagesResponses = {
     /**
-     * The archived chunk immediately before the boundary.
+     * One immutable history continuation before the boundary.
      */
     200: HistoryPage;
 };

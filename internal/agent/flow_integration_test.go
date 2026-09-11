@@ -30,6 +30,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,8 +52,12 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	config.CompactionTriggerFraction = 0.60
 	config.CompactionKeepFraction = 0.20
 	config.MessageRetentionLimit = 20
+	runtimeMetadata := MustJSONObject(`{"resource_id":"resource-1","tenant":"integration"}`)
 
-	runID, err := environment.agent.Start(t.Context(), flowID, config)
+	runID, err := environment.agent.Start(t.Context(), flowID, StartRequest{
+		Config:          config,
+		RuntimeMetadata: runtimeMetadata,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +100,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
 
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +108,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if approval.ToolName != integrationToolName {
 		t.Fatalf("pending tool = %q", approval.ToolName)
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	recoveredApproval := waitForPendingApproval(t, environment, flowID)
 	if recoveredApproval.CallID != approval.CallID || recoveredApproval.Arguments != approval.Arguments {
 		t.Fatalf("approval changed across Worker replacement: got %#v, want %#v", recoveredApproval, approval)
@@ -116,12 +121,27 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
 	})
+	duplicateApprovalErr := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: approval.CallID, Approved: true,
+	})
+	var duplicateApproval *CommandRejectedError
+	if !errors.As(duplicateApprovalErr, &duplicateApproval) || duplicateApproval.Command != CommandApproveTool {
+		t.Fatalf("duplicate approval error = %T %v", duplicateApprovalErr, duplicateApprovalErr)
+	}
 	toolRegistry.assertCallsUseID(t, approval.CallID)
+	toolRegistry.assertInvocation(t, flowID, approval.CallID, runtimeMetadata)
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
 	}
 	rejectedApproval := waitForPendingApproval(t, environment, flowID)
+	staleApprovalErr := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: approval.CallID, Approved: false,
+	})
+	var staleApproval *CommandRejectedError
+	if !errors.As(staleApprovalErr, &staleApproval) || staleApproval.Command != CommandApproveTool {
+		t.Fatalf("stale approval error = %T %v", staleApprovalErr, staleApprovalErr)
+	}
 	if err := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
 		CallID: rejectedApproval.CallID, Approved: false,
 	}); err != nil {
@@ -166,7 +186,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingInput := waitForPendingUserInput(t, environment, flowID)
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +196,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPendingTimer(t, environment, flowID)
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	stateBeforeQueue := readAgentState(t, environment, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "queued message"}); err != nil {
 		t.Fatal(err)
@@ -237,12 +257,26 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if state.FirstRetainedSequence > 1 && state.SummarizedThroughSequence < state.FirstRetainedSequence-1 {
 		t.Fatalf("messages deleted before summary: state = %#v", state)
 	}
+	if state.FirstRetainedSequence > 1 {
+		_, archiveErr := environment.agent.ArchivedMessages(
+			t.Context(),
+			flowID,
+			state.FirstRetainedSequence,
+		)
+		var notFound *ArchivedMessagesNotFoundError
+		if !errors.As(archiveErr, &notFound) {
+			t.Fatalf("trimmed archive error = %T %v", archiveErr, archiveErr)
+		}
+		if snapshot := readSnapshot(t, environment, flowID); snapshot.Description == nil {
+			t.Fatalf("Snapshot after trimmed archive read = %#v", snapshot)
+		}
+	}
 }
 
 func TestAgentInteractionStatusIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-interaction-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -277,7 +311,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 	flowID := FlowID("agent-archive-" + randomLocalID(t))
 	config := NewAgentConfig()
 	config.MaxContextTokens = 1_000_000
-	if _, err := environment.agent.Start(t.Context(), flowID, config); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -318,6 +352,32 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		second.NextBeforeSequence == nil || *second.NextBeforeSequence != 11 {
 		t.Fatalf("second archive = %#v", second)
 	}
+	forward, err := environment.agent.MessagesAfterForTestOnly(t.Context(), flowID, 0, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forward.Messages) != 7 || forward.Messages[0].Sequence != 1 || forward.Messages[6].Sequence != 7 ||
+		forward.NextAfterSequence == nil || *forward.NextAfterSequence != 7 || !forward.IsTruncated ||
+		forward.FirstRetainedSequence != 1 || forward.LastSequence != 30 {
+		t.Fatalf("first forward page = %#v", forward)
+	}
+	forward, err = environment.agent.MessagesAfterForTestOnly(
+		t.Context(),
+		flowID,
+		*forward.NextAfterSequence,
+		maximumForwardHistoryLimitForTestOnly,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forward.Messages) != 23 || forward.Messages[0].Sequence != 8 || forward.Messages[22].Sequence != 30 ||
+		forward.NextAfterSequence != nil || forward.IsTruncated {
+		t.Fatalf("second forward page = %#v", forward)
+	}
+	empty, err := environment.agent.MessagesAfterForTestOnly(t.Context(), flowID, 30, 0)
+	if err != nil || len(empty.Messages) != 0 || empty.IsTruncated || empty.NextAfterSequence != nil {
+		t.Fatalf("empty forward page = %#v, %v", empty, err)
+	}
 }
 
 func assertArchiveWindow(
@@ -342,7 +402,7 @@ func assertArchiveWindow(
 func TestAgentUserInputIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-input-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -378,7 +438,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		!strings.Contains(secondResult.Message.Content, string(toolErrorSupersededByUserInput)) {
 		t.Fatalf("multi-call results = %#v / %#v", firstResult, secondResult)
 	}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	rejectedMessage := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "September 12"})
 	var sendRejected *CommandRejectedError
 	if !errors.As(rejectedMessage, &sendRejected) || sendRejected.Command != CommandSendMessage {
@@ -461,7 +521,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
 	}}
-	environment.replaceWorker(t)
+	environment.replaceWorker(t, flowID)
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
@@ -541,7 +601,7 @@ func assertAnswerRejected(t *testing.T, err error) {
 func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-plan-guardrails-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -593,6 +653,53 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive
 	})
+	state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && state.PlanNoProgressAttempts == 2
+	})
+	if state.PlanNoProgressAttempts != 2 {
+		t.Fatalf("Plan no-progress attempts = %d, want 2", state.PlanNoProgressAttempts)
+	}
+	if count := countHistoryMessages(
+		active.History.Messages,
+		MessageRoleAssistant,
+		"integration stopped before completing the active plan",
+	); count != 2 {
+		t.Fatalf("automatic Plan recovery responses = %d, want 2", count)
+	}
+
+	environment.replaceWorker(t, flowID)
+	submitted := make(chan error, 1)
+	go func() {
+		submitted <- environment.agent.WaitForInteractionStatus(
+			t.Context(),
+			flowID,
+			AgentInteractionStatusSubmitted,
+		)
+	}()
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: active.Description.Plan.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-submitted; err != nil {
+		t.Fatal(err)
+	}
+	continued := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive &&
+			countHistoryMessages(
+				snapshot.History.Messages,
+				MessageRoleAssistant,
+				"integration stopped before completing the active plan",
+			) == 4
+	})
+	if continued.Description.Plan.Revision != active.Description.Plan.Revision {
+		t.Fatalf("Continue changed Plan revision: got %d, want %d", continued.Description.Plan.Revision, active.Description.Plan.Revision)
+	}
+	state = readAgentState(t, environment, flowID)
+	if state.PlanNoProgressAttempts != 2 {
+		t.Fatalf("Continue recovery no-progress attempts = %d, want 2", state.PlanNoProgressAttempts)
+	}
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool integration_tool {}"}); err != nil {
 		t.Fatal(err)
 	}
@@ -604,12 +711,82 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		afterBlockedTool.Description.Plan.Revision != active.Description.Plan.Revision {
 		t.Fatalf("blocked tool changed active plan: %#v", afterBlockedTool.Description.Plan)
 	}
+	state = readAgentState(t, environment, flowID)
+	if state.PlanNoProgressAttempts != 0 {
+		t.Fatalf("user turn did not reset Plan no-progress attempts: %d", state.PlanNoProgressAttempts)
+	}
+}
+
+func TestAgentRejectsPlanExecutionWhileBusyWithoutPublishing(t *testing.T) {
+	modelClient := newBlockingPlanModel()
+	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
+	flowID := FlowID("agent-plan-busy-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/plan-stop reject busy execution", PlanMode: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
+	})
+	draft := draftSnapshot.Description.Plan
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: draft.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-modelClient.started:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("timed out waiting for the active Plan model call")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusCallingModel
+	})
+
+	err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: draft.Revision})
+	var rejected *CommandRejectedError
+	if !errors.As(err, &rejected) || rejected.Command != CommandExecutePlan {
+		t.Fatalf("busy Execute Plan error = %T %v, want execute rejection", err, err)
+	}
+	var executions []dex.ChannelMessage[PlanExecutionRequest]
+	if err := environment.sdk.GetChannelMapMessages(
+		t.Context(),
+		string(flowID),
+		planExecutionsChannel,
+		planRevisionKey(draft.Revision),
+		&executions,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(executions) != 0 {
+		t.Fatalf("busy rejection left %d Plan execution message(s)", len(executions))
+	}
+	state := readAgentState(t, environment, flowID)
+	if state.PendingPlanExecutionRevision != nil {
+		t.Fatalf("busy rejection left pending Plan revision %d", *state.PendingPlanExecutionRevision)
+	}
+
+	close(modelClient.release)
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if calls := modelClient.activeCalls.Load(); calls != 2 {
+		t.Fatalf("active Plan model calls = %d, want exactly 2", calls)
+	}
 }
 
 func TestAgentPlanTaskActivityIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-plan-activity-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -651,7 +828,7 @@ func TestAgentPlanTaskActivityIntegration(t *testing.T) {
 func TestAgentBatchSteeringIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-steer-batch-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -691,7 +868,7 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-terminal-" + randomLocalID(t))
-	runID, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig())
+	runID, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -758,6 +935,16 @@ func historyHasMessage(messages []SequencedMessage, role MessageRole, content st
 		}
 	}
 	return false
+}
+
+func countHistoryMessages(messages []SequencedMessage, role MessageRole, content string) int {
+	count := 0
+	for _, message := range messages {
+		if message.Message.Role == role && message.Message.Content == content {
+			count++
+		}
+	}
+	return count
 }
 
 func historyContainsText(messages []SequencedMessage, text string) bool {
@@ -854,12 +1041,31 @@ func (environment *agentIntegrationEnvironment) startWorker(t *testing.T) {
 	waitForWorkerAddress(t, environment)
 }
 
-func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T) {
+func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T, flowID FlowID) {
 	t.Helper()
 	if err := environment.stopWorker(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	environment.startWorker(t)
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(integrationWaitTimeout)
+	defer deadline.Stop()
+	var lastErr error
+	for {
+		if _, err := environment.agent.Snapshot(t.Context(), flowID); err == nil {
+			return
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("replacement Worker did not serve Agent RPCs: %v", lastErr)
+		case <-t.Context().Done():
+			t.Fatalf("wait for replacement Worker RPC: %v", t.Context().Err())
+		}
+	}
 }
 
 func (environment *agentIntegrationEnvironment) stopWorker(ctx context.Context) error {
@@ -1343,6 +1549,42 @@ func (integrationModel) CountTokens(_ Model, messages []AgentMessage) int {
 	return total
 }
 
+type blockingPlanModel struct {
+	integrationModel
+	started     chan struct{}
+	release     chan struct{}
+	activeCalls atomic.Int32
+}
+
+var _ ModelClient = (*blockingPlanModel)(nil)
+
+func newBlockingPlanModel() *blockingPlanModel {
+	return &blockingPlanModel{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+}
+
+func (model *blockingPlanModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	if _, hasActivePlan := integrationActivePlanTaskStatus(request.Messages); !hasActivePlan {
+		return model.integrationModel.Complete(ctx, request)
+	}
+	call := model.activeCalls.Add(1)
+	if call == 1 {
+		model.started <- struct{}{}
+		select {
+		case <-model.release:
+		case <-ctx.Done():
+			return ModelReply{}, ctx.Err()
+		}
+	}
+	content := "integration stopped before completing the active plan"
+	if err := request.WriteAssistant(content); err != nil {
+		return ModelReply{}, err
+	}
+	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
+}
+
 func integrationToolReply(request ModelRequest, name ToolName, arguments JSONObject, content string) (ModelReply, error) {
 	if err := request.WriteAssistant(content); err != nil {
 		return ModelReply{}, err
@@ -1452,8 +1694,14 @@ func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool)
 }
 
 type integrationToolRegistry struct {
-	mutex   sync.Mutex
-	callIDs []CallID
+	mutex       sync.Mutex
+	invocations []integrationToolInvocation
+}
+
+type integrationToolInvocation struct {
+	flowID          FlowID
+	callID          CallID
+	runtimeMetadata JSONObject
 }
 
 var _ ToolRegistry = (*integrationToolRegistry)(nil)
@@ -1483,7 +1731,11 @@ func (registry *integrationToolRegistry) Execute(ctx context.Context, invocation
 		return ToolExecutionResult{}, fmt.Errorf("unexpected integration tool %q", invocation.Name)
 	}
 	registry.mutex.Lock()
-	registry.callIDs = append(registry.callIDs, invocation.CallID)
+	registry.invocations = append(registry.invocations, integrationToolInvocation{
+		flowID:          invocation.FlowID,
+		callID:          invocation.CallID,
+		runtimeMetadata: invocation.RuntimeMetadata,
+	})
 	registry.mutex.Unlock()
 	if err := invocation.WriteProgress("integration tool completed"); err != nil {
 		return ToolExecutionResult{}, err
@@ -1495,13 +1747,31 @@ func (registry *integrationToolRegistry) assertCallsUseID(t *testing.T, callID C
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	if len(registry.callIDs) != 1 {
-		t.Fatalf("tool executions = %d, want exactly one", len(registry.callIDs))
+	if len(registry.invocations) != 1 {
+		t.Fatalf("tool executions = %d, want exactly one", len(registry.invocations))
 	}
-	for _, actual := range registry.callIDs {
-		if actual != callID {
-			t.Fatalf("tool call ID changed across Worker replacement: got %q, want %q", actual, callID)
+	for _, actual := range registry.invocations {
+		if actual.callID != callID {
+			t.Fatalf("tool call ID changed across Worker replacement: got %q, want %q", actual.callID, callID)
 		}
+	}
+}
+
+func (registry *integrationToolRegistry) assertInvocation(
+	t *testing.T,
+	flowID FlowID,
+	callID CallID,
+	runtimeMetadata JSONObject,
+) {
+	t.Helper()
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.invocations) != 1 {
+		t.Fatalf("tool executions = %d, want exactly one", len(registry.invocations))
+	}
+	actual := registry.invocations[0]
+	if actual.flowID != flowID || actual.callID != callID || actual.runtimeMetadata != runtimeMetadata {
+		t.Fatalf("tool invocation = %#v", actual)
 	}
 }
 
@@ -1509,8 +1779,8 @@ func (registry *integrationToolRegistry) assertExecutionCount(t *testing.T, expe
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	if len(registry.callIDs) != expected {
-		t.Fatalf("tool executions = %d, want %d", len(registry.callIDs), expected)
+	if len(registry.invocations) != expected {
+		t.Fatalf("tool executions = %d, want %d", len(registry.invocations), expected)
 	}
 }
 

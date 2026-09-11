@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,30 @@ func TestJSONObjectRoundTripsAsObject(t *testing.T) {
 	}
 	if _, err := ParseJSONObject(`[]`); err == nil {
 		t.Fatal("ParseJSONObject(array) error = nil")
+	}
+}
+
+func TestRuntimeMetadataValidation(t *testing.T) {
+	if err := validateRuntimeMetadata(""); err != nil {
+		t.Fatalf("empty runtime metadata error = %v", err)
+	}
+	if err := validateRuntimeMetadata(MustJSONObject(`{"resource_id":"resource-1"}`)); err != nil {
+		t.Fatalf("valid runtime metadata error = %v", err)
+	}
+	if err := validateRuntimeMetadata(JSONObject(`[]`)); err == nil {
+		t.Fatal("array runtime metadata error = nil")
+	}
+	oversized := JSONObject(`{"value":"` + strings.Repeat("x", MaximumRuntimeMetadataBytes) + `"}`)
+	if err := validateRuntimeMetadata(oversized); err == nil {
+		t.Fatal("oversized runtime metadata error = nil")
+	}
+}
+
+func TestUserMessageInputLimit(t *testing.T) {
+	if err := validateNewUserMessage(UserMessage{Content: strings.Repeat("x", MaximumUserMessageContentBytes)}); err != nil {
+		t.Fatalf("maximum user message error = %v", err)
+	}
+	if err := validateNewUserMessage(UserMessage{Content: strings.Repeat("x", MaximumUserMessageContentBytes+1)}); err == nil {
+		t.Fatal("oversized user message error = nil")
 	}
 }

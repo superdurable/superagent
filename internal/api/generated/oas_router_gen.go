@@ -654,7 +654,7 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						switch method {
 						case "GET":
 							r.name = GetArchivedMessagesOperation
-							r.summary = "Read one exact archived ten-message chunk"
+							r.summary = "Read one immutable archived ten-message chunk"
 							r.operationID = "getArchivedMessages"
 							r.operationGroup = ""
 							r.pathPattern = "/products/ai-agent/archived-messages"

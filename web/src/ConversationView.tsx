@@ -11,11 +11,20 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type KeyboardEvent,
   type SyntheticEvent,
 } from "react";
+import {
+  ConversationComposer,
+  PendingMessageQueue,
+  PendingQuestionBatch,
+  type PendingMessageQueueItem,
+  type PendingQuestion,
+  type PendingQuestionAnswer,
+} from "@superdurable/superagent-ui";
 
 import {
+  AgentInteractionStatus,
+  AgentStatus,
   EventKind,
   MessageRole,
   PlanStatus,
@@ -36,8 +45,12 @@ import {
   type ActiveConversationState,
 } from "./conversation-state";
 import { buildConversationTimeline } from "./conversation-timeline";
+import { useTimelineFollow } from "./useTimelineFollow";
 
-const MarkdownContent = lazy(() => import("./MarkdownContent"));
+const MarkdownContent = lazy(async () => {
+  const module = await import("@superdurable/superagent-ui");
+  return { default: module.MarkdownContent };
+});
 
 interface ConversationViewProps {
   flowId: FlowId;
@@ -75,7 +88,7 @@ export function ConversationView({
 }: ConversationViewProps) {
   const { shellRef, composerRef } = useComposerClearance();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const focusAfterEdit = useRef(false);
+  const shouldFocusAfterQueueMutation = useRef(false);
   const { snapshot } = state;
   const description = snapshot.description;
   const isBusy = state.pendingCommand !== null;
@@ -92,11 +105,21 @@ export function ConversationView({
     state.activities,
     state.assistant,
   );
-  const liveContentVersion =
-    state.activities.length +
-    (state.assistant?.value.length ?? 0) +
-    state.reasoning.reduce((total, entry) => total + entry.value.length, 0);
-  useAutoScroll(description.lastSequence, liveContentVersion);
+  const liveContentVersion = [
+    String(state.activities.length),
+    state.activities.at(-1)?.resumeToken ?? "",
+    state.assistant === null
+      ? ""
+      : `${state.assistant.source}:${String(state.assistant.value.length)}:${String(state.assistant.isComplete)}`,
+    ...state.reasoning.map(
+      (entry) =>
+        `${entry.source}:${String(entry.value.length)}:${String(entry.isComplete)}`,
+    ),
+  ].join("|");
+  const { hasUnseenContent, jumpToLatest } = useTimelineFollow({
+    flowRunKey: `${flowId}:${snapshot.runId}`,
+    contentVersion: `${String(description.lastSequence)}:${liveContentVersion}`,
+  });
   useArchiveScroll(
     snapshot.history.nextBeforeSequence,
     state.historyRequest !== null,
@@ -105,23 +128,22 @@ export function ConversationView({
   );
   useEffect(() => {
     const command = state.pendingCommand?.command;
-    if (command?.kind === "queue" && command.action === "edit") {
-      focusAfterEdit.current = true;
+    if (command?.kind === "queue") {
+      shouldFocusAfterQueueMutation.current = true;
       return;
     }
-    if (state.pendingCommand === null && focusAfterEdit.current) {
-      focusAfterEdit.current = false;
+    if (
+      state.pendingCommand === null &&
+      shouldFocusAfterQueueMutation.current
+    ) {
+      shouldFocusAfterQueueMutation.current = false;
       textareaRef.current?.focus();
     }
   }, [state.pendingCommand]);
-  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      event.key === "Enter" &&
-      (event.metaKey || event.ctrlKey || event.altKey)
-    ) {
-      event.preventDefault();
-      onSubmit();
-    }
+  const queueItems = mapPendingMessageQueueItems(state);
+  const submitFromComposer = () => {
+    onSubmit();
+    textareaRef.current?.focus();
   };
 
   return (
@@ -134,14 +156,18 @@ export function ConversationView({
             Flow <code>{flowId}</code> · Run <code>{snapshot.runId}</code>
           </p>
         </div>
-        <div className="status-stack">
-          <span className={`connection-pill ${state.connection}`}>
-            {connectionLabel(state.connection)}
-          </span>
-          <strong>{statusLabel(description.status)}</strong>
-          <small>{description.model}</small>
-        </div>
       </header>
+
+      {hasUnseenContent && (
+        <button
+          type="button"
+          className="jump-to-latest"
+          aria-label="Jump to latest message"
+          onClick={jumpToLatest}
+        >
+          <span aria-hidden="true">…</span>
+        </button>
+      )}
 
       {state.error !== null && (
         <div className="error conversation-error" role="alert">
@@ -351,20 +377,30 @@ export function ConversationView({
         aria-label="Message composer"
         ref={composerRef}
       >
-        <QueueTray
-          state={state}
-          areMutationsDisabled={areMutationsDisabled}
-          pendingMessageID={pendingMessageID}
-          onMutateQueue={onMutateQueue}
+        <PendingMessageQueue
+          disabled={areMutationsDisabled}
+          items={queueItems}
+          pendingItemID={pendingMessageID}
+          onAction={(itemID, action) => {
+            const message = state.snapshot.queued.find(
+              (candidate) => candidate.messageId === itemID,
+            );
+            if (message !== undefined) onMutateQueue(message, action);
+          }}
         />
         {description.pendingUserInput !== null && (
-          <QuestionsPanel
-            key={`${flowId}:${description.pendingUserInput.callId}`}
-            pendingInput={description.pendingUserInput}
-            disabled={areMutationsDisabled}
-            isSubmitting={state.pendingCommand?.command.kind === "answer"}
-            onSubmit={onSubmitAnswers}
-          />
+          <>
+            <PendingQuestionsAdapter
+              key={`${flowId}:${description.pendingUserInput.callId}`}
+              pendingInput={description.pendingUserInput}
+              disabled={areMutationsDisabled}
+              isSubmitting={state.pendingCommand?.command.kind === "answer"}
+              onSubmit={onSubmitAnswers}
+            />
+            <div className="composer-status-only">
+              <AgentRuntimeStatus state={state} />
+            </div>
+          </>
         )}
         {description.pendingUserInput === null && (
           <label className="plan-mode">
@@ -380,35 +416,26 @@ export function ConversationView({
           </label>
         )}
         {description.pendingUserInput === null && (
-          <div className="composer-row">
-            <textarea
-              ref={textareaRef}
-              aria-label="Message"
-              value={state.composer}
-              disabled={isBusy}
-              placeholder={
-                state.isPlanMode
-                  ? "Describe what you want the Agent to plan…"
-                  : "Message the Agent…"
-              }
-              rows={3}
-              onChange={(event) => {
-                onComposerChange(event.target.value);
-              }}
-              onKeyDown={handleComposerKeyDown}
-            />
-            <button
-              type="button"
-              disabled={areMutationsDisabled || state.composer.trim() === ""}
-              onClick={onSubmit}
-            >
-              {state.pendingCommand?.command.kind === "send"
+          <ConversationComposer
+            onChange={onComposerChange}
+            onSubmit={submitFromComposer}
+            placeholder={
+              state.isPlanMode
+                ? "Describe what you want the Agent to plan…"
+                : "Message the Agent…"
+            }
+            submitDisabled={areMutationsDisabled}
+            submitLabel={
+              state.pendingCommand?.command.kind === "send"
                 ? "Sending…"
                 : state.isPlanMode
                   ? "Create plan"
-                  : "Send"}
-            </button>
-          </div>
+                  : "Send"
+            }
+            status={<AgentRuntimeStatus state={state} />}
+            textareaRef={textareaRef}
+            value={state.composer}
+          />
         )}
         <div className="composer-footer">
           <small>⌘/Ctrl/Alt + Enter sends · Enter adds a new line</small>
@@ -425,179 +452,78 @@ export function ConversationView({
   );
 }
 
-interface QuestionsPanelProps {
+function AgentRuntimeStatus({ state }: { state: ActiveConversationState }) {
+  return (
+    <div className="status-stack" role="group" aria-label="Agent status">
+      <span className={`connection-pill ${state.connection}`}>
+        {connectionLabel(state.connection)}
+      </span>
+      <span className="status-copy">
+        <strong>{statusLabel(state.snapshot.description.status)}</strong>
+        <small>{state.snapshot.description.model}</small>
+      </span>
+    </div>
+  );
+}
+
+interface PendingQuestionsAdapterProps {
   pendingInput: PendingUserInput;
   disabled: boolean;
   isSubmitting: boolean;
   onSubmit: (callId: CallId, answers: UserInputAnswer[]) => void;
 }
 
-interface QuestionDraft {
-  answer: string;
-  isOther: boolean;
-}
-
-function QuestionsPanel({
+function PendingQuestionsAdapter({
   pendingInput,
   disabled,
   isSubmitting,
   onSubmit,
-}: QuestionsPanelProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({});
-  const question = pendingInput.questions[currentIndex];
-  if (question === undefined) return null;
-  const currentDraft = drafts[question.id];
-  const hasAllAnswers = pendingInput.questions.every(
-    ({ id }) => (drafts[id]?.answer.trim().length ?? 0) > 0,
-  );
-  const isLast = currentIndex === pendingInput.questions.length - 1;
-  const setAnswer = (answer: string, isOther: boolean) => {
-    setDrafts((current) => ({
-      ...current,
-      [question.id]: { answer, isOther },
-    }));
-  };
-  const chooseOption = (answer: string) => {
-    setAnswer(answer, false);
-    if (!isLast) setCurrentIndex((index) => index + 1);
-  };
-  const submit = () => {
-    if (!hasAllAnswers || disabled) return;
-    onSubmit(
-      pendingInput.callId,
-      pendingInput.questions.map(({ id }) => ({
-        questionId: id,
-        answer: drafts[id]?.answer.trim() ?? "",
-      })),
-    );
-  };
-
+}: PendingQuestionsAdapterProps) {
   return (
-    <section className="pending-input" aria-label="Agent questions">
-      <div className="question-heading">
-        <div>
-          <p className="eyebrow">Agent needs your input</p>
-          <strong>
-            Question {String(currentIndex + 1)} of{" "}
-            {String(pendingInput.questions.length)}
-          </strong>
-        </div>
-        <div className="question-tabs" aria-label="Questions">
-          {pendingInput.questions.map((candidate, index) => (
-            <button
-              type="button"
-              className={index === currentIndex ? "active" : "secondary"}
-              aria-current={index === currentIndex ? "step" : undefined}
-              key={candidate.id}
-              onClick={() => {
-                setCurrentIndex(index);
-              }}
-            >
-              {candidate.header}
-              {(drafts[candidate.id]?.answer.trim().length ?? 0) > 0 && (
-                <span className="answered-mark" aria-label="Answered">
-                  ✓
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-      <fieldset className="question-content" disabled={disabled}>
-        <legend>{question.header}</legend>
-        <p>{question.question}</p>
-        <div className="choice-row">
-          {question.options.map((option) => (
-            <button
-              type="button"
-              className={
-                currentDraft?.isOther === false &&
-                currentDraft.answer === option.label
-                  ? "question-option selected"
-                  : "question-option secondary"
-              }
-              key={option.label}
-              onClick={() => {
-                chooseOption(option.label);
-              }}
-            >
-              <strong>{option.label}</strong>
-              <small>{option.description}</small>
-            </button>
-          ))}
-          <button
-            type="button"
-            className={
-              currentDraft?.isOther === true
-                ? "question-option selected"
-                : "question-option secondary"
-            }
-            onClick={() => {
-              setAnswer(
-                currentDraft?.isOther === true ? currentDraft.answer : "",
-                true,
-              );
-            }}
-          >
-            <strong>Other</strong>
-            <small>Enter a different answer.</small>
-          </button>
-        </div>
-        {currentDraft?.isOther === true && (
-          <label className="other-answer">
-            Other answer
-            <input
-              aria-label={`Other answer for ${question.header}`}
-              value={currentDraft.answer}
-              onChange={(event) => {
-                setAnswer(event.target.value, true);
-              }}
-            />
-          </label>
-        )}
-      </fieldset>
-      <div className="question-navigation">
-        <button
-          type="button"
-          className="secondary"
-          disabled={disabled || currentIndex === 0}
-          onClick={() => {
-            setCurrentIndex((index) => Math.max(0, index - 1));
-          }}
-        >
-          Previous
-        </button>
-        {!isLast && (
-          <button
-            type="button"
-            className="secondary"
-            disabled={disabled || currentDraft?.answer.trim() === ""}
-            onClick={() => {
-              setCurrentIndex((index) => index + 1);
-            }}
-          >
-            Next
-          </button>
-        )}
-        {isLast && (
-          <button
-            type="button"
-            disabled={disabled || !hasAllAnswers}
-            onClick={submit}
-          >
-            {isSubmitting ? "Submitting answers…" : "Submit all"}
-          </button>
-        )}
-      </div>
-    </section>
+    <PendingQuestionBatch
+      disabled={disabled}
+      isSubmitting={isSubmitting}
+      questions={mapPendingQuestions(pendingInput)}
+      onSubmit={(answers) => {
+        onSubmit(pendingInput.callId, mapPendingQuestionAnswers(answers));
+      }}
+    />
   );
+}
+
+function mapPendingQuestions(
+  pendingInput: PendingUserInput,
+): PendingQuestion[] {
+  return pendingInput.questions.map((question) => ({
+    id: question.id,
+    header: question.header,
+    question: question.question,
+    options: question.options.map((option) => ({
+      label: option.label,
+      description: option.description,
+    })),
+  }));
+}
+
+function mapPendingQuestionAnswers(
+  answers: readonly PendingQuestionAnswer[],
+): UserInputAnswer[] {
+  return answers.map((answer) => ({
+    questionId: answer.questionId,
+    answer: answer.answer,
+  }));
 }
 
 interface PlanPanelProps {
   state: ActiveConversationState;
   areMutationsDisabled: boolean;
   onExecutePlan: (revision: number) => void;
+}
+
+interface PlanActionPresentation {
+  label: string;
+  isDisabled: boolean;
+  reason: string | null;
 }
 
 function PlanPanel({
@@ -620,6 +546,7 @@ function PlanPanel({
   const hasRunningTask = taskStatuses.some(
     (status) => status === TaskStatus.IN_PROGRESS,
   );
+  const action = planActionPresentation(state, areMutationsDisabled);
   const isContentVisible = !isNarrow || isExpanded;
   return (
     <section className="plan-card plan-panel" aria-label="Agent plan">
@@ -652,23 +579,23 @@ function PlanPanel({
             {plan.status !== PlanStatus.COMPLETED && (
               <button
                 type="button"
-                disabled={
-                  areMutationsDisabled || description.isPlanExecutionRequested
+                disabled={action.isDisabled}
+                aria-describedby={
+                  action.reason === null ? undefined : "plan-action-reason"
                 }
                 onClick={() => {
                   onExecutePlan(plan.revision);
                 }}
               >
-                {state.pendingCommand?.command.kind === "execute-plan"
-                  ? "Requesting execution…"
-                  : description.isPlanExecutionRequested
-                    ? "Execution requested"
-                    : plan.status === PlanStatus.DRAFT
-                      ? "Execute plan"
-                      : "Continue plan"}
+                {action.label}
               </button>
             )}
           </div>
+          {action.reason !== null && plan.status !== PlanStatus.COMPLETED && (
+            <p className="plan-action-reason" id="plan-action-reason">
+              {action.reason}
+            </p>
+          )}
           <ol className="plan-tasks">
             {plan.tasks.map((task, index) => {
               const status = taskStatuses[index] ?? task.status;
@@ -689,6 +616,89 @@ function PlanPanel({
   );
 }
 
+function planActionPresentation(
+  state: ActiveConversationState,
+  areMutationsDisabled: boolean,
+): PlanActionPresentation {
+  const { description } = state.snapshot;
+  const plan = description.plan;
+  if (plan === null || plan.status === PlanStatus.COMPLETED) {
+    return { label: "Plan completed", isDisabled: true, reason: null };
+  }
+  if (state.pendingCommand?.command.kind === "execute-plan") {
+    return {
+      label: "Requesting execution…",
+      isDisabled: true,
+      reason: "Waiting for the execution request to finish.",
+    };
+  }
+  if (description.isPlanExecutionRequested) {
+    return {
+      label: "Execution requested",
+      isDisabled: true,
+      reason: "The Agent will start this Plan from its durable wait.",
+    };
+  }
+  if (areMutationsDisabled) {
+    return {
+      label: "Syncing plan…",
+      isDisabled: true,
+      reason: "Waiting for the current durable state reconciliation.",
+    };
+  }
+  if (description.pendingUserInput !== null) {
+    return {
+      label: "Answer questions first",
+      isDisabled: true,
+      reason: "Submit the requested answers before continuing this Plan.",
+    };
+  }
+  if (description.pendingApproval !== null) {
+    return {
+      label: "Resolve approval first",
+      isDisabled: true,
+      reason: "Approve or reject the pending tool before continuing this Plan.",
+    };
+  }
+  if (description.pendingTimer !== null) {
+    return {
+      label: "Timer is active",
+      isDisabled: true,
+      reason:
+        "The Plan can continue after the durable Timer finishes or is steered.",
+    };
+  }
+  if (
+    description.pendingQueuedMessageCount > 0 ||
+    description.pendingSteeredMessageCount > 0
+  ) {
+    return {
+      label: "Resolve queued messages",
+      isDisabled: true,
+      reason:
+        "The Agent must consume or remove queued messages before continuing this Plan.",
+    };
+  }
+  if (
+    description.interactionStatus !== AgentInteractionStatus.WAITING ||
+    description.status !== AgentStatus.WAITING_FOR_MESSAGE
+  ) {
+    const isDraft = plan.status === PlanStatus.DRAFT;
+    return {
+      label: isDraft ? "Preparing plan…" : "Plan running…",
+      isDisabled: true,
+      reason: isDraft
+        ? "Execute becomes available after the Agent reaches its next durable wait."
+        : "Continue becomes available if unfinished tasks remain at the next durable wait.",
+    };
+  }
+  return {
+    label: plan.status === PlanStatus.DRAFT ? "Execute plan" : "Continue plan",
+    isDisabled: false,
+    reason: null,
+  };
+}
+
 function TaskStatusIndicator({ status }: { status: TaskStatus }) {
   if (status === TaskStatus.IN_PROGRESS) {
     return (
@@ -704,111 +714,35 @@ function TaskStatusIndicator({ status }: { status: TaskStatus }) {
   );
 }
 
-interface QueueTrayProps {
-  state: ActiveConversationState;
-  areMutationsDisabled: boolean;
-  pendingMessageID: string | null;
-  onMutateQueue: (
-    message: PendingUserMessage,
-    action: QueueCommandAction,
-  ) => void;
-}
-
-function QueueTray({
-  state,
-  areMutationsDisabled,
-  pendingMessageID,
-  onMutateQueue,
-}: QueueTrayProps) {
+function mapPendingMessageQueueItems(
+  state: ActiveConversationState,
+): PendingMessageQueueItem[] {
   const { queued, steered } = state.snapshot;
-  const hasMessages =
-    queued.length > 0 ||
-    steered.length > 0 ||
-    state.optimisticSubmissions.length > 0;
-  const signature = [
-    ...steered.map(({ messageId }) => `steered:${messageId}`),
-    ...queued.map(({ messageId }) => `queued:${messageId}`),
-    ...state.optimisticSubmissions.map(({ localID }) => `local:${localID}`),
-  ].join("|");
-  const [collapsedSignature, setCollapsedSignature] = useState<string | null>(
-    null,
-  );
-  const isExpanded = collapsedSignature !== signature;
-  if (!hasMessages) return null;
-  return (
-    <section className="queue-tray" aria-label="Message queue">
-      <button
-        type="button"
-        className="queue-toggle"
-        aria-controls="message-queue-items"
-        aria-expanded={isExpanded}
-        onClick={() => {
-          setCollapsedSignature(isExpanded ? signature : null);
-        }}
-      >
-        <span>Message queue</span>
-        <strong>
-          {String(queued.length + state.optimisticSubmissions.length)} queued ·{" "}
-          {String(steered.length)} steering
-        </strong>
-        <span aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
-      </button>
-      {isExpanded && (
-        <div className="queue-items" id="message-queue-items">
-          {steered.map((message) => (
-            <div className="queue-message steered" key={message.messageId}>
-              <strong>Steering</strong>
-              <small>{message.value.planMode ? "Plan" : "Chat"}</small>
-              <p>{message.value.content}</p>
-            </div>
-          ))}
-          {queued.map((message) => (
-            <div className="queue-message" key={message.messageId}>
-              <strong>{message.value.planMode ? "Plan" : "Chat"}</strong>
-              <p>{message.value.content}</p>
-              <div className="queue-actions">
-                {(["steer", "edit", "delete"] as const).map((action) => (
-                  <button
-                    type="button"
-                    className={
-                      action === "steer"
-                        ? "queue-action steer-action"
-                        : "queue-action text-button"
-                    }
-                    disabled={areMutationsDisabled}
-                    key={action}
-                    onClick={() => {
-                      onMutateQueue(message, action);
-                    }}
-                  >
-                    {pendingMessageID === message.messageId ? (
-                      "Updating…"
-                    ) : action === "steer" ? (
-                      <>
-                        <span aria-hidden="true">↪</span>
-                        Steer now
-                      </>
-                    ) : (
-                      statusLabel(action)
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-          {state.optimisticSubmissions.map((submission) => (
-            <div className="queue-message submitting" key={submission.localID}>
-              <strong>
-                {submission.phase === "submitting" ? "Submitting…" : "Queued"}
-              </strong>
-              <small>{submission.value.planMode ? "Plan" : "Chat"}</small>
-              <p>{submission.value.content}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+  return [
+    ...steered.map((message): PendingMessageQueueItem => ({
+      id: message.messageId,
+      kind: "steered",
+      label: "Steering",
+      modeLabel: message.value.planMode ? "Plan" : "Chat",
+      content: message.value.content,
+    })),
+    ...queued.map((message): PendingMessageQueueItem => ({
+      id: message.messageId,
+      kind: "queued",
+      label: message.value.planMode ? "Plan" : "Chat",
+      content: message.value.content,
+      actions: ["steer", "edit", "delete"],
+    })),
+    ...state.optimisticSubmissions.map(
+      (submission): PendingMessageQueueItem => ({
+        id: submission.localID,
+        kind: "submitting",
+        label: submission.phase === "submitting" ? "Submitting…" : "Queued",
+        modeLabel: submission.value.planMode ? "Plan" : "Chat",
+        content: submission.value.content,
+      }),
+    ),
+  ];
 }
 
 function useMediaQuery(query: string): boolean {
@@ -902,40 +836,6 @@ function useArchiveScroll(
       window.scrollBy({ top: addedHeight, behavior: "auto" });
     previousHeight.current = null;
   }, [isLoading, messageCount]);
-}
-
-function useAutoScroll(lastSequence: number, liveContentVersion: number) {
-  const shouldStickToBottom = useRef(true);
-  const scrollToBottom = () => {
-    window.scrollTo({
-      top: document.documentElement.scrollHeight,
-      behavior: "auto",
-    });
-  };
-  useEffect(() => {
-    const update = () => {
-      const distance =
-        document.documentElement.scrollHeight -
-        window.scrollY -
-        window.innerHeight;
-      shouldStickToBottom.current = distance <= 160;
-    };
-    const keepBottomVisible = () => {
-      if (!shouldStickToBottom.current) return;
-      window.requestAnimationFrame(scrollToBottom);
-    };
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", keepBottomVisible);
-    update();
-    return () => {
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", keepBottomVisible);
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (!shouldStickToBottom.current) return;
-    scrollToBottom();
-  }, [lastSequence, liveContentVersion]);
 }
 
 function revealOpenedDetails(event: SyntheticEvent<HTMLDetailsElement>) {

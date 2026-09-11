@@ -16,7 +16,7 @@
 openapi: 3.0.3
 info:
   title: SuperAgent API
-  version: 0.3.0
+  version: 0.4.0
   description: >-
     Command, atomic Snapshot, queue mutation, and live-event contract for the
     durable AI Agent.
@@ -166,7 +166,7 @@ paths:
   /products/ai-agent/archived-messages:
     get:
       operationId: getArchivedMessages
-      summary: Read one exact archived ten-message chunk
+      summary: Read one immutable archived ten-message chunk
       parameters:
         - name: flowId
           in: query
@@ -180,7 +180,7 @@ paths:
             $ref: "#/components/schemas/Sequence"
       responses:
         "200":
-          description: The archived chunk immediately before the boundary.
+          description: One immutable history continuation before the boundary.
           headers:
             Cache-Control:
               required: true
@@ -288,6 +288,11 @@ paths:
     post:
       operationId: executePlan
       summary: Execute one exact durable plan revision
+      description: >-
+        Accepted only when the Agent is waiting for a message, the requested
+        Plan revision is current, and no pending input, approval, timer, queued
+        message, steering, or execution request blocks it. A conflicting
+        boundary or stale revision returns 409.
       requestBody:
         required: true
         content:
@@ -406,7 +411,8 @@ components:
     MessageId:
       type: string
       minLength: 1
-      maxLength: 255
+      maxLength: 256
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
       x-ogen-name: MessageID
     Sequence:
       type: integer

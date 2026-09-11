@@ -25,11 +25,17 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
 	archiveMessageChunkSize = 10
 	currentMessageLimit     = 2 * archiveMessageChunkSize
+	maximumMessageIDBytes   = 256
+	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
+	MaximumRuntimeMetadataBytes = 16 << 10
+	// MaximumUserMessageContentBytes bounds one user-message body.
+	MaximumUserMessageContentBytes = 256 << 10
 
 	// DefaultModel uses the deterministic local provider.
 	DefaultModel Model = "mock/dex"
@@ -557,6 +563,12 @@ type AgentConfig struct {
 	EnabledTools []ToolName `json:"enabled_tools"`
 }
 
+// StartRequest contains the Agent configuration and trusted runtime metadata.
+type StartRequest struct {
+	Config          AgentConfig `json:"config"`
+	RuntimeMetadata JSONObject  `json:"runtime_metadata"`
+}
+
 // NewAgentConfig returns deterministic local defaults.
 func NewAgentConfig() AgentConfig {
 	return AgentConfig{
@@ -665,6 +677,7 @@ type AgentState struct {
 	PlanningRequiresWrite        bool            `json:"planning_requires_write"`
 	PlanningAllowsWrite          bool            `json:"planning_allows_write"`
 	PendingPlanExecutionRevision *PlanRevision   `json:"pending_plan_execution_revision,omitempty"`
+	PlanNoProgressAttempts       int             `json:"plan_no_progress_attempts"`
 }
 
 // SequencedMessage pairs one application message with its durable ordering key.
@@ -677,6 +690,11 @@ type SequencedMessage struct {
 type HistoryPage struct {
 	Messages           []SequencedMessage `json:"messages"`
 	NextBeforeSequence *Sequence          `json:"next_before_sequence,omitempty"`
+}
+
+type archivedMessagesRPCOutput struct {
+	Page  HistoryPage `json:"page"`
+	Found bool        `json:"found"`
 }
 
 // ArchivedMessageChunk stores one immutable ten-message history page.
@@ -902,6 +920,68 @@ func (err *CommandRejectedError) Error() string {
 	return fmt.Sprintf("agent command %q was rejected by current durable state", err.Command)
 }
 
+func archivedMessageChunkFirst(before Sequence) (Sequence, bool) {
+	if before <= Sequence(archiveMessageChunkSize) || (before-1)%Sequence(archiveMessageChunkSize) != 0 {
+		return 0, false
+	}
+	return before - Sequence(archiveMessageChunkSize), true
+}
+
+func validateNewUserMessage(message UserMessage) error {
+	if !utf8.ValidString(message.Content) {
+		return errors.New("content must be valid UTF-8")
+	}
+	if strings.ContainsRune(message.Content, '\x00') {
+		return errors.New("content must not contain NUL")
+	}
+	if strings.TrimSpace(message.Content) == "" {
+		return errors.New("content must not be empty")
+	}
+	if len(message.Content) > MaximumUserMessageContentBytes {
+		return fmt.Errorf("content exceeds %d bytes", MaximumUserMessageContentBytes)
+	}
+	return nil
+}
+
+func validateAnswerQuestionsRequest(request AnswerQuestionsRequest) error {
+	if strings.TrimSpace(string(request.CallID)) == "" {
+		return errors.New("call ID must not be empty")
+	}
+	if len(request.Answers) == 0 || len(request.Answers) > maximumUserInputQuestions {
+		return fmt.Errorf("answers must contain 1-%d values", maximumUserInputQuestions)
+	}
+	seen := make(map[UserInputQuestionID]struct{}, len(request.Answers))
+	for _, answer := range request.Answers {
+		if strings.TrimSpace(string(answer.QuestionID)) == "" || strings.TrimSpace(answer.Answer) == "" {
+			return errors.New("answers require question ID and answer")
+		}
+		if _, found := seen[answer.QuestionID]; found {
+			return fmt.Errorf("question %q was answered more than once", answer.QuestionID)
+		}
+		seen[answer.QuestionID] = struct{}{}
+	}
+	return nil
+}
+
+func validateMessageID(messageID MessageID) error {
+	value := string(messageID)
+	if value == "" || len(value) > maximumMessageIDBytes || !utf8.ValidString(value) {
+		return fmt.Errorf("message ID must be 1-%d valid UTF-8 bytes", maximumMessageIDBytes)
+	}
+	return nil
+}
+
+func validateRuntimeMetadata(value JSONObject) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > MaximumRuntimeMetadataBytes {
+		return fmt.Errorf("runtime metadata exceeds %d bytes", MaximumRuntimeMetadataBytes)
+	}
+	_, err := ParseJSONObject(value.String())
+	return err
+}
+
 // ModelReply is one complete provider response.
 type ModelReply struct {
 	Content              string                `json:"content"`
@@ -962,11 +1042,13 @@ type ModelClient interface {
 
 // ToolInvocation contains one trusted-registry execution request.
 type ToolInvocation struct {
-	Name           ToolName
-	Arguments      JSONObject
-	EnabledServers []string
-	WriteProgress  TextWriter
-	CallID         CallID
+	FlowID          FlowID
+	RuntimeMetadata JSONObject
+	Name            ToolName
+	Arguments       JSONObject
+	EnabledServers  []string
+	WriteProgress   TextWriter
+	CallID          CallID
 }
 
 // ToolRegistry exposes trusted, discovered MCP capabilities.

@@ -48,6 +48,7 @@ make format-check
 make vet
 make lint
 make test
+make test-public-api
 make test-race
 make fuzz
 make test-web

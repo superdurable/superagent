@@ -21,8 +21,10 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill.
 - Use typed Attributes for state, Channels for delivery, and buffered Streams
   for best-effort deltas.
 - Do not expose resource getter wrappers.
-- Snapshot is the only durable browser read model. Do not add parallel durable
-  read models.
+- Snapshot is the only durable current-interaction and reconciliation read
+  model. Do not add parallel Agent state read models.
+- Archive pages continue immutable application history on demand. They are not
+  a second Agent state model.
 - Queue mutation accepts only message IDs loaded through Snapshot.
 - Application history is `CurrentMessages` plus `ArchivedMessages`, never Dex
   execution history.

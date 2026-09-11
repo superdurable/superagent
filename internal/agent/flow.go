@@ -28,6 +28,27 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
+var (
+	agentConfigAttribute            = dex.DefineAttribute[AgentConfig]("AgentConfig")
+	agentRuntimeMetadataAttribute   = dex.DefineAttribute[JSONObject]("AgentRuntimeMetadata")
+	agentStateAttribute             = dex.DefineAttribute[AgentState]("AgentState")
+	agentInteractionStatusAttribute = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
+	contextSummaryAttribute         = dex.DefineAttribute[ContextSummary]("ContextSummary")
+	currentMessagesAttribute        = dex.DefineAttributeMap[AgentMessage]("CurrentMessages")
+	archivedMessagesAttribute       = dex.DefineAttributeMap[ArchivedMessageChunk]("ArchivedMessages")
+	agentPlanAttribute              = dex.DefineAttribute[AgentPlan]("AgentPlan")
+	pendingApprovalAttribute        = dex.DefineAttribute[PendingApproval]("PendingApproval")
+	pendingTimerAttribute           = dex.DefineAttribute[PendingTimer]("PendingTimer")
+	pendingUserInputAttribute       = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
+	queuedUserMessagesChannel       = dex.DefineChannel[UserMessage]("QueuedUserMessages")
+	steeredUserMessagesChannel      = dex.DefineChannel[UserMessage]("SteeredUserMessages")
+	toolApprovalsChannel            = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
+	planExecutionsChannel           = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
+	reasoningSummaryStream          = dex.DefineStream[string]("ReasoningSummary", 10<<20)
+	assistantTextStream             = dex.DefineStream[string]("AssistantText", 10<<20)
+	agentActivityStream             = dex.DefineStream[AgentEvent]("AgentActivity", 10<<20)
+)
+
 // Flow is the durable AI Agent state machine.
 type Flow struct {
 	modelClient ModelClient
@@ -74,6 +95,7 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 	return dex.PersistenceSchema{
 		Attributes: []dex.AttributeDef{
 			agentConfigAttribute,
+			agentRuntimeMetadataAttribute,
 			agentStateAttribute,
 			agentInteractionStatusAttribute,
 			contextSummaryAttribute,
@@ -192,9 +214,19 @@ func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSna
 	if err != nil {
 		return nil, err
 	}
-	history, err := flow.currentHistory(ctx, state)
-	if err != nil {
-		return nil, err
+	start := max(state.FirstRetainedSequence, state.CurrentFirstSequence)
+	messages := make([]SequencedMessage, 0, int(state.LastSequence-start+1))
+	for sequence := start; sequence <= state.LastSequence; sequence++ {
+		message, messageErr := currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+		if messageErr != nil {
+			return nil, messageErr
+		}
+		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
+	}
+	history := HistoryPage{Messages: messages}
+	if start > state.FirstRetainedSequence {
+		next := start
+		history.NextBeforeSequence = &next
 	}
 	description, err := flow.describe(ctx, config, state, len(queued), len(steered))
 	if err != nil {
@@ -210,6 +242,43 @@ func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSna
 	}}, nil
 }
 
+// ArchivedMessages returns one retained immutable history chunk.
+func (*Flow) ArchivedMessages(
+	ctx dex.Context,
+	before Sequence,
+) (*dex.RPCResult[archivedMessagesRPCOutput], error) {
+	first, isValid := archivedMessageChunkFirst(before)
+	if !isValid {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if isAttributeNotFound(err) {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if first < state.FirstRetainedSequence {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	chunk, err := archivedMessagesAttribute.Get(ctx, sequenceKey(first))
+	if isAttributeNotFound(err) {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	page := HistoryPage{Messages: chunk.Messages}
+	if first > state.FirstRetainedSequence {
+		next := first
+		page.NextBeforeSequence = &next
+	}
+	return &dex.RPCResult[archivedMessagesRPCOutput]{Output: archivedMessagesRPCOutput{
+		Page:  page,
+		Found: true,
+	}}, nil
+}
+
 // ApproveTool publishes an approval only for the current exact call ID.
 func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCResult[bool], error) {
 	pending, err := getPendingApproval(ctx)
@@ -218,6 +287,9 @@ func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCRe
 	}
 	if pending == nil || pending.CallID != input.CallID {
 		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if err := pendingApprovalAttribute.Delete(ctx); err != nil {
+		return nil, err
 	}
 	if err := toolApprovalsChannel.Publish(ctx, string(input.CallID), ToolApproval{Approved: input.Approved}); err != nil {
 		return nil, err
@@ -242,10 +314,20 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	if err != nil {
 		return nil, err
 	}
+	pendingApproval, err := getPendingApproval(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pendingTimer, err := getPendingTimer(ctx)
+	if err != nil {
+		return nil, err
+	}
 	canExecute := plan != nil &&
 		state.Status == AgentStatusWaitingForMessage &&
 		state.PendingPlanExecutionRevision == nil &&
 		pendingInput == nil &&
+		pendingApproval == nil &&
+		pendingTimer == nil &&
 		queuedUserMessagesChannel.Size(ctx) == 0 &&
 		steeredUserMessagesChannel.Size(ctx) == 0 &&
 		plan.Revision == input.Revision &&
@@ -255,6 +337,7 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	}
 	revision := plan.Revision
 	state.PendingPlanExecutionRevision = &revision
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return nil, err
 	}
@@ -265,24 +348,6 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
-}
-
-func (*Flow) currentHistory(ctx dex.Context, state AgentState) (HistoryPage, error) {
-	start := max(state.FirstRetainedSequence, state.CurrentFirstSequence)
-	messages := make([]SequencedMessage, 0, int(state.LastSequence-start+1))
-	for sequence := start; sequence <= state.LastSequence; sequence++ {
-		message, err := currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
-		if err != nil {
-			return HistoryPage{}, err
-		}
-		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
-	}
-	var nextBeforeSequence *Sequence
-	if start > state.FirstRetainedSequence {
-		next := start
-		nextBeforeSequence = &next
-	}
-	return HistoryPage{Messages: messages, NextBeforeSequence: nextBeforeSequence}, nil
 }
 
 func (flow *Flow) describe(
@@ -461,6 +526,7 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
 	state.PendingToolCalls = []ToolCall{}
 	state.PendingToolIndex = 0
 	state.PendingPlanExecutionRevision = nil
+	state.PlanNoProgressAttempts = 0
 	if setErr := agentStateAttribute.Set(ctx, state); setErr != nil {
 		return setErr
 	}
@@ -483,6 +549,7 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []UserMessage) erro
 	state.PendingToolCalls = []ToolCall{}
 	state.PendingToolIndex = 0
 	state.PendingPlanExecutionRevision = nil
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return err
 	}
@@ -556,6 +623,7 @@ func (flow *Flow) replacePlan(ctx dex.Context, tasks []PlanTask) (PlanRevision, 
 	state.PlanningRequiresWrite = false
 	state.PlanningAllowsWrite = false
 	state.PendingPlanExecutionRevision = nil
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return 0, err
 	}
@@ -848,6 +916,9 @@ func (flow *Flow) planContextMessage(ctx dex.Context, state AgentState) (*AgentM
 		instruction = "This is a planning-only turn. Do not execute business tools or claim that planned work was performed."
 	} else if plan != nil && plan.Status == PlanStatusActive {
 		instruction = "The user approved this plan. Execute it and use write_todos to keep task statuses accurate. If required information is missing, keep dependent tasks pending, call request_user_input with 1-3 related questions, and stop until the user answers."
+		if state.PlanNoProgressAttempts > 0 {
+			instruction += " The previous response left this active plan unfinished without requesting a tool. Continue the work now, call request_user_input for missing information, or use write_todos to record the accurate final state. Do not ask for required input only in assistant text."
+		}
 	}
 	return &AgentMessage{
 		Role:    MessageRoleSystem,
@@ -1140,7 +1211,8 @@ const (
 	stepTypeExecuteTool    stepType = "ExecuteTool"
 	stepTypeDurableWait    stepType = "DurableWait"
 
-	maximumSteeringMessageCount = 2_147_483_647
+	maximumSteeringMessageCount       = 2_147_483_647
+	maximumAutomaticPlanRecoveryCount = 1
 )
 
 type continuation string
@@ -1174,7 +1246,10 @@ type toolHeartbeat struct {
 var (
 	messageMutationStepOptions = &dex.StepOptions{
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
-		ExecuteLockAttributes:    []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+		ExecuteLockAttributes: []dex.AttributeLock{
+			dex.LockAttribute(pendingUserInputAttribute),
+			dex.LockAttribute(pendingApprovalAttribute),
+		},
 	}
 	messageContextStepOptions = &dex.StepOptions{
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{
@@ -1250,17 +1325,20 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err != nil {
 		return nil, err
 	}
-	conditions := []dex.Condition{
-		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
-		queuedUserMessagesChannel.ForOne(),
-	}
-	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
-		conditions = append(conditions, planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)))
-	}
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
 		return nil, err
 	}
-	return dex.AnyOf(conditions...), nil
+	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
+		return dex.AnyOf(
+			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+			queuedUserMessagesChannel.ForOne(),
+			planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)),
+		), nil
+	}
+	return dex.AnyOf(
+		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+		queuedUserMessagesChannel.ForOne(),
+	), nil
 }
 
 func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
@@ -1404,10 +1482,12 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 	if _, err := step.flow.trimSummarizedMessages(ctx, config, state); err != nil {
 		return nil, err
 	}
-	if err := step.flow.writeActivity(ctx, AgentEvent{
+	activity := AgentEvent{
 		Kind:    EventKindCompacted,
 		Message: fmt.Sprintf("Compacted conversation through message %d.", input),
-	}); err != nil {
+	}
+	activity.Message = condenseActivityMessage(activity.Message)
+	if err := agentActivityStream.Write(ctx, activity); err != nil {
 		return nil, err
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCallModel), nil
@@ -1451,10 +1531,20 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	}
 	progress := modelProgress{
 		ctx:               ctx,
-		assistantWriter:   assistantWriter,
-		reasoningWriter:   reasoningWriter,
 		activityWriteFunc: step.flow.writeActivity,
 		messageSequence:   state.NextSequence,
+	}
+	writeAssistant := func(chunk string) error {
+		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		return assistantWriter.Write(chunk)
+	}
+	writeReasoning := func(chunk string) error {
+		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseReasoningStream}); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		return reasoningWriter.Write(chunk)
 	}
 	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + "."}); activityErr != nil {
 		return nil, activityErr
@@ -1467,8 +1557,8 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		Config:         config,
 		Messages:       messages,
 		Tools:          tools,
-		WriteAssistant: progress.writeAssistant,
-		WriteReasoning: progress.writeReasoning,
+		WriteAssistant: writeAssistant,
+		WriteReasoning: writeReasoning,
 		WriteActivity:  progress.writeActivity,
 		ForcedTool:     forcedToolName,
 		FlowID:         FlowID(ctx.FlowID()),
@@ -1521,8 +1611,19 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		if plan == nil || plan.Status == PlanStatusCompleted {
 			state.InteractionMode = InteractionModeChat
 			state.PlanningRequiresWrite = false
+			state.PlanNoProgressAttempts = 0
 			if err := agentStateAttribute.Set(ctx, state); err != nil {
 				return nil, err
+			}
+		} else if plan.Status == PlanStatusActive &&
+			state.InteractionMode == InteractionModeExecuting &&
+			!allTasksCompleted(plan.Tasks) {
+			state.PlanNoProgressAttempts++
+			if err := agentStateAttribute.Set(ctx, state); err != nil {
+				return nil, err
+			}
+			if state.PlanNoProgressAttempts <= maximumAutomaticPlanRecoveryCount {
+				return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCallModel), nil
 			}
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueAwaitUser), nil
@@ -1530,6 +1631,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	state.Status = AgentStatusRoutingTool
 	state.PendingToolCalls = reply.ToolCalls
 	state.PendingToolIndex = 0
+	state.PlanNoProgressAttempts = 0
 	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return nil, err
 	}
@@ -1844,7 +1946,7 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 	if len(approvals) == 0 {
 		return nil, errors.New("the approval wait completed without a decision")
 	}
-	if deleteErr := pendingApprovalAttribute.Delete(ctx); deleteErr != nil {
+	if deleteErr := pendingApprovalAttribute.Delete(ctx); deleteErr != nil && !isAttributeNotFound(deleteErr) {
 		return nil, deleteErr
 	}
 	if approvals[0].Approved {
@@ -1899,13 +2001,21 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	if configErr != nil {
 		return nil, configErr
 	}
+	runtimeMetadata, metadataErr := agentRuntimeMetadataAttribute.Get(ctx)
+	if isAttributeNotFound(metadataErr) {
+		runtimeMetadata = MustJSONObject(`{}`)
+	} else if metadataErr != nil {
+		return nil, metadataErr
+	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
 	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
-		Name:           call.Name,
-		Arguments:      call.Arguments,
-		EnabledServers: config.EnabledMCPServers,
-		WriteProgress:  progress.write,
-		CallID:         call.ID,
+		FlowID:          FlowID(ctx.FlowID()),
+		RuntimeMetadata: runtimeMetadata,
+		Name:            call.Name,
+		Arguments:       call.Arguments,
+		EnabledServers:  config.EnabledMCPServers,
+		WriteProgress:   progress.write,
+		CallID:          call.ID,
 	})
 	if executeErr != nil {
 		callID := call.ID
@@ -2042,24 +2152,8 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 
 type modelProgress struct {
 	ctx               dex.Context
-	assistantWriter   *dex.BufferedTextStream
-	reasoningWriter   *dex.BufferedTextStream
 	activityWriteFunc func(dex.Context, AgentEvent) error
 	messageSequence   Sequence
-}
-
-func (progress modelProgress) writeAssistant(chunk string) error {
-	if err := progress.ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); err != nil {
-		return err
-	}
-	return progress.assistantWriter.Write(chunk)
-}
-
-func (progress modelProgress) writeReasoning(chunk string) error {
-	if err := progress.ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseReasoningStream}); err != nil {
-		return err
-	}
-	return progress.reasoningWriter.Write(chunk)
 }
 
 func (progress modelProgress) writeActivity(event AgentEvent) error {
@@ -2070,7 +2164,9 @@ func (progress modelProgress) writeActivity(event AgentEvent) error {
 		return err
 	}
 	event.MessageSequence = &progress.messageSequence
-	return progress.activityWriteFunc(progress.ctx, event)
+	// Streams are disposable; heartbeat failure still cancels the provider call.
+	_ = progress.activityWriteFunc(progress.ctx, event)
+	return nil
 }
 
 type toolProgress struct {
@@ -2079,7 +2175,7 @@ type toolProgress struct {
 	call ToolCall
 }
 
-func (progress toolProgress) write(_ string) error {
+func (progress toolProgress) write(message string) error {
 	if err := progress.ctx.RecordHeartbeat(toolHeartbeat{
 		Phase:    heartbeatPhaseToolProgress,
 		ToolName: progress.call.Name,
@@ -2088,12 +2184,21 @@ func (progress toolProgress) write(_ string) error {
 	}
 	callID := progress.call.ID
 	toolName := progress.call.Name
-	return progress.flow.writeActivity(progress.ctx, AgentEvent{
+	// Streams are disposable; heartbeat failure still cancels the tool call.
+	_ = progress.flow.writeActivity(progress.ctx, AgentEvent{
 		Kind:     EventKindToolProgress,
-		Message:  "Running " + string(progress.call.Name) + ".",
+		Message:  toolProgressMessage(progress.call.Name, message),
 		CallID:   &callID,
 		ToolName: &toolName,
 	})
+	return nil
+}
+
+func toolProgressMessage(tool ToolName, message string) string {
+	if strings.TrimSpace(message) == "" {
+		return "Running " + string(tool) + "."
+	}
+	return condenseActivityMessage(message)
 }
 
 func errorTypeName(err error) string {

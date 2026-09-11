@@ -172,6 +172,16 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 
 	activeTasks := activePlan(request.Messages)
 	if activeTasks != nil && hasUnfinishedTask(activeTasks) {
+		if strings.HasPrefix(strings.ToLower(lastUserContent(request.Messages)), "/plan-slow-stop ") {
+			if err := waitContext(ctx, 800*time.Millisecond); err != nil {
+				return agent.ModelReply{}, err
+			}
+			content := "I stopped before completing every plan task."
+			if err := streamMockContent(ctx, content, request.WriteAssistant); err != nil {
+				return agent.ModelReply{}, err
+			}
+			return agent.ModelReply{Content: content, ToolCalls: []agent.ToolCall{}}, nil
+		}
 		if strings.HasPrefix(strings.ToLower(lastUserContent(request.Messages)), "/plan-stop ") {
 			content := "I stopped before completing every plan task."
 			if err := streamMockContent(ctx, content, request.WriteAssistant); err != nil {

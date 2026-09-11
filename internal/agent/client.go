@@ -58,17 +58,27 @@ func NewClient(sdkClient *dex.Client, flow *Flow) *Client {
 }
 
 // Start creates one non-reusable durable Agent Flow.
-func (client *Client) Start(ctx context.Context, flowID FlowID, config AgentConfig) (RunID, error) {
-	if strings.TrimSpace(string(flowID)) == "" {
-		return "", errors.New("flow ID must not be empty")
+func (client *Client) Start(ctx context.Context, flowID FlowID, request StartRequest) (RunID, error) {
+	if err := validateFlowID(flowID); err != nil {
+		return "", err
 	}
-	if err := client.flow.validateConfig(config); err != nil {
+	if err := client.flow.validateConfig(request.Config); err != nil {
 		return "", fmt.Errorf("validate Agent config: %w", err)
 	}
-	requestID := "start:" + string(flowID)
-	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), config, dex.StartFlowOptions{
+	if err := validateRuntimeMetadata(request.RuntimeMetadata); err != nil {
+		return "", err
+	}
+	metadata := request.RuntimeMetadata
+	if metadata == "" {
+		metadata = MustJSONObject(`{}`)
+	}
+	initialMetadata, err := dex.InitialAttribute(agentRuntimeMetadataAttribute, metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode Agent runtime metadata: %w", err)
+	}
+	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), request.Config, dex.StartFlowOptions{
 		IDReusePolicy: dex.IDReuseDisallow,
-		RequestID:     &requestID,
+		Attributes:    []dex.InitialAttributeDef{initialMetadata},
 	})
 	if err != nil {
 		return "", err
@@ -82,6 +92,9 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, config AgentConf
 // SendMessage invokes the durable SendMessage command.
 func (client *Client) SendMessage(ctx context.Context, flowID FlowID, message UserMessage) error {
 	if err := validateFlowID(flowID); err != nil {
+		return err
+	}
+	if err := validateNewUserMessage(message); err != nil {
 		return err
 	}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
@@ -105,21 +118,8 @@ func (client *Client) AnswerQuestions(
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(request.CallID)) == "" {
-		return errors.New("call ID must not be empty")
-	}
-	if len(request.Answers) == 0 || len(request.Answers) > maximumUserInputQuestions {
-		return fmt.Errorf("answers must contain 1-%d values", maximumUserInputQuestions)
-	}
-	seen := make(map[UserInputQuestionID]struct{}, len(request.Answers))
-	for _, answer := range request.Answers {
-		if strings.TrimSpace(string(answer.QuestionID)) == "" || strings.TrimSpace(answer.Answer) == "" {
-			return errors.New("answers require question ID and answer")
-		}
-		if _, found := seen[answer.QuestionID]; found {
-			return fmt.Errorf("question %q was answered more than once", answer.QuestionID)
-		}
-		seen[answer.QuestionID] = struct{}{}
+	if err := validateAnswerQuestionsRequest(request); err != nil {
+		return err
 	}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
 		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
@@ -169,8 +169,8 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(request.MessageID)) == "" {
-		return errors.New("message ID must not be empty")
+	if err := validateMessageID(request.MessageID); err != nil {
+		return err
 	}
 	var accepted bool
 	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, &accepted, dex.InvokeOptions{
@@ -254,38 +254,24 @@ func (client *Client) ArchivedMessages(ctx context.Context, flowID FlowID, befor
 	if err := validateFlowID(flowID); err != nil {
 		return HistoryPage{}, err
 	}
-	if before <= Sequence(archiveMessageChunkSize) || (before-1)%Sequence(archiveMessageChunkSize) != 0 {
+	first, isValid := archivedMessageChunkFirst(before)
+	if !isValid {
 		return HistoryPage{}, fmt.Errorf("before sequence must identify a %d-message boundary", archiveMessageChunkSize)
 	}
-	first := before - Sequence(archiveMessageChunkSize)
-	var chunk ArchivedMessageChunk
-	found, err := client.sdk.GetAttributeMapInstance(
-		ctx,
-		string(flowID),
-		archivedMessagesAttribute,
-		sequenceKey(first),
-		&chunk,
-	)
+	var result archivedMessagesRPCOutput
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ArchivedMessages, before, &result, dex.InvokeOptions{
+		Timeout: client.commandTimeout,
+		LoadAttributeMapInstances: []dex.AttributeMapLoad{
+			archivedMessagesAttribute.Load(sequenceKey(first)),
+		},
+	})
 	if err != nil {
 		return HistoryPage{}, err
 	}
-	if !found {
+	if !result.Found {
 		return HistoryPage{}, &ArchivedMessagesNotFoundError{BeforeSequence: before}
 	}
-	var state AgentState
-	found, err = client.sdk.GetAttribute(ctx, string(flowID), agentStateAttribute, &state)
-	if err != nil {
-		return HistoryPage{}, err
-	}
-	if !found {
-		return HistoryPage{}, errors.New("agent state is not initialized")
-	}
-	var next *Sequence
-	if first > state.FirstRetainedSequence {
-		value := first
-		next = &value
-	}
-	return HistoryPage{Messages: chunk.Messages, NextBeforeSequence: next}, nil
+	return result.Page, nil
 }
 
 // WaitForInteractionStatus blocks until the durable synchronization status matches expected.
@@ -438,8 +424,8 @@ func (client *Client) DeleteQueuedMessage(ctx context.Context, flowID FlowID, me
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(messageID)) == "" {
-		return errors.New("message ID must not be empty")
+	if err := validateMessageID(messageID); err != nil {
+		return err
 	}
 	return client.sdk.DeleteChannelMessage(
 		ctx,
@@ -454,10 +440,14 @@ func (client *Client) ApproveTool(ctx context.Context, flowID FlowID, request To
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
+	if strings.TrimSpace(string(request.CallID)) == "" {
+		return errors.New("call ID must not be empty")
+	}
 	var accepted bool
 	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, request, &accepted, dex.InvokeOptions{
 		Timeout:         client.commandTimeout,
 		IsTransactional: true,
+		LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingApprovalAttribute)},
 	}); err != nil {
 		return err
 	}
@@ -469,10 +459,14 @@ func (client *Client) ExecutePlan(ctx context.Context, flowID FlowID, request Pl
 	if err := validateFlowID(flowID); err != nil {
 		return err
 	}
+	if request.Revision <= 0 {
+		return errors.New("plan revision must be positive")
+	}
 	var accepted bool
 	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, request, &accepted, dex.InvokeOptions{
 		Timeout:         client.commandTimeout,
 		IsTransactional: true,
+		LockAttributes:  []dex.AttributeLock{dex.LockAttribute(agentStateAttribute)},
 	}); err != nil {
 		return err
 	}

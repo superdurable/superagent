@@ -10,5 +10,6 @@ alwaysApply: false
 with ogen and the TypeScript Fetch client with Hey API. Commit generated files
 and enforce zero drift. Handwritten code uses explicit domain mappers.
 
-Snapshot is the only durable browser read model. Contract tests must enforce
-the complete supported HTTP path set.
+Snapshot is the only durable current-interaction and reconciliation read model.
+Archive pages continue immutable history without exposing another Agent state
+model. Contract tests must enforce the complete supported HTTP path set.

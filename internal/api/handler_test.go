@@ -116,6 +116,27 @@ func TestAnswerQuestionsRejectionMapsToConflict(t *testing.T) {
 	}
 }
 
+func TestExecutePlanRejectionExplainsTheExecutionBoundary(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{
+		executeErr: &agent.CommandRejectedError{Command: agent.CommandExecutePlan},
+	}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.ExecutePlan(context.Background(), &transportapi.ExecutePlanRequest{
+		FlowId: "flow-1", Revision: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict, ok := response.(*transportapi.ExecutePlanConflict)
+	if !ok {
+		t.Fatalf("response type = %T", response)
+	}
+	if conflict.Detail != "the Agent is not at an executable wait or the Plan revision changed" {
+		t.Fatalf("conflict detail = %q", conflict.Detail)
+	}
+}
+
 func TestReadEventMapsTypedActivity(t *testing.T) {
 	t.Parallel()
 	callID := agent.CallID("call-1")
@@ -488,15 +509,16 @@ type fakeAgentService struct {
 	deleteErr        error
 	steeredMessageID agent.MessageID
 	steerErr         error
+	executeErr       error
 	event            agent.StreamEvent
 	eventErr         error
 }
 
 var _ AgentService = (*fakeAgentService)(nil)
 
-func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, config agent.AgentConfig) (agent.RunID, error) {
+func (service *fakeAgentService) Start(_ context.Context, _ agent.FlowID, request agent.StartRequest) (agent.RunID, error) {
 	service.startCalls++
-	service.started = config
+	service.started = request.Config
 	return "run-1", nil
 }
 
@@ -560,8 +582,8 @@ func (*fakeAgentService) ApproveTool(context.Context, agent.FlowID, agent.ToolAp
 	return nil
 }
 
-func (*fakeAgentService) ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error {
-	return nil
+func (service *fakeAgentService) ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error {
+	return service.executeErr
 }
 
 func (service *fakeAgentService) ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error) {

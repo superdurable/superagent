@@ -1602,11 +1602,11 @@ func (s MessageID) Validate() error {
 	if err := (validate.String{
 		MinLength:     1,
 		MinLengthSet:  true,
-		MaxLength:     255,
+		MaxLength:     256,
 		MaxLengthSet:  true,
 		Email:         false,
 		Hostname:      false,
-		Regex:         nil,
+		Regex:         regexMap["^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"],
 		MinNumeric:    0,
 		MinNumericSet: false,
 		MaxNumeric:    0,

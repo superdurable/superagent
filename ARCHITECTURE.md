@@ -21,53 +21,109 @@ Agent state. Streams reduce latency but never become recovery state.
 
 ## Package ownership
 
-| Package | Owns | Must not own |
-|---|---|---|
-| `internal/agent` | Domain IDs/enums, Flow graph, private Dex descriptors, command client | Provider protocols, HTTP transport models, global configuration |
-| `internal/api` | ogen implementation, validation mapping, problem responses | Handwritten routes, generated-model duplicates, durable state |
-| `internal/app` | Dependency construction, goroutine ownership, startup and shutdown | Domain decisions or provider-specific payloads |
-| `internal/config` | Environment parsing and validated immutable sections | Runtime singletons or secret logging |
-| `internal/model` | Provider routing, protocol adapters, in-memory credential lookup | Dex resources or HTTP API responses |
-| `internal/mcp` | Trusted server config, discovery, policy, sessions, retries, brokers | Agent state transitions or exported Dex resource access |
-| `web` | React portal and generated Fetch client | Handwritten API response types or durable-state reconstruction |
+| Package           | Owns                                                                           | Must not own                                                       |
+| ----------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `agent`           | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle     |
+| `model`           | Public built-in provider adapters, router, and process-memory credentials      | Dex resources, provider protocol implementation, process lifecycle |
+| `internal/agent`  | Domain IDs/enums, Flow graph, private Dex descriptors, command client          | Provider protocols, HTTP transport models, global configuration    |
+| `internal/api`    | ogen implementation, validation mapping, problem responses                     | Handwritten routes, generated-model duplicates, durable state      |
+| `internal/app`    | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
+| `internal/config` | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
+| `internal/model`  | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
+| `internal/mcp`    | Trusted server config, discovery, policy, sessions, retries, brokers           | Agent state transitions or exported Dex resource access            |
+| `web`             | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
+| `web/packages/superagent-ui` | Transport-free React conversation components and local interaction behavior | Dex/API clients, routing, durable state, or product workflows |
 
 Interfaces live at their consuming boundary. Concrete single-use components do
 not receive speculative interfaces, and there is no general-purpose helpers
 package.
 
+The Web application maps generated domain objects into the plain view models
+accepted by `@superdurable/superagent-ui`. The shared package never imports the
+generated client or reconstructs application state; this keeps it reusable by
+other products without coupling their transport or orchestration to this portal.
+
+The public `agent` package is a thin façade over `internal/agent`. It aliases the
+stable application types and delegates constructors, so embedders share the
+same Flow implementation as the reference process. It does not expose private
+Attribute, Channel, or Stream descriptor handles, nor does it provide generic
+reads around them. Provider and tool implementations remain constructor-injected
+and may live in the embedding application.
+
+The public `model` package aliases the built-in provider implementations and
+delegates their constructors. Embedders can opt into those adapters without
+depending on `internal/model` or duplicating provider wiring.
+
 ## Durable Agent model
 
-One stable `FlowID` identifies one conversation. `CurrentMessages` and
-`ArchivedMessages` are the typed application history; they are not Dex
-execution history. `AgentState` owns the retained sequence range, interaction
-mode, status, pending tool cursor, and plan revision. Plans, pending approvals,
-timers, input prompts, and cumulative context summaries are separate typed
-Attributes.
+One stable `FlowID` identifies one conversation. `Client.Start` supplies an
+immutable `AgentConfig` and optional `RuntimeMetadata`, then starts Dex with
+`IDReuseDisallow`. Runtime metadata is one validated JSON object capped at
+16 KiB. It exists for trusted integration routing across Worker replacement;
+tool implementations receive it with the Flow and call IDs. Models, browser
+Snapshots, Streams, and logs do not receive it. It must not contain secrets.
+
+`CurrentMessages` and `ArchivedMessages` are the typed application history;
+they are not Dex execution history. `AgentState` owns the retained sequence
+range, interaction mode, status, pending tool cursor, plan revision, and
+consecutive Plan no-progress count. Plans, pending approvals, timers, input
+prompts, and cumulative context summaries are separate typed Attributes.
+
+Snapshot is the only durable current-interaction and reconciliation read model.
+Archive paging is an immutable history continuation. Each page uses one
+read-only Flow RPC that loads `AgentState` and one exact archive chunk, without
+loading current interaction state or pending Channels.
+
+Commands follow Dex's transactional RPC model. There is no permanent command
+receipt, caller request ID, payload fingerprint, global mutation revision, or
+historical acceptance ledger. A response reports only whether current durable
+state accepted the command. After an ambiguous transport result, the caller
+reads Snapshot and reconciles current state.
+
+`SendMessage` publishes a validated message directly to
+`QueuedUserMessages`. Dex assigns the Channel message ID. Snapshot returns that
+ID so edit, delete, and steer target the exact pending entry. `SteerMessage`
+loads the queued Channel and atomically deletes that ID before publishing its
+value to `SteeredUserMessages`; a repeated or stale ID is not accepted.
 
 Queued messages and validated question answers use `QueuedUserMessages`.
-Steering uses its own Channel. A queued message enters application history only
-after a Step consumes it. Steering is consumed only at
-explicit safe Step boundaries, so it cannot claim to cancel an in-flight model
-or MCP side effect. `AnswerQuestions` verifies all answers for the exact pending
-one-to-three-question batch, deletes it, publishes one ordered answer message,
-and writes `submitted` in one locked RPC commit. Approval and plan execution use
-ChannelMaps keyed by typed call ID and plan revision.
+Steering is consumed only at explicit safe Step boundaries, so it cannot claim
+to cancel an in-flight model or MCP side effect. `AnswerQuestions` verifies the
+exact pending call ID and every question ID. One RPC commit deletes
+`PendingUserInput`, publishes the ordered answer message, and writes
+`submitted`. `ApproveTool` accepts only the current
+`PendingApproval.CallID`; it deletes the pending value and publishes the
+decision in the same commit. Repeated and stale commands are rejected.
+
+Plan execution is available only at a durable `waiting_for_message` boundary
+for the latest revision with no pending input, approval, timer, queued message,
+or steering. The browser derives the button state from Snapshot plus the
+interaction-status long poll, so `submitted` closes the boundary immediately.
+An executing active Plan that produces no tool call receives one automatic
+corrective model turn. A second consecutive no-progress response returns to the
+durable wait and exposes `Continue plan`.
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit
 boundary. Waiting state is written in the `WaitFor` that establishes the wait.
 Provider and MCP calls occur only in `Execute`. The complete graph and resource
 table are in `docs/flow-model.md`.
 
+History-reading Steps declare bounded AttributeMap loads explicitly. The public
+client can read at most 200 canonical retained messages after an exclusive
+sequence cursor without using Dex execution history or Streams. Tool
+invocations receive the stable Flow ID, model call ID, and runtime metadata as
+one durable routing identity, including after Worker replacement.
+
 ## Durable and live reconciliation
 
-| Data | Durability | Recovery role |
-|---|---|---|
-| Attributes, AttributeMaps, Channels | Dex durable state | Authoritative |
-| assistant/reasoning buffered Streams | Best effort | UI latency only |
-| structured activity Stream | Best effort | Observability and UI latency |
-| BlobCache | Disposable local acceleration | Never authoritative |
-| provider/MCP session | Per invocation | Recreated after failure |
-| generated browser state | In-memory projection | Replaced from Snapshot |
+| Data                                 | Durability                    | Recovery role                |
+| ------------------------------------ | ----------------------------- | ---------------------------- |
+| Attributes, AttributeMaps, Channels  | Dex durable state             | Authoritative                |
+| assistant/reasoning buffered Streams | Best effort                   | UI latency only              |
+| structured activity Stream           | Best effort                   | Observability and UI latency |
+| BlobCache                            | Disposable local acceleration | Never authoritative          |
+| provider/MCP session                 | Per invocation                | Recreated after failure      |
+| generated browser state              | In-memory projection          | Replaced from Snapshot       |
 
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
@@ -96,14 +152,25 @@ refresh starts from an empty token, so Dex may replay events from its retained
 head. Events removed by Stream retention are not reconstructed. Completed-source
 tracking prevents replayed text from duplicating durable assistant messages and
 keeps replayed reasoning summaries in a completed state.
+The timeline follows new content only while the reader is at its bottom. Manual
+upward scrolling pauses that behavior. Later message, reasoning, or activity
+content exposes an explicit jump-to-latest control instead of moving the
+viewport. Archive prepends preserve the reading position and do not count as
+new timeline content. Agent status lives inside the fixed composer above its
+primary action, so it stays visible without covering the timeline.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot
 replace newer durable state.
-Message send displays one local, non-actionable `Submitting` item and changes it
-to `Queued` after HTTP acceptance. Failure restores its composer text and plan
-mode. Pending input uses the dedicated `answerQuestions` operation. The browser
+Message send displays one local, non-actionable `Submitting` item. Snapshot
+reconciliation replaces it with the queued entry and its Dex-generated message
+ID. Failure restores its composer text and plan mode. The composer retains
+focus and remains editable while submission and Snapshot reconciliation gate
+later mutations. Pending input uses the dedicated
+`answerQuestions` operation. The browser
 collects every answer locally, permits review, and submits the complete batch.
+Preset answers may include a compact supplemental detail that is composed into
+the answer string; `Other` requires free text.
 HTTP acceptance means the server has durably removed that exact batch and
 queued one normal answer message. Queue edit, delete, and steer optimistically
 remove one stable message ID.
@@ -120,8 +187,9 @@ domain package.
 
 The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
 one exact archive-chunk read, interaction-status long polling, queue deletion
-and steering, typed event polling, health, and readiness. The API
-process does not serve React files. Long-poll expiry has a generated typed body,
+and steering, typed event polling, health, and readiness. Mutation responses
+report acceptance without durable command receipts. The API process does not
+serve React files. Long-poll expiry has a generated typed body,
 so the browser can distinguish normal polling cadence from a transport failure.
 Snapshot responses carry the generated `Cache-Control: no-store` contract.
 Running responses contain a non-null Agent description. Terminal responses
