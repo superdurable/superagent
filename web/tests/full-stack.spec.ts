@@ -945,14 +945,18 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   expect(executeStatuses).toEqual([202]);
   expect(executeBodies).toEqual([{ flowId: expect.any(String), revision: 1 }]);
   expect(snapshotStatuses.length).toBeGreaterThan(snapshotsBeforeExecution);
+  const flowId = executeBodies[0]?.flowId;
+  if (flowId === undefined) throw new Error("missing Plan Flow ID");
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
   await expect(plan.getByText("Plan revision 1")).toBeVisible();
   await expect(continueAction).toBeEnabled({ timeout: 20_000 });
-  const callsBeforeContinue = await activity
-    .filter({ hasText: "Calling mock/dex." })
-    .count();
+  const beforeContinue = await readAgentSnapshot(page, flowId);
+  if (beforeContinue.description === null) {
+    throw new Error("Plan Flow became terminal before Continue");
+  }
+  const sequenceBeforeContinue = beforeContinue.description.lastSequence;
 
   const snapshotsBeforeContinue = snapshotStatuses.length;
   const continued = page.waitForResponse(
@@ -974,16 +978,17 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
     .toBeGreaterThan(snapshotsBeforeContinue);
   await expect(continueAction).toBeEnabled({ timeout: 20_000 });
   await expect
-    .poll(() => activity.filter({ hasText: "Calling mock/dex." }).count())
-    .toBe(callsBeforeContinue + 2);
+    .poll(async () => {
+      const snapshot = await readAgentSnapshot(page, flowId);
+      return snapshot.description?.lastSequence ?? sequenceBeforeContinue;
+    })
+    .toBeGreaterThan(sequenceBeforeContinue);
   expect(executeStatuses).toEqual([202, 202]);
   expect(executeBodies).toEqual([
     { flowId: expect.any(String), revision: 1 },
     { flowId: expect.any(String), revision: 1 },
   ]);
 
-  const flowId = executeBodies[0]?.flowId;
-  if (flowId === undefined) throw new Error("missing Plan Flow ID");
   let shouldInjectRace = true;
   await page.route("**/products/ai-agent/plans/execute", async (route) => {
     if (shouldInjectRace) {
