@@ -71,6 +71,8 @@ var (
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error                       = (*agent.Client).ApproveTool
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error                      = (*agent.Client).ExecutePlan
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence, int) (agent.ForwardHistoryPage, error) = (*agent.Client).MessagesAfter
+	_ agent.EventKind                                                                                           = agent.EventKindPlanTaskUpdated
+	_ agent.PlanTaskIndex                                                                                       = 0
 )
 
 func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {

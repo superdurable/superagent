@@ -6,6 +6,12 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import {
+  EventStream,
+  FlowStatus,
+  type AgentSnapshot,
+} from "../src/api/generated/index";
+
 const apiOrigin =
   process.env["SUPERAGENT_E2E_API_ORIGIN"] ?? "http://127.0.0.1:8080";
 
@@ -112,6 +118,9 @@ test("renders chronological transient activity and durable queue interactions", 
   await composer.fill("/wait 90 browser queue test");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("90s")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
+  await expect(page.getByText("90s")).toBeVisible();
   await page.getByRole("checkbox", { name: "Plan mode" }).check();
   await composer.fill("edit this queued message");
   await page.getByRole("button", { name: "Create plan" }).click();
@@ -127,6 +136,12 @@ test("renders chronological transient activity and durable queue interactions", 
     "edit this queued message",
     "delete this queued message",
   ]);
+  const flowId = await displayedFlowID(page);
+  const originalEditMessageID = await pendingMessageID(
+    page,
+    flowId,
+    "edit this queued message",
+  );
 
   const editRow = queue
     .locator(".queue-message")
@@ -138,7 +153,19 @@ test("renders chronological transient activity and durable queue interactions", 
   await expect(composer).toHaveValue("edit this queued message");
   await expect(composer).toBeFocused();
   await expect(page.getByRole("checkbox", { name: "Plan mode" })).toBeChecked();
-  await composer.fill("");
+  await expect(editRow).toHaveCount(0);
+  await composer.fill("edited queued message");
+  await page.getByRole("button", { name: "Create plan" }).click();
+  const editedRow = queue
+    .locator(".queue-message")
+    .filter({ hasText: "edited queued message" });
+  await expect(editedRow).toBeVisible();
+  const editedMessageID = await pendingMessageID(
+    page,
+    flowId,
+    "edited queued message",
+  );
+  expect(editedMessageID).not.toBe(originalEditMessageID);
   await page.getByRole("checkbox", { name: "Plan mode" }).uncheck();
 
   const deleteRow = queue
@@ -257,6 +284,230 @@ test("recovers an initial Snapshot network failure through the real API", async 
   await page.getByRole("button", { name: "Retry Snapshot" }).click();
   await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Message" })).toBeEnabled();
+});
+
+test("reconciles accepted commands when their browser responses are lost", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const requestCounts = new Map<string, number>();
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    const path = new URL(request.url()).pathname;
+    requestCounts.set(path, (requestCounts.get(path) ?? 0) + 1);
+  });
+
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  const history = page.getByRole("region", { name: "Conversation history" });
+
+  const sendPath = "/products/ai-agent/messages";
+  await abortSuccessfulResponseOnce(page, sendPath, 202);
+  const sendsBefore = requestCounts.get(sendPath) ?? 0;
+  await composer.fill("ambiguous send is reconciled");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(
+    history.locator(".message-bubble.user").filter({
+      hasText: "ambiguous send is reconciled",
+    }),
+  ).toHaveCount(1);
+  await expect(
+    history.locator(".message-bubble.assistant").filter({
+      hasText: "Local demo response: ambiguous send is reconciled",
+    }),
+  ).toHaveCount(1);
+  expect(requestCounts.get(sendPath)).toBe(sendsBefore + 1);
+  await page.unroute(`**${sendPath}`);
+
+  await composer.fill("/questions");
+  await page.getByRole("button", { name: "Send" }).click();
+  const questions = page.getByRole("region", { name: "Agent questions" });
+  await expect(questions).toBeVisible();
+  await fillQuestionBatch(questions);
+  const answerPath = "/products/ai-agent/questions/answer";
+  await abortSuccessfulResponseOnce(page, answerPath, 202);
+  const answersBefore = requestCounts.get(answerPath) ?? 0;
+  await questions.getByRole("button", { name: "Submit all" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(questions).toHaveCount(0);
+  await expect(
+    history.locator(".message-bubble.user").filter({ hasText: "Summary" }),
+  ).toHaveCount(1);
+  expect(requestCounts.get(answerPath)).toBe(answersBefore + 1);
+  await page.unroute(`**${answerPath}`);
+
+  await composer.fill('/tool fixture__echo {"value":"ambiguous approval"}');
+  await page.getByRole("button", { name: "Send" }).click();
+  const approval = page.locator(".approval-card");
+  await expect(approval).toBeVisible();
+  const approvalPath = "/products/ai-agent/tool-approvals";
+  await abortSuccessfulResponseOnce(page, approvalPath, 202);
+  const approvalsBefore = requestCounts.get(approvalPath) ?? 0;
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(approval).toHaveCount(0);
+  await expect(
+    history.locator(".message-bubble.tool").filter({
+      hasText: '"echo":"ambiguous approval"',
+    }),
+  ).toHaveCount(1);
+  expect(requestCounts.get(approvalPath)).toBe(approvalsBefore + 1);
+  await page.unroute(`**${approvalPath}`);
+
+  await composer.fill("/wait 90 ambiguous steering");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("90s")).toBeVisible();
+  await composer.fill("ambiguous steer is reconciled");
+  await page.getByRole("button", { name: "Send" }).click();
+  const queued = page
+    .locator(".queue-message")
+    .filter({ hasText: "ambiguous steer is reconciled" });
+  await expect(queued).toBeVisible();
+  const steerPath = "/products/ai-agent/message-queue/steer";
+  await abortSuccessfulResponseOnce(page, steerPath, 200);
+  const steersBefore = requestCounts.get(steerPath) ?? 0;
+  await queued.getByRole("button", { name: "Steer now" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByText("90s")).toHaveCount(0);
+  await expect(
+    history.locator(".message-bubble.user").filter({
+      hasText: "ambiguous steer is reconciled",
+    }),
+  ).toHaveCount(1);
+  expect(requestCounts.get(steerPath)).toBe(steersBefore + 1);
+  await page.unroute(`**${steerPath}`);
+});
+
+test("reconciles stale queue, question, and approval controls without damaging the Flow", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const staleStatuses: number[] = [];
+  page.on("response", (response) => {
+    if ([404, 409].includes(response.status())) {
+      staleStatuses.push(response.status());
+    }
+  });
+
+  await startAgent(page);
+  const flowId = await displayedFlowID(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill("/wait 90 stale controls");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("90s")).toBeVisible();
+  await composer.fill("stale queue target");
+  await page.getByRole("button", { name: "Send" }).click();
+  const staleQueue = page
+    .locator(".queue-message")
+    .filter({ hasText: "stale queue target" });
+  await expect(staleQueue).toBeVisible();
+  const deletePath = "/products/ai-agent/message-queue/delete";
+  await consumeBeforeBrowserRequest(page, deletePath, 200);
+  await staleQueue.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(staleQueue).toHaveCount(0);
+  await page.unroute(`**${deletePath}`);
+
+  await composer.fill("/questions");
+  await page.getByRole("button", { name: "Send" }).click();
+  const questionQueue = page
+    .locator(".queue-message")
+    .filter({ hasText: "/questions" });
+  await expect(questionQueue).toBeVisible();
+  await questionQueue.getByRole("button", { name: "Steer now" }).click();
+  const questions = page.getByRole("region", { name: "Agent questions" });
+  await expect(questions).toBeVisible();
+  await fillQuestionBatch(questions);
+  const answerPath = "/products/ai-agent/questions/answer";
+  await consumeBeforeBrowserRequest(page, answerPath, 202);
+  await questions.getByRole("button", { name: "Submit all" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(questions).toHaveCount(0);
+  await page.unroute(`**${answerPath}`);
+
+  await composer.fill('/tool fixture__echo {"value":"stale approval"}');
+  await page.getByRole("button", { name: "Send" }).click();
+  const approval = page.locator(".approval-card");
+  await expect(approval).toBeVisible();
+  const approvalPath = "/products/ai-agent/tool-approvals";
+  await consumeBeforeBrowserRequest(page, approvalPath, 202);
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(approval).toHaveCount(0);
+  await page.unroute(`**${approvalPath}`);
+
+  expect(staleStatuses).toHaveLength(3);
+  for (const status of staleStatuses) expect([404, 409]).toContain(status);
+  await composer.fill("Flow continues after stale controls");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.locator(".message-bubble.assistant").filter({
+      hasText: "Local demo response: Flow continues after stale controls",
+    }),
+  ).toHaveCount(1);
+  const snapshot = await readAgentSnapshot(page, flowId);
+  expect(snapshot.flowStatus).toBe(FlowStatus.RUNNING);
+});
+
+test("resumes each live Stream after interruption without duplicate timeline entries", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  for (const stream of [
+    EventStream.REASONING,
+    EventStream.ASSISTANT,
+    EventStream.ACTIVITY,
+  ]) {
+    let deliveredEvent = false;
+    let abortedPoll = false;
+    const resumeTokens: string[] = [];
+    await page.route("**/products/ai-agent/events?**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("stream") !== stream) {
+        await route.continue();
+        return;
+      }
+      const resumeToken = url.searchParams.get("resumeToken");
+      if (resumeToken !== null) resumeTokens.push(resumeToken);
+      if (abortedPoll) {
+        await route.continue();
+        return;
+      }
+      if (deliveredEvent) {
+        abortedPoll = true;
+        await route.abort("failed");
+        return;
+      }
+      const response = await route.fetch();
+      if (response.status() === 200) deliveredEvent = true;
+      await route.fulfill({ response });
+    });
+
+    await startAgent(page);
+    const message = `reconnect ${stream}`;
+    const composer = page.getByRole("textbox", { name: "Message" });
+    await composer.fill(`/reason ${message} | ${message}`);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect.poll(() => abortedPoll).toBe(true);
+    await expect.poll(() => resumeTokens.length).toBeGreaterThan(0);
+    const history = page.getByRole("region", { name: "Conversation history" });
+    await expect(
+      history.locator(".message-bubble.assistant").filter({ hasText: message }),
+    ).toHaveCount(1);
+    await expect(history.locator(".live-message")).toHaveCount(0);
+    await expect(history.locator(".activity-entry")).toHaveCount(2);
+    const activityRows = await history
+      .locator(".activity-entry")
+      .allTextContents();
+    expect(new Set(activityRows).size).toBe(activityRows.length);
+    await page.reload();
+    await expect(
+      page.locator(".message-bubble.assistant").filter({ hasText: message }),
+    ).toHaveCount(1);
+    await page.unroute("**/products/ai-agent/events?**");
+    await page.getByRole("button", { name: "Start another agent" }).click();
+  }
 });
 
 test("preserves a reading position and jumps to new content on a narrow screen", async ({
@@ -509,6 +760,10 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   await expect(
     inputCard.getByText("Which region should I use?", { exact: true }),
   ).toBeVisible();
+  await page.reload();
+  await expect(
+    inputCard.getByText("Which region should I use?", { exact: true }),
+  ).toBeVisible();
   await inputCard.getByRole("button", { name: /^US West/u }).click();
   const regionDetails = inputCard.getByRole("textbox", {
     name: "Additional details for Region",
@@ -588,6 +843,10 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
     approval.getByRole("heading", { name: "fixture__echo" }),
   ).toBeVisible();
   await expect(approval.locator("pre")).toContainText('"value":"approved"');
+  await page.reload();
+  await expect(
+    approval.getByRole("heading", { name: "fixture__echo" }),
+  ).toBeVisible();
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
   await expect(
@@ -687,6 +946,14 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   expect(executeBodies).toEqual([{ flowId: expect.any(String), revision: 1 }]);
   expect(snapshotStatuses.length).toBeGreaterThan(snapshotsBeforeExecution);
 
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
+  await expect(plan.getByText("Plan revision 1")).toBeVisible();
+  await expect(continueAction).toBeEnabled({ timeout: 20_000 });
+  const callsBeforeContinue = await activity
+    .filter({ hasText: "Calling mock/dex." })
+    .count();
+
   const snapshotsBeforeContinue = snapshotStatuses.length;
   const continued = page.waitForResponse(
     (response) =>
@@ -708,7 +975,7 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   await expect(continueAction).toBeEnabled({ timeout: 20_000 });
   await expect
     .poll(() => activity.filter({ hasText: "Calling mock/dex." }).count())
-    .toBe(callsBeforeExecution + 4);
+    .toBe(callsBeforeContinue + 2);
   expect(executeStatuses).toEqual([202, 202]);
   expect(executeBodies).toEqual([
     { flowId: expect.any(String), revision: 1 },
@@ -828,6 +1095,69 @@ test("shows a collapsed Plan above the conversation on a narrow screen", async (
   ).toHaveCount(1);
 });
 
+test("keeps narrow queue actions visible and restores keyboard focus", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill("/wait 90 narrow queue controls");
+  await composer.press("Control+Enter");
+  await expect(page.getByText("90s")).toBeVisible();
+  const queue = page.getByRole("region", { name: "Message queue" });
+  for (const content of ["narrow edit", "narrow delete", "narrow steer"]) {
+    await composer.fill(content);
+    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+    await composer.press("Control+Enter");
+    await expect(
+      queue.locator(".queue-message").filter({ hasText: content }),
+    ).toBeVisible();
+  }
+
+  const editRow = queue
+    .locator(".queue-message")
+    .filter({ hasText: "narrow edit" });
+  const deleteRow = queue
+    .locator(".queue-message")
+    .filter({ hasText: "narrow delete" });
+  const steerRow = queue
+    .locator(".queue-message")
+    .filter({ hasText: "narrow steer" });
+  const edit = editRow.getByRole("button", { name: "Edit" });
+  const remove = deleteRow.getByRole("button", { name: "Delete" });
+  const steer = steerRow.getByRole("button", { name: "Steer now" });
+  for (const control of [edit, remove, steer]) {
+    await control.scrollIntoViewIfNeeded();
+    await expect(control).toBeInViewport();
+    await expect.poll(() => isControlUnobscured(control)).toBe(true);
+  }
+
+  await edit.focus();
+  await edit.press("Enter");
+  await expect(composer).toHaveValue("narrow edit");
+  await expect(composer).toBeFocused();
+  await expect(editRow).toHaveCount(0);
+  await composer.fill("narrow edited replacement");
+  await composer.press("Control+Enter");
+  await expect(queue.getByText("narrow edited replacement")).toBeVisible();
+
+  await expect(remove).toBeEnabled();
+  await remove.focus();
+  await remove.press("Enter");
+  await expect(deleteRow).toHaveCount(0);
+  await expect(composer).toBeFocused();
+
+  await expect(steer).toBeEnabled();
+  await steer.focus();
+  await steer.press("Enter");
+  await expect(page.getByText("90s")).toHaveCount(0);
+  await expect(
+    page.locator(".message-bubble.user").filter({ hasText: "narrow steer" }),
+  ).toHaveCount(1);
+  await expect(composer).toBeFocused();
+});
+
 async function startAgent(page: Page): Promise<void> {
   await page.goto("/");
   await expect(
@@ -859,4 +1189,104 @@ async function directTimelineTimes(history: Locator): Promise<number[]> {
         return Date.parse(dateTime);
       }),
     );
+}
+
+async function abortSuccessfulResponseOnce(
+  page: Page,
+  path: string,
+  expectedStatus: number,
+): Promise<void> {
+  let shouldAbort = true;
+  await page.route(`**${path}`, async (route) => {
+    if (!shouldAbort) {
+      await route.continue();
+      return;
+    }
+    shouldAbort = false;
+    const response = await route.fetch();
+    expect(response.status()).toBe(expectedStatus);
+    await route.abort("failed");
+  });
+}
+
+async function consumeBeforeBrowserRequest(
+  page: Page,
+  path: string,
+  expectedStatus: number,
+): Promise<void> {
+  let shouldConsume = true;
+  await page.route(`**${path}`, async (route) => {
+    if (!shouldConsume) {
+      await route.continue();
+      return;
+    }
+    shouldConsume = false;
+    const body = route.request().postData();
+    if (body === null) throw new Error(`missing request body for ${path}`);
+    const first = await page.request.post(`${apiOrigin}${path}`, {
+      data: body,
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(first.status()).toBe(expectedStatus);
+    await route.continue();
+  });
+}
+
+async function fillQuestionBatch(questions: Locator): Promise<void> {
+  await questions.getByRole("button", { name: /^US West/u }).click();
+  await questions.getByRole("button", { name: "Next" }).click();
+  await questions.getByRole("button", { name: /^Careful/u }).click();
+  await questions.getByRole("button", { name: "Next" }).click();
+  await questions.getByRole("button", { name: /^Summary/u }).click();
+}
+
+async function displayedFlowID(page: Page): Promise<string> {
+  const flowId = await page
+    .locator(".flow-identity code")
+    .first()
+    .textContent();
+  if (flowId === null || flowId === "") throw new Error("missing Flow ID");
+  return flowId;
+}
+
+async function readAgentSnapshot(
+  page: Page,
+  flowId: string,
+): Promise<AgentSnapshot> {
+  const response = await page.request.get(
+    `${apiOrigin}/products/ai-agent/snapshot?flowId=${encodeURIComponent(flowId)}`,
+  );
+  expect(response.status()).toBe(200);
+  return (await response.json()) as AgentSnapshot;
+}
+
+async function pendingMessageID(
+  page: Page,
+  flowId: string,
+  content: string,
+): Promise<string> {
+  let messageId: string | undefined;
+  await expect
+    .poll(async () => {
+      const snapshot = await readAgentSnapshot(page, flowId);
+      messageId = snapshot.queued.find(
+        (message) => message.value.content === content,
+      )?.messageId;
+      return messageId;
+    })
+    .not.toBeUndefined();
+  if (messageId === undefined)
+    throw new Error(`missing queued message ${content}`);
+  return messageId;
+}
+
+async function isControlUnobscured(control: Locator): Promise<boolean> {
+  return control.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const covering = document.elementFromPoint(
+      box.left + box.width / 2,
+      box.top + box.height / 2,
+    );
+    return covering === element || element.contains(covering);
+  });
 }

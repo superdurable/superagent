@@ -88,7 +88,7 @@ export function ConversationView({
 }: ConversationViewProps) {
   const { shellRef, composerRef } = useComposerClearance();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const focusAfterEdit = useRef(false);
+  const shouldFocusAfterQueueMutation = useRef(false);
   const { snapshot } = state;
   const description = snapshot.description;
   const isBusy = state.pendingCommand !== null;
@@ -128,12 +128,15 @@ export function ConversationView({
   );
   useEffect(() => {
     const command = state.pendingCommand?.command;
-    if (command?.kind === "queue" && command.action === "edit") {
-      focusAfterEdit.current = true;
+    if (command?.kind === "queue") {
+      shouldFocusAfterQueueMutation.current = true;
       return;
     }
-    if (state.pendingCommand === null && focusAfterEdit.current) {
-      focusAfterEdit.current = false;
+    if (
+      state.pendingCommand === null &&
+      shouldFocusAfterQueueMutation.current
+    ) {
+      shouldFocusAfterQueueMutation.current = false;
       textareaRef.current?.focus();
     }
   }, [state.pendingCommand]);

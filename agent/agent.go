@@ -127,6 +127,7 @@ const (
 const (
 	EventKindPlanStarted        = agentinternal.EventKindPlanStarted
 	EventKindPlanUpdated        = agentinternal.EventKindPlanUpdated
+	EventKindPlanTaskUpdated    = agentinternal.EventKindPlanTaskUpdated
 	EventKindSteeringApplied    = agentinternal.EventKindSteeringApplied
 	EventKindCompactionFailed   = agentinternal.EventKindCompactionFailed
 	EventKindCompacted          = agentinternal.EventKindCompacted
@@ -163,6 +164,7 @@ type (
 	EventStream     = agentinternal.EventStream
 	StreamEventKind = agentinternal.StreamEventKind
 	PlanRevision    = agentinternal.PlanRevision
+	PlanTaskIndex   = agentinternal.PlanTaskIndex
 	Model           = agentinternal.Model
 	ToolName        = agentinternal.ToolName
 
