@@ -7,6 +7,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import CopyPlugin from "copy-webpack-plugin";
+import HtmlWebpackPlugin from "html-webpack-plugin";
 import MiniCssExtractPlugin from "mini-css-extract-plugin";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -14,7 +15,8 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 export default {
   entry: "./src/index.tsx",
   output: {
-    filename: "bundle.js",
+    filename: "[name].[contenthash:16].js",
+    chunkFilename: "[name].[contenthash:16].js",
     path: path.resolve(directory, "dist"),
     clean: true,
   },
@@ -28,10 +30,20 @@ export default {
     ],
   },
   plugins: [
-    new MiniCssExtractPlugin({ filename: "styles.css" }),
+    new HtmlWebpackPlugin({
+      template: path.resolve(directory, "public/index.html"),
+      scriptLoading: "defer",
+    }),
+    new MiniCssExtractPlugin({
+      filename: "[name].[contenthash:16].css",
+      chunkFilename: "[name].[contenthash:16].css",
+    }),
     new CopyPlugin({
       patterns: [
-        { from: path.resolve(directory, "public"), to: "." },
+        {
+          from: path.resolve(directory, "public/config.json"),
+          to: "config.json",
+        },
         {
           from: path.resolve(directory, "../LICENSE"),
           to: "LICENSE",

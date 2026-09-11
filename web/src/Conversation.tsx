@@ -9,6 +9,7 @@ import {
   useEffect,
   useReducer,
   useRef,
+  useState,
   type Dispatch,
 } from "react";
 
@@ -61,6 +62,11 @@ interface ConversationProps {
   onStartAnother: () => void;
 }
 
+interface LiveReadSession {
+  controller: AbortController;
+  settled: Promise<void>;
+}
+
 export function Conversation({
   flowId,
   builtInTools,
@@ -71,15 +77,30 @@ export function Conversation({
     undefined,
     initialConversationState,
   );
+  const isDocumentVisible = useDocumentVisibility();
   const resumeTokens = useRef<Record<EventStream, ResumeToken | undefined>>({
     [EventStream.REASONING]: undefined,
     [EventStream.ASSISTANT]: undefined,
     [EventStream.ACTIVITY]: undefined,
   });
+  const streamSession = useRef<LiveReadSession | null>(null);
+  const interactionSession = useRef<LiveReadSession | null>(null);
+  const cancelLiveReads = useCallback(async () => {
+    const sessions = [streamSession.current, interactionSession.current].filter(
+      (session): session is LiveReadSession => session !== null,
+    );
+    for (const session of sessions) session.controller.abort();
+    await Promise.all(sessions.map((session) => session.settled));
+    await waitForNetworkCancellation();
+  }, []);
   const nextHistoryRequestID = useRef(1);
   const isTerminal = state.kind === "ready" && state.lifecycle === "terminal";
   const requestSnapshot = useSnapshotCoordinator(flowId, dispatch, isTerminal);
-  const runCommand = useCommandRunner(dispatch, requestSnapshot);
+  const runCommand = useCommandRunner(
+    dispatch,
+    requestSnapshot,
+    cancelLiveReads,
+  );
 
   const historyRequest = state.kind === "ready" ? state.historyRequest : null;
   useEffect(() => {
@@ -113,6 +134,12 @@ export function Conversation({
     };
   }, [flowId, historyRequest]);
 
+  const canOpenLiveReads =
+    state.kind === "ready" &&
+    state.lifecycle === "active" &&
+    state.pendingCommand === null &&
+    state.reconciliation === "open" &&
+    isDocumentVisible;
   const subscriptionGeneration =
     state.kind === "ready" && state.lifecycle === "active"
       ? state.subscriptionGeneration
@@ -125,7 +152,7 @@ export function Conversation({
     resetResumeTokens(resumeTokens.current);
   }, [flowId, activeRunID]);
   useEffect(() => {
-    if (subscriptionGeneration < 0) return;
+    if (subscriptionGeneration < 0 || !canOpenLiveReads) return;
     const controller = new AbortController();
     let isCurrent = true;
     const poll = async (stream: EventStream): Promise<void> => {
@@ -181,17 +208,29 @@ export function Conversation({
         }
       }
     };
-    for (const stream of eventStreams) void poll(stream);
+    const session: LiveReadSession = {
+      controller,
+      settled: Promise.all(eventStreams.map(poll)).then(() => undefined),
+    };
+    streamSession.current = session;
     return () => {
       isCurrent = false;
       controller.abort();
+      if (streamSession.current === session) {
+        streamSession.current = null;
+      }
     };
-  }, [flowId, activeRunID, subscriptionGeneration, requestSnapshot]);
+  }, [
+    flowId,
+    activeRunID,
+    canOpenLiveReads,
+    subscriptionGeneration,
+    requestSnapshot,
+  ]);
 
-  const interactionStatus =
-    state.kind === "ready" && state.lifecycle === "active"
-      ? state.snapshot.description.interactionStatus
-      : null;
+  const interactionStatus = canOpenLiveReads
+    ? state.snapshot.description.interactionStatus
+    : null;
   useEffect(() => {
     if (interactionStatus === null) return;
     const controller = new AbortController();
@@ -231,10 +270,17 @@ export function Conversation({
         }
       }
     };
-    void wait();
+    const session: LiveReadSession = {
+      controller,
+      settled: wait(),
+    };
+    interactionSession.current = session;
     return () => {
       isCurrent = false;
       controller.abort();
+      if (interactionSession.current === session) {
+        interactionSession.current = null;
+      }
     };
   }, [flowId, interactionStatus, subscriptionGeneration, requestSnapshot]);
 
@@ -454,6 +500,7 @@ function useSnapshotCoordinator(
 function useCommandRunner(
   dispatch: Dispatch<ConversationAction>,
   requestSnapshot: (trigger: SnapshotTrigger) => void,
+  cancelLiveReads: () => Promise<void>,
 ) {
   const nextID = useRef(1);
   const activeController = useRef<AbortController | null>(null);
@@ -473,7 +520,10 @@ function useCommandRunner(
       const controller = new AbortController();
       activeController.current = controller;
       dispatch({ type: "command-started", id, command });
-      void operation(controller.signal)
+      void cancelLiveReads()
+        .then(() =>
+          controller.signal.aborted ? undefined : operation(controller.signal),
+        )
         .then(() => {
           if (!controller.signal.aborted) {
             dispatch({ type: "command-succeeded", id });
@@ -496,8 +546,24 @@ function useCommandRunner(
           }
         });
     },
-    [dispatch, requestSnapshot],
+    [cancelLiveReads, dispatch, requestSnapshot],
   );
+}
+
+function useDocumentVisibility(): boolean {
+  const [isVisible, setIsVisible] = useState(
+    () => document.visibilityState === "visible",
+  );
+  useEffect(() => {
+    const update = () => {
+      setIsVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  return isVisible;
 }
 
 function liveUpdate(stream: EventStream, event: StreamEvent): LiveUpdate {
@@ -589,5 +655,11 @@ async function waitBeforeNextPoll(signal: AbortSignal): Promise<void> {
     };
     timeout = window.setTimeout(finish, 250);
     signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+async function waitForNetworkCancellation(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
   });
 }

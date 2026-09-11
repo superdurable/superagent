@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Request,
+} from "@playwright/test";
 
 import {
   EventStream,
@@ -77,6 +83,14 @@ test("renders chronological transient activity and durable queue interactions", 
     optimisticQueue.getByRole("button", { name: /Message queue/ }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("Submitting…")).toBeVisible();
+  await expect(page.locator(".queue-message.submitting")).toHaveCSS(
+    "border-color",
+    "rgb(245, 158, 11)",
+  );
+  await expect(page.locator(".queue-message.submitting")).toHaveCSS(
+    "background-color",
+    "rgb(255, 251, 235)",
+  );
   await expect(
     page.getByRole("button", { name: "Jump to latest message" }),
   ).toHaveCount(0);
@@ -230,6 +244,108 @@ test("renders chronological transient activity and durable queue interactions", 
       .locator(".message-bubble.assistant")
       .filter({ hasText: "Local demo response: steer the timer now" }),
   ).toHaveCount(1);
+});
+
+test("accepts the first message after Start and retains it across refresh", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+
+  const message = `first-message-${crypto.randomUUID()}`;
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.status() === 202 &&
+      new URL(response.url()).pathname === "/products/ai-agent/messages",
+    { timeout: 5_000 },
+  );
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill(message);
+  await page.getByRole("button", { name: "Send" }).click();
+  await accepted;
+
+  await page.reload();
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+});
+
+test("recovers a committed first message when refresh loses its response", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+
+  const sendPath = "/products/ai-agent/messages";
+  let markCommitted: () => void = () => undefined;
+  const committed = new Promise<void>((resolve) => {
+    markCommitted = resolve;
+  });
+  await page.route(`**${sendPath}`, async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(202);
+    await route.abort("failed");
+    markCommitted();
+  });
+
+  const message = `lost-first-response-${crypto.randomUUID()}`;
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill(message);
+  await page.getByRole("button", { name: "Send" }).click();
+  await committed;
+
+  await page.reload();
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await page.unroute(`**${sendPath}`);
+});
+
+test("prioritizes a first message while another Agent tab is polling", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+  const secondPage = await context.newPage();
+  try {
+    const pendingLiveReads = new Set<Request>();
+    let didSendAfterLiveReadsSettled = false;
+    const isLiveRead = (request: Request) => {
+      const path = new URL(request.url()).pathname;
+      return (
+        path === "/products/ai-agent/events" ||
+        path === "/products/ai-agent/interaction-status"
+      );
+    };
+    secondPage.on("request", (request) => {
+      if (isLiveRead(request)) pendingLiveReads.add(request);
+      if (new URL(request.url()).pathname === "/products/ai-agent/messages") {
+        didSendAfterLiveReadsSettled = pendingLiveReads.size === 0;
+      }
+    });
+    secondPage.on("requestfinished", (request) => {
+      pendingLiveReads.delete(request);
+    });
+    secondPage.on("requestfailed", (request) => {
+      pendingLiveReads.delete(request);
+    });
+    await startAgent(secondPage);
+    await expect.poll(() => pendingLiveReads.size).toBeGreaterThan(0);
+    const message = `multi-tab-first-message-${crypto.randomUUID()}`;
+    const accepted = secondPage.waitForResponse(
+      (response) =>
+        response.status() === 202 &&
+        new URL(response.url()).pathname === "/products/ai-agent/messages",
+      { timeout: 5_000 },
+    );
+    const composer = secondPage.getByRole("textbox", { name: "Message" });
+    await composer.fill(message);
+    await secondPage.getByRole("button", { name: "Send" }).click();
+    await accepted;
+    expect(didSendAfterLiveReadsSettled).toBe(true);
+
+    await secondPage.reload();
+    await expect(secondPage.getByText(message, { exact: true })).toBeVisible();
+  } finally {
+    await secondPage.close();
+  }
 });
 
 test("keeps mutations gated until the post-command Snapshot completes", async ({

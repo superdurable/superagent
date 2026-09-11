@@ -11,7 +11,8 @@ remain in this application.
 
 The application restores a Flow with one generated Snapshot request, lists the
 configured recent tail of each Stream, and resumes generated event polls from
-the newest returned token.
+the newest returned token. Hidden pages release live requests. Command
+submission waits for their cancellation to settle before sending the mutation.
 
 ## Commands
 
@@ -31,7 +32,8 @@ the corresponding Web command. The UI package can also be checked directly with
 The production build is written to the ignored `web/dist/` directory. It is a
 standalone deployment artifact. The Go binary contains no frontend files.
 Generated API files are committed. `make check-generated` verifies that both
-the ogen server and Hey API client have zero drift.
+the ogen server and Hey API client have zero drift. JavaScript and CSS filenames
+include content hashes so a deployment cannot reuse stale browser assets.
 
 The build copies `public/config.json` into the artifact. The browser loads it
 before rendering. The file configures the generated Fetch client from
@@ -42,11 +44,12 @@ For local development, start SuperAgent with the frontend origin allowlisted:
 
 ```bash
 SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent
-python3 -m http.server 3000 --directory web/dist
+node script/serve-web.mjs --directory web/dist --port 3000
 ```
 
 Open `http://127.0.0.1:3000/`. Production `apiOrigin` values must use HTTPS.
-Serve `config.json` with `Cache-Control: no-store`. Configure the static host's
+Serve `index.html` with `Cache-Control: no-cache`, hashed assets as immutable,
+and `config.json` with `Cache-Control: no-store`. Configure the static host's
 Content Security Policy to allow connections only to the selected API origin.
 
 ## Durable and live state
@@ -56,6 +59,8 @@ queued messages, steered messages, and Run identity from `/snapshot`. Three
 cancellable `/events/recent` reads recover a bounded Stream tail before
 `/events` polls add assistant text, reasoning summaries, and structured
 activity. Disconnects and command completion reconcile with another Snapshot.
+Every command cancels and joins live polls before issuing its mutation request
+so browser connection limits cannot delay durable acceptance.
 Queue mutations optimistically update by stable message ID and then reconcile.
 The timeline follows the latest content until the user scrolls upward. The
 queue starts expanded as a height-bounded list of truncated one-line messages

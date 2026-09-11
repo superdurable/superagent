@@ -11,6 +11,8 @@ import { expect, test } from "@playwright/test";
 const applicationOrigin = "https://app.example.test";
 const apiOrigin = "https://api.example.test";
 const assetDirectory = new URL("../dist/", import.meta.url);
+const hashedScriptPath = /^\/main\.[a-f0-9]{16}\.js$/;
+const hashedStylesheetPath = /^\/main\.[a-f0-9]{16}\.css$/;
 
 test("starts a Flow against a separately deployed API", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -28,18 +30,6 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
           body: await readFile(new URL("index.html", assetDirectory)),
         });
         return;
-      case "/bundle.js":
-        await route.fulfill({
-          contentType: "text/javascript; charset=utf-8",
-          body: await readFile(new URL("bundle.js", assetDirectory)),
-        });
-        return;
-      case "/styles.css":
-        await route.fulfill({
-          contentType: "text/css; charset=utf-8",
-          body: await readFile(new URL("styles.css", assetDirectory)),
-        });
-        return;
       case "/config.json":
         await route.fulfill({
           contentType: "application/json",
@@ -47,6 +37,15 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
         });
         return;
       default:
+        if (hashedScriptPath.test(path) || hashedStylesheetPath.test(path)) {
+          await route.fulfill({
+            contentType: hashedScriptPath.test(path)
+              ? "text/javascript; charset=utf-8"
+              : "text/css; charset=utf-8",
+            body: await readFile(new URL(path.slice(1), assetDirectory)),
+          });
+          return;
+        }
         await route.fulfill({ status: 404 });
     }
   });
@@ -186,6 +185,12 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
     model: "mock/reliable",
   });
   expect(applicationRequests).toContain("/config.json");
+  expect(applicationRequests.some((path) => hashedScriptPath.test(path))).toBe(
+    true,
+  );
+  expect(
+    applicationRequests.some((path) => hashedStylesheetPath.test(path)),
+  ).toBe(true);
   expect(apiRequests).toContain("/products/ai-agent/portal");
   expect(apiRequests).toContain("/products/ai-agent/start");
   expect(
