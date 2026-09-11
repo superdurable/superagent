@@ -118,6 +118,9 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
+	})
 	duplicateApprovalErr := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
 		CallID: approval.CallID, Approved: true,
 	})
@@ -125,9 +128,6 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if !errors.As(duplicateApprovalErr, &duplicateApproval) || duplicateApproval.Command != CommandApproveTool {
 		t.Fatalf("duplicate approval error = %T %v", duplicateApprovalErr, duplicateApprovalErr)
 	}
-	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
-	})
 	toolRegistry.assertCallsUseID(t, approval.CallID)
 	toolRegistry.assertInvocation(t, flowID, approval.CallID, runtimeMetadata)
 
