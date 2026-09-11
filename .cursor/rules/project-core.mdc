@@ -17,6 +17,7 @@ semantically synchronized.
 - Keep documentation direct. Put one idea in each sentence. Split behavior,
   constraints, and rationale into separate sentences.
 - Do not introduce `NormalizeXyz` identifiers. Name the concrete operation.
+- Test-only APIs must include `ForTestOnly` in their identifiers. Prefer test-only source files.
 - Reuse existing repository and public API terms exactly in identifiers.
 - Domain packages prohibit `any`, dynamic maps, and raw string states.
 - Never export Dex resource getters solely to expose descriptors.

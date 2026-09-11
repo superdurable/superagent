@@ -36,10 +36,6 @@ const (
 	MaximumRuntimeMetadataBytes = 16 << 10
 	// MaximumUserMessageContentBytes bounds one user-message body.
 	MaximumUserMessageContentBytes = 256 << 10
-	// DefaultForwardHistoryLimit is used when MessagesAfter receives a zero limit.
-	DefaultForwardHistoryLimit = 100
-	// MaximumForwardHistoryLimit bounds one canonical forward-history read.
-	MaximumForwardHistoryLimit = 200
 
 	// DefaultModel uses the deterministic local provider.
 	DefaultModel Model = "mock/dex"
@@ -696,13 +692,9 @@ type HistoryPage struct {
 	NextBeforeSequence *Sequence          `json:"next_before_sequence,omitempty"`
 }
 
-// ForwardHistoryPage is one bounded ascending page after an exclusive cursor.
-type ForwardHistoryPage struct {
-	Messages              []SequencedMessage `json:"messages"`
-	NextAfterSequence     *Sequence          `json:"next_after_sequence,omitempty"`
-	FirstRetainedSequence Sequence           `json:"first_retained_sequence"`
-	LastSequence          Sequence           `json:"last_sequence"`
-	IsTruncated           bool               `json:"is_truncated"`
+type archivedMessagesRPCOutput struct {
+	Page  HistoryPage `json:"page"`
+	Found bool        `json:"found"`
 }
 
 // ArchivedMessageChunk stores one immutable ten-message history page.
@@ -923,21 +915,16 @@ func (err *ArchivedMessagesNotFoundError) Error() string {
 	return fmt.Sprintf("archived messages before %d are no longer retained", err.BeforeSequence)
 }
 
-// HistoryMessageNotFoundError reports a retained sequence lost during a paged read.
-type HistoryMessageNotFoundError struct {
-	Sequence Sequence
-}
-
-var _ error = (*HistoryMessageNotFoundError)(nil)
-
-// Error describes the missing canonical sequence.
-func (err *HistoryMessageNotFoundError) Error() string {
-	return fmt.Sprintf("canonical message %d is no longer retained", err.Sequence)
-}
-
 // Error describes the rejected command without exposing durable state internals.
 func (err *CommandRejectedError) Error() string {
 	return fmt.Sprintf("agent command %q was rejected by current durable state", err.Command)
+}
+
+func archivedMessageChunkFirst(before Sequence) (Sequence, bool) {
+	if before <= Sequence(archiveMessageChunkSize) || (before-1)%Sequence(archiveMessageChunkSize) != 0 {
+		return 0, false
+	}
+	return before - Sequence(archiveMessageChunkSize), true
 }
 
 func validateNewUserMessage(message UserMessage) error {

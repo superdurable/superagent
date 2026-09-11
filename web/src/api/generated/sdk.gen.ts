@@ -94,7 +94,7 @@ export const getAgentSnapshot = <ThrowOnError extends boolean = true>(options: O
 });
 
 /**
- * Read one exact archived ten-message chunk
+ * Read one immutable archived ten-message chunk
  */
 export const getArchivedMessages = <ThrowOnError extends boolean = true>(options: Options<GetArchivedMessagesData, ThrowOnError>): RequestResult<GetArchivedMessagesResponses, GetArchivedMessagesErrors, ThrowOnError, 'data'> => (options.client ?? client).get<GetArchivedMessagesResponses, GetArchivedMessagesErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',

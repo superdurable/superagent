@@ -257,6 +257,20 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if state.FirstRetainedSequence > 1 && state.SummarizedThroughSequence < state.FirstRetainedSequence-1 {
 		t.Fatalf("messages deleted before summary: state = %#v", state)
 	}
+	if state.FirstRetainedSequence > 1 {
+		_, archiveErr := environment.agent.ArchivedMessages(
+			t.Context(),
+			flowID,
+			state.FirstRetainedSequence,
+		)
+		var notFound *ArchivedMessagesNotFoundError
+		if !errors.As(archiveErr, &notFound) {
+			t.Fatalf("trimmed archive error = %T %v", archiveErr, archiveErr)
+		}
+		if snapshot := readSnapshot(t, environment, flowID); snapshot.Description == nil {
+			t.Fatalf("Snapshot after trimmed archive read = %#v", snapshot)
+		}
+	}
 }
 
 func TestAgentInteractionStatusIntegration(t *testing.T) {
@@ -338,7 +352,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		second.NextBeforeSequence == nil || *second.NextBeforeSequence != 11 {
 		t.Fatalf("second archive = %#v", second)
 	}
-	forward, err := environment.agent.MessagesAfter(t.Context(), flowID, 0, 7)
+	forward, err := environment.agent.MessagesAfterForTestOnly(t.Context(), flowID, 0, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +361,12 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		forward.FirstRetainedSequence != 1 || forward.LastSequence != 30 {
 		t.Fatalf("first forward page = %#v", forward)
 	}
-	forward, err = environment.agent.MessagesAfter(t.Context(), flowID, *forward.NextAfterSequence, MaximumForwardHistoryLimit)
+	forward, err = environment.agent.MessagesAfterForTestOnly(
+		t.Context(),
+		flowID,
+		*forward.NextAfterSequence,
+		maximumForwardHistoryLimitForTestOnly,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +374,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		forward.NextAfterSequence != nil || forward.IsTruncated {
 		t.Fatalf("second forward page = %#v", forward)
 	}
-	empty, err := environment.agent.MessagesAfter(t.Context(), flowID, 30, 0)
+	empty, err := environment.agent.MessagesAfterForTestOnly(t.Context(), flowID, 30, 0)
 	if err != nil || len(empty.Messages) != 0 || empty.IsTruncated || empty.NextAfterSequence != nil {
 		t.Fatalf("empty forward page = %#v, %v", empty, err)
 	}

@@ -254,144 +254,24 @@ func (client *Client) ArchivedMessages(ctx context.Context, flowID FlowID, befor
 	if err := validateFlowID(flowID); err != nil {
 		return HistoryPage{}, err
 	}
-	if before <= Sequence(archiveMessageChunkSize) || (before-1)%Sequence(archiveMessageChunkSize) != 0 {
+	first, isValid := archivedMessageChunkFirst(before)
+	if !isValid {
 		return HistoryPage{}, fmt.Errorf("before sequence must identify a %d-message boundary", archiveMessageChunkSize)
 	}
-	first := before - Sequence(archiveMessageChunkSize)
-	var chunk ArchivedMessageChunk
-	found, err := client.sdk.GetAttributeMapInstance(
-		ctx,
-		string(flowID),
-		archivedMessagesAttribute,
-		sequenceKey(first),
-		&chunk,
-	)
+	var result archivedMessagesRPCOutput
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ArchivedMessages, before, &result, dex.InvokeOptions{
+		Timeout: client.commandTimeout,
+		LoadAttributeMapInstances: []dex.AttributeMapLoad{
+			archivedMessagesAttribute.Load(sequenceKey(first)),
+		},
+	})
 	if err != nil {
 		return HistoryPage{}, err
 	}
-	if !found {
+	if !result.Found {
 		return HistoryPage{}, &ArchivedMessagesNotFoundError{BeforeSequence: before}
 	}
-	var state AgentState
-	found, err = client.sdk.GetAttribute(ctx, string(flowID), agentStateAttribute, &state)
-	if err != nil {
-		return HistoryPage{}, err
-	}
-	if !found {
-		return HistoryPage{}, errors.New("agent state is not initialized")
-	}
-	var next *Sequence
-	if first > state.FirstRetainedSequence {
-		value := first
-		next = &value
-	}
-	return HistoryPage{Messages: chunk.Messages, NextBeforeSequence: next}, nil
-}
-
-// MessagesAfter reads retained canonical history after an exclusive cursor.
-func (client *Client) MessagesAfter(
-	ctx context.Context,
-	flowID FlowID,
-	after Sequence,
-	limit int,
-) (ForwardHistoryPage, error) {
-	if err := validateFlowID(flowID); err != nil {
-		return ForwardHistoryPage{}, err
-	}
-	if after < 0 {
-		return ForwardHistoryPage{}, errors.New("after sequence must not be negative")
-	}
-	if limit == 0 {
-		limit = DefaultForwardHistoryLimit
-	}
-	if limit < 1 || limit > MaximumForwardHistoryLimit {
-		return ForwardHistoryPage{}, fmt.Errorf("limit must be between 1 and %d", MaximumForwardHistoryLimit)
-	}
-	var state AgentState
-	found, err := client.sdk.GetAttribute(ctx, string(flowID), agentStateAttribute, &state)
-	if err != nil {
-		return ForwardHistoryPage{}, err
-	}
-	if !found {
-		return ForwardHistoryPage{}, errors.New("agent state is not initialized")
-	}
-	page := ForwardHistoryPage{
-		Messages:              []SequencedMessage{},
-		FirstRetainedSequence: state.FirstRetainedSequence,
-		LastSequence:          state.LastSequence,
-	}
-	if after >= state.LastSequence {
-		return page, nil
-	}
-	start := max(after+1, state.FirstRetainedSequence)
-	end := state.LastSequence
-	if available := state.LastSequence - start + 1; available > Sequence(limit) {
-		end = start + Sequence(limit) - 1
-	}
-	archiveCache := make(map[Sequence]ArchivedMessageChunk)
-	page.Messages = make([]SequencedMessage, 0, int(end-start+1))
-	for sequence := start; sequence <= end; sequence++ {
-		message, readErr := client.readCanonicalMessage(ctx, flowID, state, sequence, archiveCache)
-		if readErr != nil {
-			return ForwardHistoryPage{}, readErr
-		}
-		page.Messages = append(page.Messages, SequencedMessage{Sequence: sequence, Message: message})
-	}
-	if end < state.LastSequence {
-		next := end
-		page.NextAfterSequence = &next
-		page.IsTruncated = true
-	}
-	return page, nil
-}
-
-func (client *Client) readCanonicalMessage(
-	ctx context.Context,
-	flowID FlowID,
-	state AgentState,
-	sequence Sequence,
-	archiveCache map[Sequence]ArchivedMessageChunk,
-) (AgentMessage, error) {
-	if sequence >= state.CurrentFirstSequence {
-		var message AgentMessage
-		found, err := client.sdk.GetAttributeMapInstance(
-			ctx,
-			string(flowID),
-			currentMessagesAttribute,
-			sequenceKey(sequence),
-			&message,
-		)
-		if err != nil {
-			return AgentMessage{}, err
-		}
-		if found {
-			return message, nil
-		}
-	}
-	first := ((sequence - 1) / Sequence(archiveMessageChunkSize) * Sequence(archiveMessageChunkSize)) + 1
-	chunk, found := archiveCache[first]
-	if !found {
-		var err error
-		found, err = client.sdk.GetAttributeMapInstance(
-			ctx,
-			string(flowID),
-			archivedMessagesAttribute,
-			sequenceKey(first),
-			&chunk,
-		)
-		if err != nil {
-			return AgentMessage{}, err
-		}
-		if !found {
-			return AgentMessage{}, &HistoryMessageNotFoundError{Sequence: sequence}
-		}
-		archiveCache[first] = chunk
-	}
-	index := sequence - first
-	if index < 0 || index >= Sequence(len(chunk.Messages)) || chunk.Messages[index].Sequence != sequence {
-		return AgentMessage{}, &HistoryMessageNotFoundError{Sequence: sequence}
-	}
-	return chunk.Messages[index].Message, nil
+	return result.Page, nil
 }
 
 // WaitForInteractionStatus blocks until the durable synchronization status matches expected.

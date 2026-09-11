@@ -166,7 +166,7 @@ paths:
   /products/ai-agent/archived-messages:
     get:
       operationId: getArchivedMessages
-      summary: Read one exact archived ten-message chunk
+      summary: Read one immutable archived ten-message chunk
       parameters:
         - name: flowId
           in: query
@@ -180,7 +180,7 @@ paths:
             $ref: "#/components/schemas/Sequence"
       responses:
         "200":
-          description: The archived chunk immediately before the boundary.
+          description: One immutable history continuation before the boundary.
           headers:
             Cache-Control:
               required: true

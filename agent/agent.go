@@ -33,10 +33,6 @@ const (
 	DefaultContextTokens = agentinternal.DefaultContextTokens
 	// DefaultMessageRetention bounds retained summarized messages.
 	DefaultMessageRetention = agentinternal.DefaultMessageRetention
-	// DefaultForwardHistoryLimit is used when MessagesAfter receives a zero limit.
-	DefaultForwardHistoryLimit = agentinternal.DefaultForwardHistoryLimit
-	// MaximumForwardHistoryLimit bounds one canonical forward-history read.
-	MaximumForwardHistoryLimit = agentinternal.MaximumForwardHistoryLimit
 	// MaximumUserMessageContentBytes bounds one user-message body.
 	MaximumUserMessageContentBytes = agentinternal.MaximumUserMessageContentBytes
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
@@ -185,7 +181,6 @@ type (
 	CommandRejectedError          = agentinternal.CommandRejectedError
 	PendingMessageNotFoundError   = agentinternal.PendingMessageNotFoundError
 	ArchivedMessagesNotFoundError = agentinternal.ArchivedMessagesNotFoundError
-	HistoryMessageNotFoundError   = agentinternal.HistoryMessageNotFoundError
 	JSONObject                    = agentinternal.JSONObject
 	JSONValue                     = agentinternal.JSONValue
 	AgentConfig                   = agentinternal.AgentConfig
@@ -195,7 +190,6 @@ type (
 	AgentMessage                  = agentinternal.AgentMessage
 	SequencedMessage              = agentinternal.SequencedMessage
 	HistoryPage                   = agentinternal.HistoryPage
-	ForwardHistoryPage            = agentinternal.ForwardHistoryPage
 	PendingUserMessage            = agentinternal.PendingUserMessage
 	AgentDescription              = agentinternal.AgentDescription
 	AgentSnapshot                 = agentinternal.AgentSnapshot

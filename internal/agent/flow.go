@@ -29,10 +29,24 @@ import (
 )
 
 var (
-	queuedUserMessagesChannel  = dex.DefineChannel[UserMessage]("QueuedUserMessages")
-	steeredUserMessagesChannel = dex.DefineChannel[UserMessage]("SteeredUserMessages")
-	toolApprovalsChannel       = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
-	planExecutionsChannel      = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
+	agentConfigAttribute            = dex.DefineAttribute[AgentConfig]("AgentConfig")
+	agentRuntimeMetadataAttribute   = dex.DefineAttribute[JSONObject]("AgentRuntimeMetadata")
+	agentStateAttribute             = dex.DefineAttribute[AgentState]("AgentState")
+	agentInteractionStatusAttribute = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
+	contextSummaryAttribute         = dex.DefineAttribute[ContextSummary]("ContextSummary")
+	currentMessagesAttribute        = dex.DefineAttributeMap[AgentMessage]("CurrentMessages")
+	archivedMessagesAttribute       = dex.DefineAttributeMap[ArchivedMessageChunk]("ArchivedMessages")
+	agentPlanAttribute              = dex.DefineAttribute[AgentPlan]("AgentPlan")
+	pendingApprovalAttribute        = dex.DefineAttribute[PendingApproval]("PendingApproval")
+	pendingTimerAttribute           = dex.DefineAttribute[PendingTimer]("PendingTimer")
+	pendingUserInputAttribute       = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
+	queuedUserMessagesChannel       = dex.DefineChannel[UserMessage]("QueuedUserMessages")
+	steeredUserMessagesChannel      = dex.DefineChannel[UserMessage]("SteeredUserMessages")
+	toolApprovalsChannel            = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
+	planExecutionsChannel           = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
+	reasoningSummaryStream          = dex.DefineStream[string]("ReasoningSummary", 10<<20)
+	assistantTextStream             = dex.DefineStream[string]("AssistantText", 10<<20)
+	agentActivityStream             = dex.DefineStream[AgentEvent]("AgentActivity", 10<<20)
 )
 
 // Flow is the durable AI Agent state machine.
@@ -200,9 +214,19 @@ func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSna
 	if err != nil {
 		return nil, err
 	}
-	history, err := flow.currentHistory(ctx, state)
-	if err != nil {
-		return nil, err
+	start := max(state.FirstRetainedSequence, state.CurrentFirstSequence)
+	messages := make([]SequencedMessage, 0, int(state.LastSequence-start+1))
+	for sequence := start; sequence <= state.LastSequence; sequence++ {
+		message, messageErr := currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
+		if messageErr != nil {
+			return nil, messageErr
+		}
+		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
+	}
+	history := HistoryPage{Messages: messages}
+	if start > state.FirstRetainedSequence {
+		next := start
+		history.NextBeforeSequence = &next
 	}
 	description, err := flow.describe(ctx, config, state, len(queued), len(steered))
 	if err != nil {
@@ -215,6 +239,43 @@ func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSna
 		Description: &description,
 		Queued:      pendingUserMessages(queued),
 		Steered:     pendingUserMessages(steered),
+	}}, nil
+}
+
+// ArchivedMessages returns one retained immutable history chunk.
+func (*Flow) ArchivedMessages(
+	ctx dex.Context,
+	before Sequence,
+) (*dex.RPCResult[archivedMessagesRPCOutput], error) {
+	first, isValid := archivedMessageChunkFirst(before)
+	if !isValid {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if isAttributeNotFound(err) {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if first < state.FirstRetainedSequence {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	chunk, err := archivedMessagesAttribute.Get(ctx, sequenceKey(first))
+	if isAttributeNotFound(err) {
+		return &dex.RPCResult[archivedMessagesRPCOutput]{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	page := HistoryPage{Messages: chunk.Messages}
+	if first > state.FirstRetainedSequence {
+		next := first
+		page.NextBeforeSequence = &next
+	}
+	return &dex.RPCResult[archivedMessagesRPCOutput]{Output: archivedMessagesRPCOutput{
+		Page:  page,
+		Found: true,
 	}}, nil
 }
 
@@ -287,24 +348,6 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
-}
-
-func (*Flow) currentHistory(ctx dex.Context, state AgentState) (HistoryPage, error) {
-	start := max(state.FirstRetainedSequence, state.CurrentFirstSequence)
-	messages := make([]SequencedMessage, 0, int(state.LastSequence-start+1))
-	for sequence := start; sequence <= state.LastSequence; sequence++ {
-		message, err := currentMessagesAttribute.Get(ctx, sequenceKey(sequence))
-		if err != nil {
-			return HistoryPage{}, err
-		}
-		messages = append(messages, SequencedMessage{Sequence: sequence, Message: message})
-	}
-	var nextBeforeSequence *Sequence
-	if start > state.FirstRetainedSequence {
-		next := start
-		nextBeforeSequence = &next
-	}
-	return HistoryPage{Messages: messages, NextBeforeSequence: nextBeforeSequence}, nil
 }
 
 func (flow *Flow) describe(
@@ -1082,14 +1125,6 @@ func getContextSummary(ctx dex.Context) (*ContextSummary, error) {
 	return &value, nil
 }
 
-func agentRuntimeMetadata(ctx dex.Context) (JSONObject, error) {
-	metadata, err := agentRuntimeMetadataAttribute.Get(ctx)
-	if isAttributeNotFound(err) {
-		return MustJSONObject(`{}`), nil
-	}
-	return metadata, err
-}
-
 func optionalAgentPlan(value AgentPlan, err error) (*AgentPlan, error) {
 	if isAttributeNotFound(err) {
 		return nil, nil
@@ -1447,10 +1482,12 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 	if _, err := step.flow.trimSummarizedMessages(ctx, config, state); err != nil {
 		return nil, err
 	}
-	if err := step.flow.writeActivity(ctx, AgentEvent{
+	activity := AgentEvent{
 		Kind:    EventKindCompacted,
 		Message: fmt.Sprintf("Compacted conversation through message %d.", input),
-	}); err != nil {
+	}
+	activity.Message = condenseActivityMessage(activity.Message)
+	if err := agentActivityStream.Write(ctx, activity); err != nil {
 		return nil, err
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCallModel), nil
@@ -1494,10 +1531,20 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	}
 	progress := modelProgress{
 		ctx:               ctx,
-		assistantWriter:   assistantWriter,
-		reasoningWriter:   reasoningWriter,
 		activityWriteFunc: step.flow.writeActivity,
 		messageSequence:   state.NextSequence,
+	}
+	writeAssistant := func(chunk string) error {
+		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		return assistantWriter.Write(chunk)
+	}
+	writeReasoning := func(chunk string) error {
+		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseReasoningStream}); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		return reasoningWriter.Write(chunk)
 	}
 	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + "."}); activityErr != nil {
 		return nil, activityErr
@@ -1510,8 +1557,8 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		Config:         config,
 		Messages:       messages,
 		Tools:          tools,
-		WriteAssistant: progress.writeAssistant,
-		WriteReasoning: progress.writeReasoning,
+		WriteAssistant: writeAssistant,
+		WriteReasoning: writeReasoning,
 		WriteActivity:  progress.writeActivity,
 		ForcedTool:     forcedToolName,
 		FlowID:         FlowID(ctx.FlowID()),
@@ -1954,8 +2001,10 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	if configErr != nil {
 		return nil, configErr
 	}
-	runtimeMetadata, metadataErr := agentRuntimeMetadata(ctx)
-	if metadataErr != nil {
+	runtimeMetadata, metadataErr := agentRuntimeMetadataAttribute.Get(ctx)
+	if isAttributeNotFound(metadataErr) {
+		runtimeMetadata = MustJSONObject(`{}`)
+	} else if metadataErr != nil {
 		return nil, metadataErr
 	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
@@ -2103,24 +2152,8 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 
 type modelProgress struct {
 	ctx               dex.Context
-	assistantWriter   *dex.BufferedTextStream
-	reasoningWriter   *dex.BufferedTextStream
 	activityWriteFunc func(dex.Context, AgentEvent) error
 	messageSequence   Sequence
-}
-
-func (progress modelProgress) writeAssistant(chunk string) error {
-	if err := progress.ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); err != nil {
-		return err
-	}
-	return progress.assistantWriter.Write(chunk)
-}
-
-func (progress modelProgress) writeReasoning(chunk string) error {
-	if err := progress.ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseReasoningStream}); err != nil {
-		return err
-	}
-	return progress.reasoningWriter.Write(chunk)
 }
 
 func (progress modelProgress) writeActivity(event AgentEvent) error {

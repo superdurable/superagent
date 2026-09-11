@@ -69,6 +69,11 @@ range, interaction mode, status, pending tool cursor, plan revision, and
 consecutive Plan no-progress count. Plans, pending approvals, timers, input
 prompts, and cumulative context summaries are separate typed Attributes.
 
+Snapshot is the only durable current-interaction and reconciliation read model.
+Archive paging is an immutable history continuation. Each page uses one
+read-only Flow RPC that loads `AgentState` and one exact archive chunk, without
+loading current interaction state or pending Channels.
+
 Commands follow Dex's transactional RPC model. There is no permanent command
 receipt, caller request ID, payload fingerprint, global mutation revision, or
 historical acceptance ledger. A response reports only whether current durable

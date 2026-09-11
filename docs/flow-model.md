@@ -10,7 +10,7 @@
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
 - RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
-  `ExecutePlan`, and `Snapshot`
+  `ExecutePlan`, `Snapshot`, and `ArchivedMessages`
 - Browser synchronization Attribute: `AgentInteractionStatus`
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic
@@ -145,18 +145,16 @@ Dex loads ordinary Attributes automatically, but Steps and RPCs declare bounded
 AttributeMap and Channel loads explicitly. `Snapshot` loads every current
 message plus pending queued and steered messages in one read-only invocation.
 It never consumes a Channel. At twenty current messages, the oldest ten move
-atomically to one archive chunk. The archive endpoint reads one exact adjacent
-chunk for upward scrolling.
+atomically to one archive chunk. The archive endpoint invokes one read-only
+`ArchivedMessages` Flow RPC. The RPC loads `AgentState` and the one exact
+adjacent archive chunk selected by `beforeSequence`. It does not load current
+messages, pending Channels, interaction details, or the Agent configuration.
 
-`Client.MessagesAfter` reads at most 200 retained messages in ascending order
-after an exclusive sequence cursor. Watermarks let an adapter detect retention
-gaps. A concurrent archive move is retried through its immutable chunk; a trim
-returns `HistoryMessageNotFoundError`.
-
-Snapshot is the only durable browser read model. It returns the Dex Run ID,
-history, interaction description, and pending messages with their Dex Channel
-IDs. Terminal Snapshot follows Dex result and visibility contracts and contains
-no active Agent description.
+Snapshot is the only durable current-interaction and reconciliation read model.
+It returns the Dex Run ID, current history, interaction description, and pending
+messages with their Dex Channel IDs. Archive pages continue immutable history
+on demand; they are not another Agent state model. Terminal Snapshot follows
+Dex result and visibility contracts and contains no active Agent description.
 
 ## Recovery and failure policy
 

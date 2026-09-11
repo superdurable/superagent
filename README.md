@@ -58,7 +58,8 @@ Commands use Dex transactional RPC semantics. Callers do not create command or
 message IDs. Snapshot exposes Dex Channel message IDs for queued-message edit,
 delete, and steering. After an ambiguous network result, clients read Snapshot
 to reconcile current durable state instead of consulting stored command
-receipts. `Client.MessagesAfter` provides bounded canonical-history pagination.
+receipts. `Client.ArchivedMessages` reads one immutable history page without
+loading the current Agent interaction state.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph

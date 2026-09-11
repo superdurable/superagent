@@ -452,7 +452,7 @@ func (s *Server) handleGetAgentSnapshotRequest(args [0]string, argsEscaped bool,
 
 // handleGetArchivedMessagesRequest handles getArchivedMessages operation.
 //
-// Read one exact archived ten-message chunk.
+// Read one immutable archived ten-message chunk.
 //
 // GET /products/ai-agent/archived-messages
 func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -485,7 +485,7 @@ func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bo
 		mreq := middleware.Request{
 			Context:          ctx,
 			OperationName:    GetArchivedMessagesOperation,
-			OperationSummary: "Read one exact archived ten-message chunk",
+			OperationSummary: "Read one immutable archived ten-message chunk",
 			OperationID:      "getArchivedMessages",
 			Body:             nil,
 			RawBody:          rawBody,
