@@ -134,7 +134,6 @@ function message(
   return {
     sequence,
     message: {
-      messageId: `message-${String(sequence)}`,
       role,
       content: `message ${String(sequence)}`,
       toolCalls: [],

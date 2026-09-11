@@ -28,7 +28,9 @@ type Handler interface {
 	DeleteQueuedMessage(ctx context.Context, req *QueueMutationRequest) (DeleteQueuedMessageRes, error)
 	// ExecutePlan implements executePlan operation.
 	//
-	// Execute one exact durable plan revision.
+	// Accepted only when the Agent is waiting for a message, the requested Plan revision is current, and
+	// no pending input, approval, timer, queued message, steering, or execution request blocks it. A
+	// conflicting boundary or stale revision returns 409.
 	//
 	// POST /products/ai-agent/plans/execute
 	ExecutePlan(ctx context.Context, req *ExecutePlanRequest) (ExecutePlanRes, error)

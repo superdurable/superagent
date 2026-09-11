@@ -59,19 +59,19 @@ func (toolRegistry) Execute(context.Context, agent.ToolInvocation) (agent.ToolEx
 }
 
 var (
-	_ agent.ModelClient                                                                                                  = modelClient{}
-	_ agent.ToolRegistry                                                                                                 = toolRegistry{}
-	_ dex.Flow                                                                                                           = (*agent.Flow)(nil)
-	_ func(*dex.Client, *agent.Flow) *agent.Client                                                                       = agent.NewClient
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.EnsureStartRequest) (agent.StartReceipt, error)           = (*agent.Client).EnsureStarted
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.SendMessageRequest) (agent.MessageReceipt, error)         = (*agent.Client).SendMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) (agent.MessageReceipt, error)     = (*agent.Client).AnswerQuestions
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) (agent.CommandReceipt, error)        = (*agent.Client).SteerMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.DeleteQueuedMessageRequest) (agent.CommandReceipt, error) = (*agent.Client).DeleteQueuedMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.RequestID) (agent.CancellationReceipt, error)             = (*agent.Client).Cancel
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.CancelRequest) (agent.CancellationReceipt, error)         = (*agent.Client).EnsureCanceled
-	_ func(*agent.Client, context.Context, agent.FlowID, string) (agent.AgentIdentity, error)                            = (*agent.Client).VerifyIdentity
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence, int) (agent.ForwardHistoryPage, error)          = (*agent.Client).MessagesAfter
+	_ agent.ModelClient                                                                                         = modelClient{}
+	_ agent.ToolRegistry                                                                                        = toolRegistry{}
+	_ dex.Flow                                                                                                  = (*agent.Flow)(nil)
+	_ func(*dex.Client, *agent.Flow) *agent.Client                                                              = agent.NewClient
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)               = (*agent.Client).Start
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.UserMessage) error                               = (*agent.Client).SendMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error                    = (*agent.Client).AnswerQuestions
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) error                       = (*agent.Client).SteerMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.MessageID) error                                 = (*agent.Client).DeleteQueuedMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, string) error                                          = (*agent.Client).Cancel
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error                       = (*agent.Client).ApproveTool
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error                      = (*agent.Client).ExecutePlan
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence, int) (agent.ForwardHistoryPage, error) = (*agent.Client).MessagesAfter
 )
 
 func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
@@ -87,19 +87,16 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	if _, err := dex.NewRegistry([]dex.Flow{flow}); err != nil {
 		t.Fatalf("register public Agent Flow: %v", err)
 	}
-	invocation := agent.ToolInvocation{ApplicationContext: `{"resource_id":"resource-1"}`}
-	if invocation.ApplicationContext == "" {
-		t.Fatal("public ToolInvocation application context is empty")
+	metadata := agent.MustJSONObject(`{"resource_id":"resource-1"}`)
+	invocation := agent.ToolInvocation{RuntimeMetadata: metadata}
+	if invocation.RuntimeMetadata != metadata {
+		t.Fatal("public ToolInvocation runtime metadata is unavailable")
 	}
-	revision := agent.MutationRevision(1)
-	request := agent.SendMessageRequest{ExpectedRevision: &revision}
-	if request.ExpectedRevision == nil || *request.ExpectedRevision != revision {
-		t.Fatal("public mutation revision precondition is unavailable")
-	}
-	if agent.MaximumPendingMessageCount != 200 ||
-		agent.MaximumPendingMessageContentBytes != 256<<10 ||
-		agent.MaximumUserMessageContentBytes != 256<<10 {
+	if agent.MaximumUserMessageContentBytes != 256<<10 {
 		t.Fatal("public Agent admission limits are unavailable")
+	}
+	if agent.MaximumRuntimeMetadataBytes != 16<<10 {
+		t.Fatal("public runtime metadata limit is unavailable")
 	}
 }
 

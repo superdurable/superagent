@@ -32,16 +32,16 @@ import (
 
 // AgentService is the command and live-event surface consumed by HTTP.
 type AgentService interface {
-	EnsureStarted(context.Context, agent.FlowID, agent.EnsureStartRequest) (agent.StartReceipt, error)
-	SendMessage(context.Context, agent.FlowID, agent.SendMessageRequest) (agent.MessageReceipt, error)
-	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) (agent.MessageReceipt, error)
+	Start(context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)
+	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
+	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
 	Snapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
 	ArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
 	WaitForInteractionStatus(context.Context, agent.FlowID, agent.AgentInteractionStatus) error
-	DeleteQueuedMessage(context.Context, agent.FlowID, agent.DeleteQueuedMessageRequest) (agent.CommandReceipt, error)
-	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) (agent.CommandReceipt, error)
-	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) (agent.CommandReceipt, error)
-	ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) (agent.CommandReceipt, error)
+	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
+	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
+	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error
+	ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error
 	ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error)
 }
 
@@ -173,10 +173,7 @@ func (handler *Handler) StartAgent(ctx context.Context, request *transportapi.St
 	if err := config.Validate(); err != nil {
 		return startProblem(problemBadRequest(err)), nil
 	}
-	if _, err := handler.agent.EnsureStarted(ctx, flowID, agent.EnsureStartRequest{
-		RequestID: agent.RequestID(request.FlowId),
-		Config:    config,
-	}); err != nil {
+	if _, err := handler.agent.Start(ctx, flowID, agent.StartRequest{Config: config}); err != nil {
 		return handler.startError(ctx, flowID, err), nil
 	}
 	return &transportapi.StartAgentResponse{FlowId: request.FlowId}, nil
@@ -184,22 +181,14 @@ func (handler *Handler) StartAgent(ctx context.Context, request *transportapi.St
 
 // SendMessage durably accepts one user message command.
 func (handler *Handler) SendMessage(ctx context.Context, request *transportapi.SendMessageRequest) (transportapi.SendMessageRes, error) {
-	receipt, err := handler.agent.SendMessage(ctx, agent.FlowID(request.FlowId), agent.SendMessageRequest{
-		RequestID: agent.RequestID(request.MessageId),
-		Message: agent.UserMessage{
-			MessageID: agent.MessageID(request.MessageId),
-			Content:   request.Content,
-			PlanMode:  request.PlanMode,
-		},
+	err := handler.agent.SendMessage(ctx, agent.FlowID(request.FlowId), agent.UserMessage{
+		Content:  request.Content,
+		PlanMode: request.PlanMode,
 	})
 	if err != nil {
 		return handler.sendMessageError(ctx, agent.FlowID(request.FlowId), err), nil
 	}
-	return &transportapi.MessageReceipt{
-		MessageId:  transportapi.MessageID(receipt.MessageID),
-		AcceptedAt: receipt.AcceptedAt,
-		Replayed:   receipt.IsReplay,
-	}, nil
+	return accepted(), nil
 }
 
 // AnswerQuestions durably answers and closes one exact pending input batch.
@@ -215,20 +204,14 @@ func (handler *Handler) AnswerQuestions(
 			Answer:     answer.Answer,
 		})
 	}
-	receipt, err := handler.agent.AnswerQuestions(ctx, flowID, agent.AnswerQuestionsRequest{
-		RequestID: agent.RequestID(request.MessageId),
-		MessageID: agent.MessageID(request.MessageId),
-		CallID:    agent.CallID(request.CallId),
-		Answers:   answers,
+	err := handler.agent.AnswerQuestions(ctx, flowID, agent.AnswerQuestionsRequest{
+		CallID:  agent.CallID(request.CallId),
+		Answers: answers,
 	})
 	if err != nil {
 		return handler.answerQuestionsError(ctx, flowID, err), nil
 	}
-	return &transportapi.MessageReceipt{
-		MessageId:  transportapi.MessageID(receipt.MessageID),
-		AcceptedAt: receipt.AcceptedAt,
-		Replayed:   receipt.IsReplay,
-	}, nil
+	return accepted(), nil
 }
 
 // GetAgentSnapshot returns one atomic durable application view.
@@ -303,10 +286,7 @@ func (handler *Handler) DeleteQueuedMessage(
 ) (transportapi.DeleteQueuedMessageRes, error) {
 	flowID := agent.FlowID(request.FlowId)
 	messageID := agent.MessageID(request.MessageId)
-	if _, err := handler.agent.DeleteQueuedMessage(ctx, flowID, agent.DeleteQueuedMessageRequest{
-		RequestID: agent.RequestID(messageID),
-		MessageID: messageID,
-	}); err != nil {
+	if err := handler.agent.DeleteQueuedMessage(ctx, flowID, messageID); err != nil {
 		return handler.deleteQueuedMessageError(ctx, flowID, err), nil
 	}
 	return &transportapi.QueueMutationResponse{
@@ -322,10 +302,7 @@ func (handler *Handler) SteerQueuedMessage(
 ) (transportapi.SteerQueuedMessageRes, error) {
 	flowID := agent.FlowID(request.FlowId)
 	messageID := agent.MessageID(request.MessageId)
-	if _, err := handler.agent.SteerMessage(ctx, flowID, agent.SteerMessageRequest{
-		RequestID: agent.RequestID(messageID),
-		MessageID: messageID,
-	}); err != nil {
+	if err := handler.agent.SteerMessage(ctx, flowID, agent.SteerMessageRequest{MessageID: messageID}); err != nil {
 		return handler.steerQueuedMessageError(ctx, flowID, err), nil
 	}
 	return &transportapi.QueueMutationResponse{
@@ -336,9 +313,8 @@ func (handler *Handler) SteerQueuedMessage(
 
 // ExecutePlan durably accepts one exact plan revision command.
 func (handler *Handler) ExecutePlan(ctx context.Context, request *transportapi.ExecutePlanRequest) (transportapi.ExecutePlanRes, error) {
-	_, err := handler.agent.ExecutePlan(ctx, agent.FlowID(request.FlowId), agent.PlanExecutionRequest{
-		RequestID: agent.RequestID(fmt.Sprintf("plan-%d", request.Revision)),
-		Revision:  agent.PlanRevision(request.Revision),
+	err := handler.agent.ExecutePlan(ctx, agent.FlowID(request.FlowId), agent.PlanExecutionRequest{
+		Revision: agent.PlanRevision(request.Revision),
 	})
 	if err != nil {
 		return handler.executePlanError(ctx, agent.FlowID(request.FlowId), err), nil
@@ -348,10 +324,9 @@ func (handler *Handler) ExecutePlan(ctx context.Context, request *transportapi.E
 
 // ApproveTool durably resolves one exact pending tool approval.
 func (handler *Handler) ApproveTool(ctx context.Context, request *transportapi.ToolApprovalRequest) (transportapi.ApproveToolRes, error) {
-	_, err := handler.agent.ApproveTool(ctx, agent.FlowID(request.FlowId), agent.ToolApprovalRequest{
-		RequestID: agent.RequestID(request.CallId),
-		CallID:    agent.CallID(request.CallId),
-		Approved:  request.Approved,
+	err := handler.agent.ApproveTool(ctx, agent.FlowID(request.FlowId), agent.ToolApprovalRequest{
+		CallID:   agent.CallID(request.CallId),
+		Approved: request.Approved,
 	})
 	if err != nil {
 		return handler.approveToolError(ctx, agent.FlowID(request.FlowId), err), nil
@@ -614,7 +589,6 @@ func transportAgentMessage(message agent.AgentMessage) (transportapi.AgentMessag
 		toolName.SetTo(transportapi.ToolName(*message.ToolName))
 	}
 	return transportapi.AgentMessage{
-		MessageId:  transportapi.MessageID(message.MessageID),
 		Role:       role,
 		Content:    message.Content,
 		ToolCalls:  toolCalls,
@@ -678,8 +652,7 @@ func transportPendingUserMessages(messages []agent.PendingUserMessage) []transpo
 	result := make([]transportapi.PendingUserMessage, 0, len(messages))
 	for _, message := range messages {
 		result = append(result, transportapi.PendingUserMessage{
-			MessageId:  transportapi.MessageID(message.MessageID),
-			AcceptedAt: message.Value.AcceptedAt,
+			MessageId: transportapi.MessageID(message.MessageID),
 			Value: transportapi.UserMessage{
 				Content:  message.Value.Content,
 				PlanMode: message.Value.PlanMode,
@@ -1031,10 +1004,6 @@ func classifyFailure(err error) failureKind {
 	var channelMessageNotFound *dex.ChannelMessageNotFoundError
 	var rejected *agent.CommandRejectedError
 	var pendingMessageNotFound *agent.PendingMessageNotFoundError
-	var messageConflict *agent.MessageIdempotencyConflictError
-	var commandConflict *agent.CommandIdempotencyConflictError
-	var startConflict *agent.StartIdentityConflictError
-	var legacyStartIdentity *agent.LegacyStartIdentityError
 	var archivedMessagesNotFound *agent.ArchivedMessagesNotFoundError
 	switch {
 	case errors.As(err, &notFound):
@@ -1046,11 +1015,7 @@ func classifyFailure(err error) failureKind {
 		errors.As(err, &duplicate),
 		errors.As(err, &channelMessageNotFound),
 		errors.As(err, &rejected),
-		errors.As(err, &pendingMessageNotFound),
-		errors.As(err, &messageConflict),
-		errors.As(err, &commandConflict),
-		errors.As(err, &startConflict),
-		errors.As(err, &legacyStartIdentity):
+		errors.As(err, &pendingMessageNotFound):
 		return failureConflict
 	default:
 		return failureUnavailable
@@ -1108,13 +1073,15 @@ func (handler *Handler) answerQuestionsError(
 
 func (handler *Handler) executePlanError(ctx context.Context, flowID agent.FlowID, err error) transportapi.ExecutePlanRes {
 	handler.logFailure(ctx, flowID, err)
-	problem, kind := commandProblem(err)
-	switch kind {
+	switch classifyFailure(err) {
 	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
 		return (*transportapi.ExecutePlanNotFound)(&problem)
 	case failureConflict:
+		problem := newProblem(409, "Conflict", "the Agent is not at an executable wait or the Plan revision changed")
 		return (*transportapi.ExecutePlanConflict)(&problem)
 	default:
+		problem := newProblem(503, "Service Unavailable", "the command could not be completed")
 		return (*transportapi.ExecutePlanServiceUnavailable)(&problem)
 	}
 }

@@ -33,7 +33,8 @@ export interface PendingQuestionBatchProps {
 }
 
 interface QuestionDraft {
-  answer: string;
+  selectedOption: string | null;
+  detail: string;
   isOther: boolean;
 }
 
@@ -49,25 +50,49 @@ export function PendingQuestionBatch({
   if (question === undefined) return null;
   const currentDraft = drafts[question.id];
   const hasAllAnswers = questions.every(
-    ({ id }) => (drafts[id]?.answer.trim().length ?? 0) > 0,
+    ({ id }) => questionAnswer(drafts[id]) !== "",
   );
   const isLast = currentIndex === questions.length - 1;
-  const setAnswer = (answer: string, isOther: boolean) => {
+  const chooseOption = (selectedOption: string) => {
     setDrafts((current) => ({
       ...current,
-      [question.id]: { answer, isOther },
+      [question.id]: {
+        selectedOption,
+        detail:
+          current[question.id]?.isOther === false &&
+          current[question.id]?.selectedOption === selectedOption
+            ? (current[question.id]?.detail ?? "")
+            : "",
+        isOther: false,
+      },
     }));
   };
-  const chooseOption = (answer: string) => {
-    setAnswer(answer, false);
-    if (!isLast) setCurrentIndex((index) => index + 1);
+  const chooseOther = () => {
+    setDrafts((current) => ({
+      ...current,
+      [question.id]: {
+        selectedOption: null,
+        detail:
+          current[question.id]?.isOther === true
+            ? (current[question.id]?.detail ?? "")
+            : "",
+        isOther: true,
+      },
+    }));
+  };
+  const setDetail = (detail: string) => {
+    setDrafts((current) => {
+      const draft = current[question.id];
+      if (draft === undefined) return current;
+      return { ...current, [question.id]: { ...draft, detail } };
+    });
   };
   const submit = () => {
     if (!hasAllAnswers || disabled) return;
     onSubmit(
       questions.map(({ id }) => ({
         questionId: id,
-        answer: drafts[id]?.answer.trim() ?? "",
+        answer: questionAnswer(drafts[id]),
       })),
     );
   };
@@ -100,7 +125,7 @@ export function PendingQuestionBatch({
               }}
             >
               {candidate.header}
-              {(drafts[candidate.id]?.answer.trim().length ?? 0) > 0 && (
+              {questionAnswer(drafts[candidate.id]) !== "" && (
                 <span
                   className="sa-question-answered-mark answered-mark"
                   aria-label="Answered"
@@ -122,7 +147,7 @@ export function PendingQuestionBatch({
           {question.options.map((option) => {
             const isSelected =
               currentDraft?.isOther === false &&
-              currentDraft.answer === option.label;
+              currentDraft.selectedOption === option.label;
             return (
               <button
                 type="button"
@@ -149,24 +174,30 @@ export function PendingQuestionBatch({
                 : "sa-question-button sa-question-button--secondary sa-question-option question-option secondary"
             }
             onClick={() => {
-              setAnswer(
-                currentDraft?.isOther === true ? currentDraft.answer : "",
-                true,
-              );
+              chooseOther();
             }}
           >
             <strong>Other</strong>
             <small>Enter a different answer.</small>
           </button>
         </div>
-        {currentDraft?.isOther === true && (
-          <label className="sa-question-other-answer other-answer">
-            Other answer
+        {currentDraft !== undefined && (
+          <label className="sa-question-other-answer answer-detail">
+            {currentDraft.isOther ? "Your answer" : "Add details (optional)"}
             <input
-              aria-label={`Other answer for ${question.header}`}
-              value={currentDraft.answer}
+              aria-label={
+                currentDraft.isOther
+                  ? `Other answer for ${question.header}`
+                  : `Additional details for ${question.header}`
+              }
+              placeholder={
+                currentDraft.isOther
+                  ? "Enter your answer…"
+                  : "Add dates, constraints, or context…"
+              }
+              value={currentDraft.detail}
               onChange={(event) => {
-                setAnswer(event.target.value, true);
+                setDetail(event.target.value);
               }}
             />
           </label>
@@ -187,7 +218,7 @@ export function PendingQuestionBatch({
           <button
             type="button"
             className="sa-question-button sa-question-button--secondary secondary"
-            disabled={disabled || currentDraft?.answer.trim() === ""}
+            disabled={disabled || questionAnswer(currentDraft) === ""}
             onClick={() => {
               setCurrentIndex((index) => index + 1);
             }}
@@ -208,4 +239,13 @@ export function PendingQuestionBatch({
       </div>
     </section>
   );
+}
+
+function questionAnswer(draft: QuestionDraft | undefined): string {
+  if (draft === undefined) return "";
+  const detail = draft.detail.trim();
+  if (draft.isOther) return detail;
+  const selectedOption = draft.selectedOption?.trim() ?? "";
+  if (selectedOption === "" || detail === "") return selectedOption;
+  return `${selectedOption}: ${detail}`;
 }

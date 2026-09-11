@@ -24,6 +24,11 @@ The coordinator permits one request at a time and merges concurrent triggers
 into at most one trailing request. Each blocking trigger increments an epoch.
 A response started before the newest epoch is discarded.
 
+The interaction-status long poll also closes stale operation boundaries.
+`submitted` immediately disables Plan actions without reading Snapshot. A later
+`waiting` result still requires blocking Snapshot reconciliation before the
+browser can expose Execute or Continue for the latest revision.
+
 The visible-page freshness fallback is a single-shot timer. Any Snapshot start
 cancels it. Completion schedules the next attempt ten seconds later, including
 after failure. A hidden page pauses the timer. On visibility restoration, the

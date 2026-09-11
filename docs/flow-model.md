@@ -4,17 +4,22 @@
 
 - Flow type: `AIAgentFlow`
 - Business identity: one stable Flow ID per durable Agent conversation
-- Start input: typed `AgentConfig`; `EnsureStarted` atomically persists opaque
-  application context, global start identity, command receipt, and an optional
-  idempotent first message
+- Start input: typed `AgentConfig`; trusted `RuntimeMetadata` is an optional
+  initial Attribute and must be one JSON object no larger than 16 KiB
+- ID reuse: Dex `IDReuseDisallow`
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
-- Command RPCs: `ConfirmStart`, `SendMessage`, `AnswerQuestions`,
-  `SteerMessage`, `DeleteQueuedMessage`, `ApproveTool`, `ExecutePlan`, and
-  `AcceptCancellation`
-- Read RPC: `Snapshot`
+- RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
+  `ExecutePlan`, and `Snapshot`
 - Browser synchronization Attribute: `AgentInteractionStatus`
-- Mutation ordering Attribute: `AgentMutationRevision`
+
+`Client.Cancel` is a lifecycle operation, not a Flow RPC. If the Flow ID is
+absent, it starts the same Flow with only `AgentTerminalReservation`; `Init`
+performs no Agent work and the client stops the reserved Flow. If the caller is
+lost first, the Flow remains inert until a later cancellation finishes it, and
+`IDReuseDisallow` prevents a normal start from taking its ID. This isolated
+mechanism orders cancellation against a concurrent start without adding a
+general command ledger.
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic
 commit. Provider and MCP calls are external effects and are not part of a Dex
@@ -26,10 +31,11 @@ transaction.
 Init
   -> AwaitUser
        -> CheckSteered -> CompactContext? -> CallModel
-       -> approved plan execution -----------^
+       -> accepted plan execution ------------^
 
 CallModel
-  -> CheckSteered -> AwaitUser                 (assistant response)
+  -> CheckSteered -> CallModel                 (first active-plan no-progress response)
+  -> CheckSteered -> AwaitUser                 (ordinary or repeated no-progress response)
   -> CheckSteered -> RouteTool                 (tool calls)
 
 RouteTool
@@ -59,174 +65,125 @@ application history, and makes the model replan.
 
 ## Step responsibilities
 
-| Step                | `WaitFor`                                                    | `Execute` and transition                                                                                          |
-| ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `Init`              | none                                                         | Validate config, atomically commit bootstrap identity/receipt/message and state, then `AwaitUser`                  |
-| `AwaitUser`         | steered batch, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected durable command |
-| `CompactContext`    | none                                                         | Call the summary provider, commit covered range and summary, then trim only already summarized retained messages  |
-| `CallModel`         | none                                                         | Rebuild provider-neutral context, stream buffered deltas, commit the complete assistant message and pending calls |
-| `CheckSteered`      | bounded steered batch                                        | Apply steering at a safe boundary or route the explicit continuation                                              |
-| `RouteTool`         | none                                                         | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                   |
-| `AwaitToolApproval` | exact call-ID approval or steering                           | Persist waiting status beside the wait; consume one decision or replan                                            |
-| `ExecuteTool`       | none                                                         | Perform one external MCP effect with stable call ID and bounded policy, then persist its result                   |
-| `DurableWait`       | Timer or steering                                            | Persist waiting status beside the wait; record completion/interruption and continue                               |
+| Step | `WaitFor` | `Execute` and transition |
+|---|---|---|
+| `Init` | none | Stop for a terminal reservation, otherwise validate and persist config/state, then enter `AwaitUser` |
+| `AwaitUser` | steering, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected command |
+| `CompactContext` | none | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages |
+| `CallModel` | none | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress |
+| `CheckSteered` | bounded steered batch | Apply steering at a safe boundary or route the explicit continuation |
+| `RouteTool` | none | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path |
+| `AwaitToolApproval` | exact call-ID approval or steering | Persist waiting status beside the wait; consume one decision or replan |
+| `ExecuteTool` | none | Perform one external MCP effect with stable Flow/call identity, then persist its result |
+| `DurableWait` | Timer or steering | Persist waiting status beside the wait; record completion or interruption and continue |
 
 ## Durable resources
 
-| Resource                   | Kind            | Purpose                                                                     |
-| -------------------------- | --------------- | --------------------------------------------------------------------------- |
-| `AgentConfig`              | Attribute       | Immutable execution configuration                                           |
-| `ApplicationContext`       | Attribute       | Opaque trusted-application routing context; never model or browser context  |
-| `AgentInitialized`         | Attribute       | Initialization boundary used by `EnsureStarted` replay                      |
-| `AgentStartIdentity`       | Attribute       | Versioned fingerprint binding Flow ID to config, context, and first message |
-| `AgentBootstrap`           | Attribute       | Start-only envelope deleted in the atomic `Init` commit                     |
-| `AgentMutationRevision`    | Attribute       | Monotonic revision and lock for accepted external mutations                 |
-| `AgentTerminalReservation` | Attribute       | Cancel-before-start tombstone bound to the non-reusable Flow ID             |
-| `AgentState`               | Attribute       | Sequence range, mode, status, plan revision, and pending-call cursor        |
-| `AgentInteractionStatus`   | Attribute       | Durable `submitted`/`waiting` browser synchronization boundary              |
-| `ContextSummary`           | Attribute       | Cumulative summary and explicit covered sequence                            |
-| `CurrentMessages`          | AttributeMap    | Recent provider-neutral messages keyed by sequence                          |
-| `ArchivedMessages`         | AttributeMap    | Ten-message chunks keyed by first sequence                                  |
-| `AcceptedUserMessages`     | AttributeMap    | Message ID, payload fingerprint, and first acceptance time; no content copy |
-| `DurableCommands`          | AttributeMap    | Exact replay outcome keyed by command and caller request ID                 |
-| `AcceptedToolApprovals`    | AttributeMap    | Per-call decision fence and first acceptance time                           |
-| `AcceptedPlanExecutions`   | AttributeMap    | Per-revision execution fence and first acceptance time                      |
-| `AgentPlan`                | Attribute       | Atomically replaced short plan                                              |
-| `PendingApproval`          | Attribute       | Reloadable approval request                                                 |
-| `PendingTimer`             | Attribute       | Reloadable durable wait description                                         |
-| `PendingUserInput`         | Attribute       | Reloadable batch of one to three structured questions                       |
-| `QueuedUserMessages`       | Channel         | FIFO messages that do not interrupt active work                             |
-| `SteeredUserMessages`      | Channel         | Messages consumed only at safe boundaries                                   |
-| `ToolApprovals`            | ChannelMap      | Approval decision partitioned by call ID                                    |
-| `PlanExecutions`           | ChannelMap      | Execution request partitioned by plan revision                              |
-| `ReasoningSummary`         | buffered Stream | Provider-authored reasoning summaries only                                  |
-| `AssistantText`            | buffered Stream | Visible response deltas                                                     |
-| `AgentActivity`            | Stream          | Bounded single-line lifecycle and Plan task events                          |
+| Resource | Kind | Purpose |
+|---|---|---|
+| `AgentConfig` | Attribute | Immutable execution configuration |
+| `AgentRuntimeMetadata` | Attribute | Trusted runtime routing metadata; never model or browser context |
+| `AgentTerminalReservation` | Attribute | Minimal cancel-before-start reservation |
+| `AgentState` | Attribute | Sequence range, mode, status, plan revision, pending-call cursor, and Plan no-progress count |
+| `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
+| `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
+| `CurrentMessages` | AttributeMap | Recent provider-neutral messages keyed by sequence |
+| `ArchivedMessages` | AttributeMap | Ten-message chunks keyed by first sequence |
+| `AgentPlan` | Attribute | Atomically replaced short plan |
+| `PendingApproval` | Attribute | Current reloadable approval request |
+| `PendingTimer` | Attribute | Reloadable durable wait description |
+| `PendingUserInput` | Attribute | Current batch of one to three structured questions |
+| `QueuedUserMessages` | Channel | FIFO messages that do not interrupt active work |
+| `SteeredUserMessages` | Channel | Messages consumed only at safe boundaries |
+| `ToolApprovals` | ChannelMap | Current decision delivery partitioned by call ID |
+| `PlanExecutions` | ChannelMap | Current execution delivery partitioned by plan revision |
+| `ReasoningSummary` | buffered Stream | Provider-authored reasoning summaries only |
+| `AssistantText` | buffered Stream | Visible response deltas |
+| `AgentActivity` | Stream | Bounded lifecycle and Plan task events |
 
-Channels are delivery mechanisms, not storage. A queued message enters
-application history only after a Step consumes it. Stream loss never changes
-durable truth.
+Channels deliver work; they do not store application history. A queued message
+enters history only after a Step consumes it. Stream loss never changes durable
+truth.
 
-`SendMessage` durably rejects while `PendingUserInput` exists.
-`AnswerQuestions` locks the mutation revision, pending input, command record,
-and accepted-message record. It requires exactly one non-empty answer for each
-current question ID. One transaction assigns the caller's message ID and first
-acceptance time, deletes the batch, publishes the ordered `UserMessage`, advances
-the mutation revision, and writes `submitted`. An equal request replay returns
-the first receipt without another publish. A stale, partial, or mismatched batch
-records a rejection without changing the pending input. The message retains the
-answered call ID internally so an active Plan resumes execution. Later model
-turns may create further batches after the current batch resolves.
+## Command boundaries
 
-Each observed `AgentActivity` event is a separate transient timeline row. The
-Stream may also carry revision-scoped Plan task status hints. Activity is never
-written to an Attribute, Snapshot, or archive. Reload may replay only events
-still retained by Dex and does not guarantee a complete activity history.
+Commands carry only the domain fields needed by their current operation. The
+Flow stores no request IDs, payload fingerprints, command receipts, global
+mutation revision, or historical acceptance records.
 
-## Application history
+`SendMessage` validates one non-empty message and publishes it directly to
+`QueuedUserMessages` when no question is pending. The caller does not choose a
+message ID. Dex creates the Channel message ID, and Snapshot returns it with the
+pending value.
+
+`AnswerQuestions` requires the exact current call ID and exactly one non-empty
+answer for every current question ID. The same RPC commit deletes
+`PendingUserInput`, publishes one ordered `UserMessage`, and writes
+`AgentInteractionStatus=submitted`. A repeated, partial, stale, or mismatched
+request is rejected without changing the Flow.
+
+`SteerMessage` accepts only a Dex Channel message ID obtained from Snapshot. A
+transactional RPC loads the queued Channel, deletes that exact pending entry,
+publishes its value to `SteeredUserMessages`, and writes `submitted`. A repeated
+or stale ID returns not found.
+
+`ApproveTool` accepts only `PendingApproval.CallID`. Its RPC deletes the pending
+Attribute and publishes the decision atomically. A repeated or stale call ID is
+rejected and no historical approval ledger is retained.
+
+`ExecutePlan` accepts only the latest draft or active revision at
+`waiting_for_message`. Pending input, approval, timer, queued messages, steering,
+or `PendingPlanExecutionRevision` rejects it without publishing. Acceptance sets
+that pending revision and publishes the request in one commit. The consuming
+Step clears the pending field. Therefore the same still-active revision can be
+executed again later with `Continue plan` after two no-progress responses.
+
+Delete removes one exact queued Dex Channel message. A repeated delete returns
+the SDK's message-not-found error. After an ambiguous network result, every
+client reconciles with Snapshot instead of looking up a stored command result.
+
+## Application history and Snapshot
 
 Application history is `CurrentMessages`, `ArchivedMessages`, and range metadata
-in `AgentState`. It is not Dex execution history.
+in `AgentState`. It is not Dex execution history. Fixed-width monotonic sequence
+keys identify committed messages. Context reconstruction reads known retained
+keys and never enumerates an unbounded map. Compaction commits a cumulative
+summary and covered sequence before deleting messages.
 
-Sequence keys are fixed-width monotonic values. Every committed message has a
-stable application message ID. A user message keeps its first durable
-acceptance timestamp when it moves from a Channel into history. Assistant and
-tool message IDs are deterministic from Flow ID, Run ID, and sequence. Context
-reconstruction reads known keys from the retained range and does not enumerate an unbounded map.
-Compaction commits a cumulative summary with its exact covered sequence before
-deleting messages.
+Dex loads ordinary Attributes automatically, but Steps and RPCs declare bounded
+AttributeMap and Channel loads explicitly. `Snapshot` loads every current
+message plus pending queued and steered messages in one read-only invocation.
+It never consumes a Channel. At twenty current messages, the oldest ten move
+atomically to one archive chunk. The archive endpoint reads one exact adjacent
+chunk for upward scrolling.
 
-Dex loads ordinary Attributes automatically, but not AttributeMap instances.
-Steps that append history explicitly load the bounded `CurrentMessages` map.
-`CompactContext`, `CallModel`, and `CheckSteered` also load
-`ArchivedMessages` because they can reconstruct or measure retained context.
-`WaitFor` handlers do not load either map; their independent snapshots only
-need ordinary Attributes and Channel conditions.
+`Client.MessagesAfter` reads at most 200 retained messages in ascending order
+after an exclusive sequence cursor. Watermarks let an adapter detect retention
+gaps. A concurrent archive move is retried through its immutable chunk; a trim
+returns `HistoryMessageNotFoundError`. A terminal reservation returns an empty
+page.
 
-`Snapshot` explicitly loads all `CurrentMessages` entries and the pending values
-of `QueuedUserMessages` and `SteeredUserMessages`. Ordinary Attributes used for
-the description are available under the released RPC semantics. The RPC is
-read-only and transactional, so the revision and pending-queue projection share
-one command boundary without contending on the mutation lock. It does not
-consume either Channel. Its history page never includes archives. At twenty current
-messages, the oldest ten move
-atomically to one `ArchivedMessages` instance. The archive endpoint reads one
-exact chunk by sequence and top scrolling requests only the adjacent chunk.
+Snapshot is the only durable browser read model. It returns the Dex Run ID,
+history, interaction description, and pending messages with their Dex Channel
+IDs. Terminal Snapshot follows Dex result and visibility contracts and contains
+no active Agent description.
 
-`Client.VerifyIdentity` is a separate trusted-application read. It compares a
-caller-provided application context with the immutable Attribute and returns no
-context value. It distinguishes a missing Flow, a normal Agent, and a
-cancel-before-start terminal reservation. The browser Snapshot remains free of
-trusted routing context.
+## Recovery and failure policy
 
-Retention is at least twenty and a multiple of ten. A complete archive chunk is
-deleted only after the cumulative compaction summary covers its full range.
-
-`Client.MessagesAfter` reads a bounded ascending page from the canonical
-current and archived maps. Its exclusive cursor, last-sequence watermark, and
-first-retained sequence let an adapter implement forward pagination and detect
-retention gaps. A page contains at most 200 messages. A concurrent archive move
-is retried through the immutable archive chunk; a concurrent retention trim
-returns a typed missing-sequence error instead of reconstructing from Dex
-execution history or a Stream. A cancel-before-start reservation has no Agent
-state and returns the canonical empty page with zero sequence watermarks.
-
-The RPC returns the invocation Run ID from Dex context. Consecutive reads retain
-Channel FIFO order, values, and stable message IDs. Closed Flows follow the SDK
-terminal result and visibility contracts. A terminal Snapshot contains the
-matching Run ID, typed lifecycle and failure metadata, and an empty durable
-Agent view. This prevents a just-closed Flow's final active RPC projection from
-being rendered as current state.
-
-## Retry and failure policy
-
-- `EnsureStarted` uses Dex's released `AlreadyStarted.IgnoreError` behavior.
-  The starting Step commits global identity, start receipt, optional message
-  ledger, and optional queue publish atomically before its initialization
-  marker. The identity covers config, application context, and whether and what
-  initial message exists, but excludes the retry request ID.
-- Every valid mutation stores its payload fingerprint and outcome under
-  `(command, request ID)`. Equal retries replay the first timestamp and outcome;
-  unequal retries return a typed conflict. A retry after Flow closure performs
-  a read-only ledger reconciliation and succeeds only for an existing exact
-  record.
-- Message IDs have an independent durable ledger. Reusing one with equal
-  content and mode is a replay even under a new request ID; different content
-  is a typed conflict.
-- Approval effects are fenced by call ID. Plan-execution effects are fenced by
-  revision. Concurrent request IDs can therefore commit at most one Channel
-  effect; equivalent later requests replay the effect timestamp.
-- An active pre-identity Flow can adopt an identity only from an exact start
-  request already recorded by the preceding lifecycle implementation. That
-  committed request stays read-only replayable after closure. Requests without
-  the old durable record are rejected instead of inferring missing identity. A
-  pre-identity run reaching `Init` for the first time fails rather than assuming
-  that its old caller omitted an initial message.
-- Accepted mutations advance `AgentMutationRevision` under one Attribute lock.
-  Receipts and Snapshot expose the committed revision. Send and Steer check an
-  optional expected revision after exact replay lookup. A stale precondition is
-  durably replayable as the same typed error.
-- Send loads queued and steered messages in one transactional RPC. Their
-  combined admission limits are 200 messages and 256 KiB of content. One
-  message may also contain at most 256 KiB.
-- `Client.EnsureCanceled` first attempts to reserve the non-reusable Flow ID.
-  An absent Agent becomes a no-work terminal reservation before `StopFlow`.
-  A concurrent start and cancellation therefore have one Dex-ordered winner.
-  `Client.Cancel` remains the request-ID-only convenience entrypoint.
-- Cancellation records acceptance, then invokes released Dex 0.4 `StopFlow`,
-  and returns only after observing terminal `canceled`.
-  Dex 0.4 does not accept a caller request ID on `StopFlow`; the preceding
-  durable command record makes a crash between those operations safely
-  retryable. A different request against a terminal Flow returns a typed
-  terminal error and never fabricates success.
+- Start persists `RuntimeMetadata` as an initial Attribute and uses
+  `IDReuseDisallow`. Empty metadata becomes `{}`.
+- Runtime metadata is trusted, opaque routing data. It is passed to tools with
+  stable Flow and call IDs after Worker replacement, but never to providers,
+  browser state, or Streams.
+- The browser reads Snapshot after every mutation success or failure, at durable
+  waiting boundaries, on explicit retry, and on its visible-page freshness
+  fallback. Mutation controls remain gated until reconciliation succeeds.
 - Model calls have bounded attempts, total duration, method timeout, and a
   heartbeat timeout sized for expected provider silence.
-- Read-only MCP tools may retry within an explicit budget.
-- Write or unknown MCP tools require approval and default to one attempt.
-- Stable Flow and call IDs plus opaque application context are loaded from Dex
-  and passed together through the tool boundary. An integration can recover
-  application-specific routing and derive one idempotency key across retries
-  and Worker replacement.
+- Read-only MCP tools may retry within an explicit budget. Write or unknown MCP
+  tools require approval and default to one attempt.
+- Stable Flow and call IDs let a tool integration derive an external-effect
+  idempotency key without creating a general Agent command ledger.
 - A timeout after an unprotected write records an unknown outcome; it never
   claims success or a known failure.
 - Failed durable commits retry without exposing staged Attribute or Channel

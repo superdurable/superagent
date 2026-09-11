@@ -56,69 +56,47 @@ depending on `internal/model` or duplicating provider wiring.
 
 ## Durable Agent model
 
-One stable `FlowID` identifies one conversation. `EnsureStarted` binds that ID
-to immutable `AgentConfig`, opaque application context, and the complete optional
-initial-message identity. The context is
-available only to trusted tool implementations and is never sent to the model,
-browser, or live Streams. `CurrentMessages` and
-`ArchivedMessages` are the typed application history; they are not Dex
-execution history. `AgentState` owns the retained sequence range, interaction
-mode, status, pending tool cursor, and plan revision. Plans, pending approvals,
-timers, input prompts, and cumulative context summaries are separate typed
-Attributes.
+One stable `FlowID` identifies one conversation. `Client.Start` supplies an
+immutable `AgentConfig` and optional `RuntimeMetadata`, then starts Dex with
+`IDReuseDisallow`. Runtime metadata is one validated JSON object capped at
+16 KiB. It exists for trusted integration routing across Worker replacement;
+tool implementations receive it with the Flow and call IDs. Models, browser
+Snapshots, Streams, and logs do not receive it. It must not contain secrets.
 
-Every mutation carries a caller-stable request ID. `DurableCommands` stores a
-small fingerprint, first acceptance timestamp, mutation revision, and outcome for each
-`(command, request ID)`. An equal replay returns the original result; a
-different payload returns a typed idempotency conflict. `AcceptedUserMessages`
-independently deduplicates application message IDs without copying message
-content. Dex Channel UUIDs remain internal and queue mutations resolve the
-application message ID against a loaded Channel snapshot.
+`CurrentMessages` and `ArchivedMessages` are the typed application history;
+they are not Dex execution history. `AgentState` owns the retained sequence
+range, interaction mode, status, pending tool cursor, plan revision, and
+consecutive Plan no-progress count. Plans, pending approvals, timers, input
+prompts, and cumulative context summaries are separate typed Attributes.
 
-`AgentMutationRevision` serializes external mutations and advances only for a
-new accepted effect. Send and Steer can compare an optional expected revision
-inside the same transaction. Exact command and message-effect replays are
-resolved before that comparison and retain their original revision. Send also
-loads both pending Channels and rejects a new message when their combined count
-would exceed 200 or their aggregate content would exceed 256 KiB.
+Commands follow Dex's transactional RPC model. There is no permanent command
+receipt, caller request ID, payload fingerprint, global mutation revision, or
+historical acceptance ledger. A response reports only whether current durable
+state accepted the command. After an ambiguous transport result, the caller
+reads Snapshot and reconciles current state.
 
-The starting Step commits the start receipt, optional initial-message ledger,
-and optional initial-message publish in one Dex commit. A retry against a closed
-Flow reconstructs any already committed command receipt from Attributes and
-never invents acceptance. Per-call approval and per-revision plan-execution
-ledgers fence concurrent request IDs before either Channel effect is published.
-
-`EnsureCanceled` races `EnsureStarted` through Dex's non-reusable Flow ID. When
-no Agent exists, it starts the same Flow type with an initial terminal
-reservation and cancellation command, then cancels it. `Init` detects the
-reservation and performs no Agent work. If the caller fails between reservation
-and stop, either a later cancellation or start finishes the cancellation; the
-Flow ID can never be started as a new Agent.
-
-`Client.VerifyIdentity` lets a trusted embedding application compare its
-canonical application context after process replacement. It hashes both values
-before a constant-time equality check and never returns the persisted context.
-Its result distinguishes a normal Agent from a cancel-before-start terminal
-reservation. The browser Snapshot continues to exclude application context.
-
-Flows created before global start identity existed have an explicit migration
-boundary. Only an exact start request recorded by the preceding lifecycle
-implementation can establish the missing identity on an active Flow. The same
-committed request remains read-only replayable after termination. Any identity
-without that durable proof is rejected. A legacy run that first reaches `Init`
-on the new Worker fails explicitly because its original first-message intent is
-not recoverable.
+`SendMessage` publishes a validated message directly to
+`QueuedUserMessages`. Dex assigns the Channel message ID. Snapshot returns that
+ID so edit, delete, and steer target the exact pending entry. `SteerMessage`
+loads the queued Channel and atomically deletes that ID before publishing its
+value to `SteeredUserMessages`; a repeated or stale ID is not accepted.
 
 Queued messages and validated question answers use `QueuedUserMessages`.
-Steering uses its own Channel. A queued message enters application history only
-after a Step consumes it. Steering is consumed only at
-explicit safe Step boundaries, so it cannot claim to cancel an in-flight model
-or MCP side effect. `AnswerQuestions` verifies all answers for the exact pending
-one-to-three-question batch. It records caller-stable command and message
-identities, deletes the batch, publishes one ordered answer message, advances
-the mutation revision, and writes `submitted` in one locked RPC commit. Equal
-retries return the original receipt without publishing again. Approval and plan
-execution use ChannelMaps keyed by typed call ID and plan revision.
+Steering is consumed only at explicit safe Step boundaries, so it cannot claim
+to cancel an in-flight model or MCP side effect. `AnswerQuestions` verifies the
+exact pending call ID and every question ID. One RPC commit deletes
+`PendingUserInput`, publishes the ordered answer message, and writes
+`submitted`. `ApproveTool` accepts only the current
+`PendingApproval.CallID`; it deletes the pending value and publishes the
+decision in the same commit. Repeated and stale commands are rejected.
+
+Plan execution is available only at a durable `waiting_for_message` boundary
+for the latest revision with no pending input, approval, timer, queued message,
+or steering. The browser derives the button state from Snapshot plus the
+interaction-status long poll, so `submitted` closes the boundary immediately.
+An executing active Plan that produces no tool call receives one automatic
+corrective model turn. A second consecutive no-progress response returns to the
+durable wait and exposes `Continue plan`.
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit
 boundary. Waiting state is written in the `WaitFor` that establishes the wait.
@@ -128,8 +106,8 @@ table are in `docs/flow-model.md`.
 History-reading Steps declare bounded AttributeMap loads explicitly. The public
 client can read at most 200 canonical retained messages after an exclusive
 sequence cursor without using Dex execution history or Streams. Tool
-invocations receive the stable Flow ID, model call ID, and opaque application
-context as one durable routing identity, including after Worker replacement.
+invocations receive the stable Flow ID, model call ID, and runtime metadata as
+one durable routing identity, including after Worker replacement.
 
 ## Durable and live reconciliation
 
@@ -169,15 +147,25 @@ refresh starts from an empty token, so Dex may replay events from its retained
 head. Events removed by Stream retention are not reconstructed. Completed-source
 tracking prevents replayed text from duplicating durable assistant messages and
 keeps replayed reasoning summaries in a completed state.
+The timeline follows new content only while the reader is at its bottom. Manual
+upward scrolling pauses that behavior. Later message, reasoning, or activity
+content exposes an explicit jump-to-latest control instead of moving the
+viewport. Archive prepends preserve the reading position and do not count as
+new timeline content. Agent status lives inside the fixed composer above its
+primary action, so it stays visible without covering the timeline.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot
 replace newer durable state.
-Message send creates one application message ID, displays one local,
-non-actionable `Submitting` item, and changes it
-to `Queued` after HTTP acceptance. Failure restores its composer text and plan
-mode. Pending input uses the dedicated `answerQuestions` operation. The browser
+Message send displays one local, non-actionable `Submitting` item. Snapshot
+reconciliation replaces it with the queued entry and its Dex-generated message
+ID. Failure restores its composer text and plan mode. The composer retains
+focus and remains editable while submission and Snapshot reconciliation gate
+later mutations. Pending input uses the dedicated
+`answerQuestions` operation. The browser
 collects every answer locally, permits review, and submits the complete batch.
+Preset answers may include a compact supplemental detail that is composed into
+the answer string; `Other` requires free text.
 HTTP acceptance means the server has durably removed that exact batch and
 queued one normal answer message. Queue edit, delete, and steer optimistically
 remove one stable message ID.
@@ -194,9 +182,9 @@ domain package.
 
 The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
 one exact archive-chunk read, interaction-status long polling, queue deletion
-and steering, typed event polling, health, and readiness. Message acceptance
-returns its stable ID, first acceptance time, and replay status. The API
-process does not serve React files. Long-poll expiry has a generated typed body,
+and steering, typed event polling, health, and readiness. Mutation responses
+report acceptance without durable command receipts. The API process does not
+serve React files. Long-poll expiry has a generated typed body,
 so the browser can distinguish normal polling cadence from a transport failure.
 Snapshot responses carry the generated `Cache-Control: no-store` contract.
 Running responses contain a non-null Agent description. Terminal responses

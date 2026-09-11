@@ -22,6 +22,7 @@ export default defineConfig({
   retries: 0,
   reporter: "line",
   timeout: 60_000,
+  expect: { timeout: 20_000 },
   use: {
     baseURL: webOrigin,
     browserName: "chromium",

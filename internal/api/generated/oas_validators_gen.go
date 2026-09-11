@@ -617,17 +617,6 @@ func (s *AgentMessage) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
-		if err := s.MessageId.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "messageId",
-			Error: err,
-		})
-	}
-	if err := func() error {
 		if err := s.Role.Validate(); err != nil {
 			return err
 		}
@@ -1014,17 +1003,6 @@ func (s *AnswerQuestionsRequest) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "flowId",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.MessageId.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "messageId",
 			Error: err,
 		})
 	}
@@ -1635,29 +1613,6 @@ func (s MessageID) Validate() error {
 		MaxNumericSet: false,
 	}).Validate(string(alias)); err != nil {
 		return errors.Wrap(err, "string")
-	}
-	return nil
-}
-
-func (s *MessageReceipt) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if err := s.MessageId.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "messageId",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
 	}
 	return nil
 }
@@ -2519,17 +2474,6 @@ func (s *SendMessageRequest) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "flowId",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.MessageId.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "messageId",
 			Error: err,
 		})
 	}

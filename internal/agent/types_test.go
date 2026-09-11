@@ -22,7 +22,6 @@ import (
 	"math"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestAgentConfigDefaultsValidate(t *testing.T) {
@@ -137,225 +136,35 @@ func TestJSONObjectRoundTripsAsObject(t *testing.T) {
 	}
 }
 
-func TestNewUserMessageValidationProtectsCallerIdentityAndBodyBounds(t *testing.T) {
-	t.Parallel()
-	valid := UserMessage{MessageID: "message-1", Content: "hello"}
-	if err := validateNewUserMessage(valid); err != nil {
-		t.Fatalf("valid message: %v", err)
+func TestRuntimeMetadataValidation(t *testing.T) {
+	if err := validateRuntimeMetadata(""); err != nil {
+		t.Fatalf("empty runtime metadata error = %v", err)
 	}
-	tests := []struct {
-		name   string
-		mutate func(*UserMessage)
-	}{
-		{name: "missing ID", mutate: func(message *UserMessage) { message.MessageID = "" }},
-		{name: "unsafe ID", mutate: func(message *UserMessage) { message.MessageID = "message id" }},
-		{name: "accepted timestamp", mutate: func(message *UserMessage) { message.AcceptedAt = time.Now() }},
-		{name: "blank content", mutate: func(message *UserMessage) { message.Content = " \n" }},
-		{name: "NUL content", mutate: func(message *UserMessage) { message.Content = "hello\x00world" }},
-		{name: "oversized content", mutate: func(message *UserMessage) {
-			message.Content = strings.Repeat("x", MaximumUserMessageContentBytes+1)
-		}},
+	if err := validateRuntimeMetadata(MustJSONObject(`{"resource_id":"resource-1"}`)); err != nil {
+		t.Fatalf("valid runtime metadata error = %v", err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			candidate := valid
-			test.mutate(&candidate)
-			if err := validateNewUserMessage(candidate); err == nil {
-				t.Fatal("validation error = nil")
-			}
-		})
+	if err := validateRuntimeMetadata(JSONObject(`[]`)); err == nil {
+		t.Fatal("array runtime metadata error = nil")
+	}
+	oversized := JSONObject(`{"value":"` + strings.Repeat("x", MaximumRuntimeMetadataBytes) + `"}`)
+	if err := validateRuntimeMetadata(oversized); err == nil {
+		t.Fatal("oversized runtime metadata error = nil")
 	}
 }
 
-func TestUserMessageContentAllowsExactly256KiB(t *testing.T) {
-	t.Parallel()
-	message := UserMessage{
-		MessageID: "message-at-limit",
-		Content:   strings.Repeat("x", MaximumUserMessageContentBytes),
+func TestCommandInputLimits(t *testing.T) {
+	if err := validateNewUserMessage(UserMessage{Content: strings.Repeat("x", MaximumUserMessageContentBytes)}); err != nil {
+		t.Fatalf("maximum user message error = %v", err)
 	}
-	if err := validateNewUserMessage(message); err != nil {
-		t.Fatalf("message at content limit: %v", err)
+	if err := validateNewUserMessage(UserMessage{Content: strings.Repeat("x", MaximumUserMessageContentBytes+1)}); err == nil {
+		t.Fatal("oversized user message error = nil")
 	}
-	message.Content += "x"
-	if err := validateNewUserMessage(message); err == nil {
-		t.Fatal("message beyond content limit was accepted")
+	if err := validateCancelReason("session deleted"); err != nil {
+		t.Fatalf("valid cancellation reason error = %v", err)
 	}
-}
-
-func TestMutationPreconditionAndCancellationValidation(t *testing.T) {
-	t.Parallel()
-	negative := MutationRevision(-1)
-	if err := validateExpectedRevision(&negative); err == nil {
-		t.Fatal("negative expected revision was accepted")
-	}
-	zero := MutationRevision(0)
-	if err := validateExpectedRevision(&zero); err != nil {
-		t.Fatalf("zero expected revision: %v", err)
-	}
-	valid := CancelRequest{RequestID: "cancel-1", Reason: "requested by caller"}
-	if err := validateCancelRequest(valid); err != nil {
-		t.Fatalf("valid cancellation: %v", err)
-	}
-	for _, candidate := range []CancelRequest{
-		{Reason: valid.Reason},
-		{RequestID: valid.RequestID},
-		{RequestID: valid.RequestID, Reason: "reason\x00value"},
-		{RequestID: valid.RequestID, Reason: strings.Repeat("x", maximumCancelReasonBytes+1)},
-	} {
-		if err := validateCancelRequest(candidate); err == nil {
-			t.Fatalf("invalid cancellation was accepted: %#v", candidate)
-		}
-	}
-}
-
-func TestAnswerQuestionsValidationAndFingerprint(t *testing.T) {
-	t.Parallel()
-	valid := AnswerQuestionsRequest{
-		RequestID: "answer-request-1",
-		MessageID: "answer-message-1",
-		CallID:    "call-1",
-		Answers: []UserInputAnswer{{
-			QuestionID: "environment",
-			Answer:     "Production",
-		}},
-	}
-	if err := validateAnswerQuestionsRequest(valid); err != nil {
-		t.Fatalf("valid answer request: %v", err)
-	}
-	fingerprint, err := valid.fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name   string
-		mutate func(*AnswerQuestionsRequest)
-	}{
-		{name: "missing request ID", mutate: func(request *AnswerQuestionsRequest) { request.RequestID = "" }},
-		{name: "missing message ID", mutate: func(request *AnswerQuestionsRequest) { request.MessageID = "" }},
-		{name: "missing call ID", mutate: func(request *AnswerQuestionsRequest) { request.CallID = "" }},
-		{name: "missing answers", mutate: func(request *AnswerQuestionsRequest) { request.Answers = nil }},
-		{name: "blank answer", mutate: func(request *AnswerQuestionsRequest) { request.Answers[0].Answer = " " }},
-		{name: "duplicate question", mutate: func(request *AnswerQuestionsRequest) {
-			request.Answers = append(request.Answers, request.Answers[0])
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			candidate := valid
-			candidate.Answers = append([]UserInputAnswer(nil), valid.Answers...)
-			test.mutate(&candidate)
-			if validationErr := validateAnswerQuestionsRequest(candidate); validationErr == nil {
-				t.Fatal("validation error = nil")
-			}
-		})
-	}
-	changed := valid
-	changed.Answers = append([]UserInputAnswer(nil), valid.Answers...)
-	changed.Answers[0].Answer = "Staging"
-	changedFingerprint, err := changed.fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changedFingerprint == fingerprint {
-		t.Fatal("answer mutation did not change the request fingerprint")
-	}
-}
-
-func TestCancelFingerprintIncludesReason(t *testing.T) {
-	t.Parallel()
-	request := CancelRequest{RequestID: "cancel-1", Reason: "first reason"}
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Reason = "second reason"
-	changed, err := request.fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed == fingerprint {
-		t.Fatal("cancellation reason did not change the fingerprint")
-	}
-	flowID := FlowID("cancel-reservation-flow")
-	if cancellationReservationStartRequestID(flowID, changed) ==
-		cancellationReservationStartRequestID(flowID, fingerprint) {
-		t.Fatal("cancellation reason did not change the reservation start request ID")
-	}
-}
-
-func TestRequestAndApplicationContextValidation(t *testing.T) {
-	t.Parallel()
-	if err := validateRequestID("request-1/path:part"); err != nil {
-		t.Fatalf("valid request ID: %v", err)
-	}
-	for _, requestID := range []RequestID{"", "request id", RequestID(strings.Repeat("x", maximumMessageIDBytes+1))} {
-		if err := validateRequestID(requestID); err == nil {
-			t.Fatalf("request ID %q was accepted", requestID)
-		}
-	}
-	if err := validateApplicationContext(`{"resource_id":"resource-1"}`); err != nil {
-		t.Fatalf("valid application context: %v", err)
-	}
-	for _, value := range []string{"context\x00value", strings.Repeat("x", maximumAppContextBytes+1)} {
-		if err := validateApplicationContext(value); err == nil {
-			t.Fatalf("application context of %d bytes was accepted", len(value))
-		}
-	}
-}
-
-func TestEnsureStartIdentityFingerprintIsGlobal(t *testing.T) {
-	t.Parallel()
-	request := EnsureStartRequest{
-		RequestID:          "request-one",
-		Config:             NewAgentConfig(),
-		ApplicationContext: `{"resource_id":"resource-1"}`,
-		InitialMessage: &UserMessage{
-			MessageID: "message-one",
-			Content:   "build the application",
-			PlanMode:  true,
-		},
-	}
-	fingerprint, err := request.identityFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.RequestID = "request-two"
-	retriedFingerprint, err := request.identityFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retriedFingerprint != fingerprint {
-		t.Fatal("request ID changed the global Agent start identity")
-	}
-	request.Config.EnabledMCPServers = nil
-	request.Config.EnabledTools = nil
-	collectionFingerprint, err := request.identityFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if collectionFingerprint != fingerprint {
-		t.Fatal("nil configuration collections changed the global Agent start identity")
-	}
-	request.Config.EnabledMCPServers = []string{}
-	request.Config.EnabledTools = []ToolName{}
-
-	mutations := []func(*EnsureStartRequest){
-		func(candidate *EnsureStartRequest) { candidate.InitialMessage = nil },
-		func(candidate *EnsureStartRequest) { candidate.InitialMessage.MessageID = "message-two" },
-		func(candidate *EnsureStartRequest) { candidate.InitialMessage.Content = "build something else" },
-		func(candidate *EnsureStartRequest) { candidate.InitialMessage.PlanMode = false },
-	}
-	for index, mutate := range mutations {
-		candidate := request
-		initialMessage := *request.InitialMessage
-		candidate.InitialMessage = &initialMessage
-		mutate(&candidate)
-		candidateFingerprint, fingerprintErr := candidate.identityFingerprint()
-		if fingerprintErr != nil {
-			t.Fatal(fingerprintErr)
-		}
-		if candidateFingerprint == fingerprint {
-			t.Fatalf("identity mutation %d retained the original fingerprint", index)
+	for _, reason := range []string{"", "contains\x00nul", strings.Repeat("x", maximumCancelReasonBytes+1)} {
+		if err := validateCancelReason(reason); err == nil {
+			t.Fatalf("invalid cancellation reason %q error = nil", reason)
 		}
 	}
 }

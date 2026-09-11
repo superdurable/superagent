@@ -31,8 +31,14 @@ describe("PendingQuestionBatch", () => {
     render(<PendingQuestionBatch onSubmit={onSubmit} questions={questions} />);
 
     fireEvent.click(screen.getByRole("button", { name: /^West/u }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Additional details for Region" }),
+      { target: { value: "California departure" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Which pace?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Fast/u }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Which format?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Other/u }));
     fireEvent.change(
@@ -43,11 +49,12 @@ describe("PendingQuestionBatch", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^Pace/u }));
     fireEvent.click(screen.getByRole("button", { name: /^Careful/u }));
+    fireEvent.click(screen.getByRole("button", { name: /^Format/u }));
     fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
 
     expect(onSubmit).toHaveBeenCalledOnce();
     expect(onSubmit).toHaveBeenCalledWith([
-      { questionId: "region", answer: "West" },
+      { questionId: "region", answer: "West: California departure" },
       { questionId: "pace", answer: "Careful" },
       { questionId: "format", answer: "Checklist" },
     ]);

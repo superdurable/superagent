@@ -28,7 +28,6 @@ import {
   waitForAgentInteractionStatus,
   type CallId,
   type FlowId,
-  type MessageId,
   type PendingUserMessage,
   type ResumeToken,
   type StreamEvent,
@@ -188,6 +187,8 @@ export function Conversation({
               : AgentInteractionStatus.WAITING;
           if (result.status === AgentInteractionStatus.WAITING) {
             requestSnapshot({ blocking: true });
+          } else {
+            dispatch({ type: "interaction-submitted" });
           }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
@@ -253,29 +254,28 @@ export function Conversation({
       content,
       planMode: state.isPlanMode,
     };
-    const messageID = crypto.randomUUID() as MessageId;
-    runCommand(
-      {
-        kind: "send",
-        messageID,
-        value,
-      },
-      (signal) =>
-        sendMessage({
-          body: {
-            flowId,
-            messageId: messageID,
-            ...value,
-          },
-          signal,
-        }),
+    const submission = {
+      value,
+      submittedAfterSequence: state.snapshot.description.lastSequence,
+      knownMessageIDs: [
+        ...state.snapshot.queued.map((message) => message.messageId),
+        ...state.snapshot.steered.map((message) => message.messageId),
+      ],
+    };
+    runCommand({ kind: "send", ...submission }, (signal) =>
+      sendMessage({
+        body: {
+          flowId,
+          ...value,
+        },
+        signal,
+      }),
     );
   };
   const submitAnswers = (callID: CallId, answers: UserInputAnswer[]) => {
     if (areMutationsDisabled) return;
     const pendingInput = state.snapshot.description.pendingUserInput;
     if (pendingInput?.callId !== callID) return;
-    const messageID = crypto.randomUUID() as MessageId;
     const answersByQuestion = new Map(
       answers.map((answer) => [answer.questionId, answer.answer]),
     );
@@ -290,7 +290,6 @@ export function Conversation({
     };
     const command: Command = {
       kind: "answer",
-      messageID,
       callID,
       value,
       submittedAfterSequence: state.snapshot.description.lastSequence,
@@ -300,10 +299,7 @@ export function Conversation({
       ],
     };
     runCommand(command, (signal) =>
-      answerQuestions({
-        body: { flowId, messageId: messageID, callId: callID, answers },
-        signal,
-      }),
+      answerQuestions({ body: { flowId, callId: callID, answers }, signal }),
     );
   };
   const mutateQueue = (

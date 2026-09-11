@@ -99,7 +99,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageReceipt"
+                $ref: "#/components/schemas/Accepted"
         "400":
           $ref: "#/components/responses/Problem"
         "404":
@@ -124,7 +124,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageReceipt"
+                $ref: "#/components/schemas/Accepted"
         "400":
           $ref: "#/components/responses/Problem"
         "404":
@@ -288,6 +288,11 @@ paths:
     post:
       operationId: executePlan
       summary: Execute one exact durable plan revision
+      description: >-
+        Accepted only when the Agent is waiting for a message, the requested
+        Plan revision is current, and no pending input, approval, timer, queued
+        message, steering, or execution request blocks it. A conflicting
+        boundary or stale revision returns 409.
       requestBody:
         required: true
         content:
@@ -672,14 +677,11 @@ components:
       additionalProperties: false
       required:
         - flowId
-        - messageId
         - content
         - planMode
       properties:
         flowId:
           $ref: "#/components/schemas/FlowId"
-        messageId:
-          $ref: "#/components/schemas/MessageId"
         content:
           type: string
           minLength: 1
@@ -691,14 +693,11 @@ components:
       additionalProperties: false
       required:
         - flowId
-        - messageId
         - callId
         - answers
       properties:
         flowId:
           $ref: "#/components/schemas/FlowId"
-        messageId:
-          $ref: "#/components/schemas/MessageId"
         callId:
           $ref: "#/components/schemas/CallId"
         answers:
@@ -859,7 +858,6 @@ components:
       type: object
       additionalProperties: false
       required:
-        - messageId
         - role
         - content
         - toolCalls
@@ -867,8 +865,6 @@ components:
         - toolName
         - createdAt
       properties:
-        messageId:
-          $ref: "#/components/schemas/MessageId"
         role:
           $ref: "#/components/schemas/MessageRole"
         content:
@@ -908,14 +904,10 @@ components:
       additionalProperties: false
       required:
         - messageId
-        - acceptedAt
         - value
       properties:
         messageId:
           $ref: "#/components/schemas/MessageId"
-        acceptedAt:
-          type: string
-          format: date-time
         value:
           $ref: "#/components/schemas/UserMessage"
     UserMessage:
@@ -1134,21 +1126,6 @@ components:
           type: boolean
           enum:
             - true
-    MessageReceipt:
-      type: object
-      additionalProperties: false
-      required:
-        - messageId
-        - acceptedAt
-        - replayed
-      properties:
-        messageId:
-          $ref: "#/components/schemas/MessageId"
-        acceptedAt:
-          type: string
-          format: date-time
-        replayed:
-          type: boolean
     PollTimeout:
       type: object
       additionalProperties: false

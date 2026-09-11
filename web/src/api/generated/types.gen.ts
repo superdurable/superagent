@@ -162,14 +162,12 @@ export type StartAgentResponse = {
 
 export type SendMessageRequest = {
     flowId: FlowId;
-    messageId: MessageId;
     content: string;
     planMode: boolean;
 };
 
 export type AnswerQuestionsRequest = {
     flowId: FlowId;
-    messageId: MessageId;
     callId: CallId;
     answers: Array<UserInputAnswer>;
 };
@@ -244,7 +242,6 @@ export type SequencedMessage = {
 };
 
 export type AgentMessage = {
-    messageId: MessageId;
     role: MessageRole;
     content: string;
     toolCalls: Array<ToolCall>;
@@ -261,7 +258,6 @@ export type ToolCall = {
 
 export type PendingUserMessage = {
     messageId: MessageId;
-    acceptedAt: string;
     value: UserMessage;
 };
 
@@ -331,12 +327,6 @@ export type PlanTask = {
 
 export type Accepted = {
     accepted: true;
-};
-
-export type MessageReceipt = {
-    messageId: MessageId;
-    acceptedAt: string;
-    replayed: boolean;
 };
 
 export type PollTimeout = {
@@ -540,7 +530,7 @@ export type SendMessageResponses = {
     /**
      * The command was durably accepted.
      */
-    202: MessageReceipt;
+    202: Accepted;
 };
 
 export type SendMessageResponse = SendMessageResponses[keyof SendMessageResponses];
@@ -577,7 +567,7 @@ export type AnswerQuestionsResponses = {
     /**
      * The answers were durably accepted and the input batch was closed.
      */
-    202: MessageReceipt;
+    202: Accepted;
 };
 
 export type AnswerQuestionsResponse = AnswerQuestionsResponses[keyof AnswerQuestionsResponses];

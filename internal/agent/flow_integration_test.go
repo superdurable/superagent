@@ -40,25 +40,7 @@ import (
 
 const integrationToolName ToolName = "integration_tool"
 
-const integrationWaitTimeout = 60 * time.Second
-
-var integrationMessageSequence atomic.Uint64
-
-func integrationRequestID(prefix string) RequestID {
-	return RequestID(fmt.Sprintf("%s-%d", prefix, integrationMessageSequence.Add(1)))
-}
-
-func integrationUserMessage(content string, isPlanMode bool) SendMessageRequest {
-	messageID := MessageID(integrationRequestID("integration-message"))
-	return SendMessageRequest{
-		RequestID: RequestID(messageID),
-		Message: UserMessage{
-			MessageID: messageID,
-			Content:   content,
-			PlanMode:  isPlanMode,
-		},
-	}
-}
+const integrationWaitTimeout = 30 * time.Second
 
 func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	modelClient := integrationModel{}
@@ -70,8 +52,12 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	config.CompactionTriggerFraction = 0.60
 	config.CompactionKeepFraction = 0.20
 	config.MessageRetentionLimit = 20
+	runtimeMetadata := MustJSONObject(`{"resource_id":"resource-1","tenant":"integration"}`)
 
-	runID, err := environment.agent.Start(t.Context(), flowID, config)
+	runID, err := environment.agent.Start(t.Context(), flowID, StartRequest{
+		Config:          config,
+		RuntimeMetadata: runtimeMetadata,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +79,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatalf("initial Snapshot = %#v", initialSnapshot)
 	}
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("hello", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -115,11 +101,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
 
 	environment.replaceWorker(t, flowID)
-	if _, err := environment.agent.SendMessage(
-		t.Context(),
-		flowID,
-		integrationUserMessage(`/tool integration_tool {"attempt":2}`, false),
-	); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
 	}
 	approval := waitForPendingApproval(t, environment, flowID)
@@ -131,35 +113,37 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if recoveredApproval.CallID != approval.CallID || recoveredApproval.Arguments != approval.Arguments {
 		t.Fatalf("approval changed across Worker replacement: got %#v, want %#v", recoveredApproval, approval)
 	}
-	approvalRequest := ToolApprovalRequest{
-		RequestID: integrationRequestID("approve"), CallID: approval.CallID, Approved: true,
-	}
-	approvalReceipt, err := environment.agent.ApproveTool(t.Context(), flowID, approvalRequest)
-	if err != nil {
+	if err := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: approval.CallID, Approved: true,
+	}); err != nil {
 		t.Fatal(err)
+	}
+	duplicateApprovalErr := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: approval.CallID, Approved: true,
+	})
+	var duplicateApproval *CommandRejectedError
+	if !errors.As(duplicateApprovalErr, &duplicateApproval) || duplicateApproval.Command != CommandApproveTool {
+		t.Fatalf("duplicate approval error = %T %v", duplicateApprovalErr, duplicateApprovalErr)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
 	})
-	replayedApproval, err := environment.agent.ApproveTool(t.Context(), flowID, approvalRequest)
-	if err != nil || !replayedApproval.IsReplay || replayedApproval.AcceptedAt != approvalReceipt.AcceptedAt {
-		t.Fatalf("replayed approval = %#v, %v; first = %#v", replayedApproval, err, approvalReceipt)
-	}
-	conflictingApproval := approvalRequest
-	conflictingApproval.Approved = false
-	_, approvalConflictErr := environment.agent.ApproveTool(t.Context(), flowID, conflictingApproval)
-	var approvalConflict *CommandIdempotencyConflictError
-	if !errors.As(approvalConflictErr, &approvalConflict) || approvalConflict.Command != CommandApproveTool {
-		t.Fatalf("approval idempotency conflict = %T %v", approvalConflictErr, approvalConflictErr)
-	}
-	toolRegistry.assertCallsUseIdentity(t, flowID, approval.CallID)
+	toolRegistry.assertCallsUseID(t, approval.CallID)
+	toolRegistry.assertInvocation(t, flowID, approval.CallID, runtimeMetadata)
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/tool", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
 	}
 	rejectedApproval := waitForPendingApproval(t, environment, flowID)
-	if _, err := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
-		RequestID: integrationRequestID("approve"), CallID: rejectedApproval.CallID, Approved: false,
+	staleApprovalErr := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: approval.CallID, Approved: false,
+	})
+	var staleApproval *CommandRejectedError
+	if !errors.As(staleApprovalErr, &staleApproval) || staleApproval.Command != CommandApproveTool {
+		t.Fatalf("stale approval error = %T %v", staleApprovalErr, staleApprovalErr)
+	}
+	if err := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
+		CallID: rejectedApproval.CallID, Approved: false,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -174,59 +158,50 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatalf("rejected tool result is missing from history: %#v", snapshot.History.Messages)
 	}
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("ship safely", true)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "ship safely", PlanMode: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	plan := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	_, stalePlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-plan"), Revision: plan.Revision + 1,
-	})
+	stalePlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision + 1})
 	var stalePlan *CommandRejectedError
 	if !errors.As(stalePlanErr, &stalePlan) || stalePlan.Command != CommandExecutePlan {
 		t.Fatalf("stale plan execution error = %T %v", stalePlanErr, stalePlanErr)
 	}
-	executionRequest := PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-plan"), Revision: plan.Revision,
-	}
-	executionReceipt, err := environment.agent.ExecutePlan(t.Context(), flowID, executionRequest)
-	if err != nil {
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
-	replayedExecution, err := environment.agent.ExecutePlan(t.Context(), flowID, executionRequest)
-	if err != nil || !replayedExecution.IsReplay || replayedExecution.AcceptedAt != executionReceipt.AcceptedAt {
-		t.Fatalf("replayed plan execution = %#v, %v; first = %#v", replayedExecution, err, executionReceipt)
-	}
-	completedPlanReplay, completedPlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-plan"), Revision: plan.Revision,
-	})
-	if completedPlanErr != nil || !completedPlanReplay.IsReplay || completedPlanReplay.AcceptedAt != executionReceipt.AcceptedAt {
-		t.Fatalf("completed plan execution replay = %#v, %v", completedPlanReplay, completedPlanErr)
+	completedPlanErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision})
+	var completedPlan *CommandRejectedError
+	if !errors.As(completedPlanErr, &completedPlan) || completedPlan.Command != CommandExecutePlan {
+		t.Fatalf("completed plan execution error = %T %v", completedPlanErr, completedPlanErr)
 	}
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/ask deployment region", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/ask deployment region"}); err != nil {
 		t.Fatal(err)
 	}
 	pendingInput := waitForPendingUserInput(t, environment, flowID)
 	environment.replaceWorker(t, flowID)
-	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
+	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
 		t.Fatal(err)
 	}
 	waitForNoPendingUserInput(t, environment, flowID)
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/wait", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
 		t.Fatal(err)
 	}
 	waitForPendingTimer(t, environment, flowID)
 	environment.replaceWorker(t, flowID)
 	stateBeforeQueue := readAgentState(t, environment, flowID)
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("queued message", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "queued message"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("delete me", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "delete me"}); err != nil {
 		t.Fatal(err)
 	}
 	queued := waitForQueuedMessages(t, environment, flowID, 2)
@@ -243,34 +218,19 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 			t.Fatalf("Snapshot queue changed at %d: %#v != %#v", index, firstQueueSnapshot.Queued[index], secondQueueSnapshot.Queued[index])
 		}
 	}
-	deleteRequest := DeleteQueuedMessageRequest{
-		RequestID: integrationRequestID("delete"), MessageID: queued[1].Value.MessageID,
-	}
-	deleteReceipt, err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, deleteRequest)
-	if err != nil {
+	if err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID)); err != nil {
 		t.Fatal(err)
 	}
 	waitForQueuedMessages(t, environment, flowID, 1)
-	replayedDelete, deleteErr := environment.agent.DeleteQueuedMessage(t.Context(), flowID, deleteRequest)
-	if deleteErr != nil || !replayedDelete.IsReplay || replayedDelete.AcceptedAt != deleteReceipt.AcceptedAt {
-		t.Fatalf("replayed queue delete = %#v, %v; first = %#v", replayedDelete, deleteErr, deleteReceipt)
+	deleteErr := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID))
+	var channelMessageNotFound *dex.ChannelMessageNotFoundError
+	if !errors.As(deleteErr, &channelMessageNotFound) {
+		t.Fatalf("repeated queue delete error = %T %v", deleteErr, deleteErr)
 	}
-	_, deleteErr = environment.agent.DeleteQueuedMessage(t.Context(), flowID, DeleteQueuedMessageRequest{
-		RequestID: integrationRequestID("delete"), MessageID: queued[1].Value.MessageID,
-	})
-	var deletedMessageNotFound *PendingMessageNotFoundError
-	if !errors.As(deleteErr, &deletedMessageNotFound) {
-		t.Fatalf("new queue delete error = %T %v", deleteErr, deleteErr)
-	}
-	steerRequest := SteerMessageRequest{
-		RequestID: integrationRequestID("steer"), MessageID: queued[0].Value.MessageID,
-	}
-	steerReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
-	if err != nil {
+	if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+		MessageID: MessageID(queued[0].MessageID),
+	}); err != nil {
 		t.Fatal(err)
-	}
-	if steerReceipt.IsReplay {
-		t.Fatalf("initial steer receipt = %#v", steerReceipt)
 	}
 	waitForNoPendingTimer(t, environment, flowID)
 	waitForQueuedMessages(t, environment, flowID, 0)
@@ -280,16 +240,12 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if !historyContains(t, environment, flowID, state, MessageRoleUser, "queued message") {
 		t.Fatal("steered message did not enter application history")
 	}
-	replayedSteer, steerErr := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
-	if steerErr != nil || !replayedSteer.IsReplay || replayedSteer.AcceptedAt != steerReceipt.AcceptedAt {
-		t.Fatalf("replayed steer = %#v, %v; first = %#v", replayedSteer, steerErr, steerReceipt)
-	}
-	_, steerErr = environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
-		RequestID: integrationRequestID("steer"), MessageID: queued[0].Value.MessageID,
+	steerErr := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+		MessageID: MessageID(queued[0].MessageID),
 	})
 	var pendingMessageNotFound *PendingMessageNotFoundError
 	if !errors.As(steerErr, &pendingMessageNotFound) {
-		t.Fatalf("new queue steer error = %T %v", steerErr, steerErr)
+		t.Fatalf("repeated queue steer error = %T %v", steerErr, steerErr)
 	}
 	state = waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.CompactionGeneration > 0
@@ -306,7 +262,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 func TestAgentInteractionStatusIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-interaction-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -320,7 +276,7 @@ func TestAgentInteractionStatusIntegration(t *testing.T) {
 	go func() {
 		submitted <- environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusSubmitted)
 	}()
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("status cycle", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "status cycle"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-submitted; err != nil {
@@ -336,987 +292,12 @@ func TestAgentInteractionStatusIntegration(t *testing.T) {
 	}
 }
 
-func TestAgentEnsureStartedAndCancellationIdempotencyIntegration(t *testing.T) {
-	toolRegistry := newIntegrationToolRegistry()
-	environment := newAgentIntegrationEnvironment(t, integrationModel{}, toolRegistry)
-	flowID := FlowID("agent-ensure-" + randomLocalID(t))
-	messageID := MessageID("initial-" + randomLocalID(t))
-	request := EnsureStartRequest{
-		RequestID:          RequestID("ensure-" + randomLocalID(t)),
-		Config:             NewAgentConfig(),
-		ApplicationContext: `{"account_id":"account-1","resource_id":"resource-1"}`,
-		InitialMessage: &UserMessage{
-			MessageID: messageID,
-			Content:   "/wait",
-		},
-	}
-	first, err := environment.agent.EnsureStarted(t.Context(), flowID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.IsReplay || first.RunID == "" || first.AcceptedAt.IsZero() || first.InitialMessage == nil ||
-		first.MutationRevision != 1 || first.InitialMessage.IsReplay ||
-		first.InitialMessage.MessageID != messageID || first.InitialMessage.MutationRevision != 2 {
-		t.Fatalf("first EnsureStarted receipt = %#v", first)
-	}
-	identity, err := environment.agent.VerifyIdentity(t.Context(), flowID, request.ApplicationContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity.FlowID != flowID || identity.RunID != first.RunID || identity.IsTerminalReservation {
-		t.Fatalf("active Agent identity = %#v", identity)
-	}
-	wrongContext := `{"session_id":"wrong-session"}`
-	_, mismatchErr := environment.agent.VerifyIdentity(t.Context(), flowID, wrongContext)
-	var identityMismatch *AgentIdentityMismatchError
-	if !errors.As(mismatchErr, &identityMismatch) || identityMismatch.FlowID != flowID ||
-		strings.Contains(mismatchErr.Error(), request.ApplicationContext) ||
-		strings.Contains(mismatchErr.Error(), wrongContext) {
-		t.Fatalf("Agent identity mismatch = %T %v", mismatchErr, mismatchErr)
-	}
-	waitForPendingTimer(t, environment, flowID)
-
-	replayContext, cancelReplay := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancelReplay()
-	replayed, err := environment.agent.EnsureStarted(replayContext, flowID, request)
-	if err != nil {
-		t.Fatalf("EnsureStarted replay during active turn: %v", err)
-	}
-	if !replayed.IsReplay || replayed.RunID != first.RunID || replayed.AcceptedAt != first.AcceptedAt ||
-		replayed.InitialMessage == nil || !replayed.InitialMessage.IsReplay ||
-		replayed.InitialMessage.AcceptedAt != first.InitialMessage.AcceptedAt {
-		t.Fatalf("replayed EnsureStarted receipt = %#v; first = %#v", replayed, first)
-	}
-	identityReplayRequest := request
-	identityReplayRequest.RequestID = integrationRequestID("ensure-alias")
-	identityReplay, err := environment.agent.EnsureStarted(t.Context(), flowID, identityReplayRequest)
-	if err != nil {
-		t.Fatalf("EnsureStarted global-identity replay: %v", err)
-	}
-	if !identityReplay.IsReplay || identityReplay.InitialMessage == nil || !identityReplay.InitialMessage.IsReplay ||
-		identityReplay.InitialMessage.AcceptedAt != first.InitialMessage.AcceptedAt {
-		t.Fatalf("global-identity replay = %#v; first = %#v", identityReplay, first)
-	}
-
-	message, found := readApplicationMessage(t, environment, flowID, 1)
-	if !found || message.MessageID != messageID || message.CreatedAt != first.InitialMessage.AcceptedAt {
-		t.Fatalf("committed initial message = %#v, found %t; receipt = %#v", message, found, first.InitialMessage)
-	}
-
-	identityConflictRequest := request
-	identityConflictRequest.ApplicationContext = `{"session_id":"another-session"}`
-	_, identityErr := environment.agent.EnsureStarted(t.Context(), flowID, identityConflictRequest)
-	var identityConflict *StartIdentityConflictError
-	if !errors.As(identityErr, &identityConflict) {
-		t.Fatalf("EnsureStarted identity conflict = %T %v", identityErr, identityErr)
-	}
-
-	requestConflict := request
-	conflictingMessage := *request.InitialMessage
-	conflictingMessage.Content = "different initial request"
-	requestConflict.InitialMessage = &conflictingMessage
-	_, requestErr := environment.agent.EnsureStarted(t.Context(), flowID, requestConflict)
-	if !errors.As(requestErr, &identityConflict) {
-		t.Fatalf("EnsureStarted global initial-message conflict = %T %v", requestErr, requestErr)
-	}
-	differentRequestConflict := requestConflict
-	differentRequestConflict.RequestID = integrationRequestID("ensure-different-initial")
-	_, differentRequestErr := environment.agent.EnsureStarted(t.Context(), flowID, differentRequestConflict)
-	if !errors.As(differentRequestErr, &identityConflict) {
-		t.Fatalf("EnsureStarted different-request initial-message conflict = %T %v", differentRequestErr, differentRequestErr)
-	}
-
-	terminalMessage := integrationUserMessage("accepted before terminal transition", false)
-	terminalMessageReceipt, err := environment.agent.SendMessage(t.Context(), flowID, terminalMessage)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deletedMessage := integrationUserMessage("deleted before terminal transition", false)
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, deletedMessage); err != nil {
-		t.Fatal(err)
-	}
-	waitForQueuedMessages(t, environment, flowID, 2)
-	deleteRequest := DeleteQueuedMessageRequest{
-		RequestID: integrationRequestID("delete-terminal"),
-		MessageID: deletedMessage.Message.MessageID,
-	}
-	deleteReceipt, err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, deleteRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	steerRequest := SteerMessageRequest{
-		RequestID: integrationRequestID("steer-terminal"),
-		MessageID: terminalMessage.Message.MessageID,
-	}
-	steerReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cancelRequestID := RequestID("cancel-" + randomLocalID(t))
-	canceled, err := environment.agent.Cancel(t.Context(), flowID, cancelRequestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if canceled.IsReplay || canceled.FlowStatus != FlowStatusCanceled || canceled.AcceptedAt.IsZero() {
-		t.Fatalf("first cancellation receipt = %#v", canceled)
-	}
-	if canceled.MutationRevision != steerReceipt.MutationRevision+1 {
-		t.Fatalf("cancellation revision = %d, want %d", canceled.MutationRevision, steerReceipt.MutationRevision+1)
-	}
-	replayedCancellation, err := environment.agent.Cancel(t.Context(), flowID, cancelRequestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !replayedCancellation.IsReplay || replayedCancellation.FlowStatus != FlowStatusCanceled ||
-		replayedCancellation.AcceptedAt != canceled.AcceptedAt ||
-		replayedCancellation.MutationRevision != canceled.MutationRevision {
-		t.Fatalf("replayed cancellation = %#v; first = %#v", replayedCancellation, canceled)
-	}
-	terminalIdentity, err := environment.agent.VerifyIdentity(t.Context(), flowID, request.ApplicationContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if terminalIdentity != identity {
-		t.Fatalf("terminal Agent identity = %#v, active = %#v", terminalIdentity, identity)
-	}
-	terminalSnapshot := readSnapshot(t, environment, flowID)
-	if terminalSnapshot.FlowStatus != FlowStatusCanceled ||
-		terminalSnapshot.MutationRevision != canceled.MutationRevision {
-		t.Fatalf("terminal Agent Snapshot = %#v", terminalSnapshot)
-	}
-	terminalStartReplay, err := environment.agent.EnsureStarted(t.Context(), flowID, request)
-	if err != nil {
-		t.Fatalf("EnsureStarted terminal replay: %v", err)
-	}
-	if !terminalStartReplay.IsReplay || terminalStartReplay.AcceptedAt != first.AcceptedAt ||
-		terminalStartReplay.InitialMessage == nil ||
-		terminalStartReplay.InitialMessage.AcceptedAt != first.InitialMessage.AcceptedAt {
-		t.Fatalf("terminal start replay = %#v; first = %#v", terminalStartReplay, first)
-	}
-	terminalMessageReplay, err := environment.agent.SendMessage(t.Context(), flowID, terminalMessage)
-	if err != nil {
-		t.Fatalf("SendMessage terminal replay: %v", err)
-	}
-	if !terminalMessageReplay.IsReplay || terminalMessageReplay.AcceptedAt != terminalMessageReceipt.AcceptedAt {
-		t.Fatalf("terminal message replay = %#v; first = %#v", terminalMessageReplay, terminalMessageReceipt)
-	}
-	terminalDeleteReplay, err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, deleteRequest)
-	if err != nil || !terminalDeleteReplay.IsReplay || terminalDeleteReplay.AcceptedAt != deleteReceipt.AcceptedAt {
-		t.Fatalf("terminal delete replay = %#v, %v; first = %#v", terminalDeleteReplay, err, deleteReceipt)
-	}
-	terminalSteerReplay, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
-	if err != nil || !terminalSteerReplay.IsReplay || terminalSteerReplay.AcceptedAt != steerReceipt.AcceptedAt {
-		t.Fatalf("terminal steer replay = %#v, %v; first = %#v", terminalSteerReplay, err, steerReceipt)
-	}
-	_, terminalErr := environment.agent.Cancel(t.Context(), flowID, integrationRequestID("cancel"))
-	var terminal *AgentAlreadyTerminalError
-	if !errors.As(terminalErr, &terminal) || terminal.Status != FlowStatusCanceled {
-		t.Fatalf("new cancellation against terminal Flow = %T %v", terminalErr, terminalErr)
-	}
-
-	toolFlowID := FlowID("agent-context-" + randomLocalID(t))
-	toolContext := `{"account_id":"account-tool","resource_id":"resource-7"}`
-	toolStart := EnsureStartRequest{
-		RequestID:          RequestID("ensure-tool-" + randomLocalID(t)),
-		Config:             NewAgentConfig(),
-		ApplicationContext: toolContext,
-		InitialMessage: &UserMessage{
-			MessageID: MessageID("tool-message-" + randomLocalID(t)),
-			Content:   "/tool",
-		},
-	}
-	if _, err := environment.agent.EnsureStarted(t.Context(), toolFlowID, toolStart); err != nil {
-		t.Fatal(err)
-	}
-	approval := waitForPendingApproval(t, environment, toolFlowID)
-	snapshotJSON, err := json.Marshal(readSnapshot(t, environment, toolFlowID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(snapshotJSON), toolContext) {
-		t.Fatal("opaque application context leaked into the Agent Snapshot")
-	}
-	environment.replaceWorker(t, toolFlowID)
-	if _, err := environment.agent.ApproveTool(t.Context(), toolFlowID, ToolApprovalRequest{
-		RequestID: integrationRequestID("approve"),
-		CallID:    approval.CallID,
-		Approved:  true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	waitForAgentState(t, environment, toolFlowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
-	})
-	toolRegistry.assertApplicationContext(t, toolFlowID, approval.CallID, toolContext)
-}
-
-func TestAgentOriginMainFlowCompatibilityIntegration(t *testing.T) {
-	toolRegistry := newIntegrationToolRegistry()
-	environment := &agentIntegrationEnvironment{
-		flow:          NewFlow(integrationModel{}, toolRegistry),
-		address:       availableLocalAddress(t, t.Context()),
-		serverAddress: os.Getenv("DEX_FLOW_SERVICE_ADDRESS"),
-	}
-	if environment.serverAddress == "" {
-		environment.serverAddress = "127.0.0.1:8801"
-	}
-	legacyFlow := &originMainAgentFlow{}
-	environment.startWorkerWithFlow(t, legacyFlow, false)
-	t.Cleanup(func() {
-		if err := environment.close(t.Context()); err != nil {
-			t.Errorf("close legacy integration environment: %v", err)
-		}
-	})
-
-	config := NewAgentConfig()
-	activeFlowID := FlowID("agent-legacy-active-" + randomLocalID(t))
-	terminalFlowID := FlowID("agent-legacy-terminal-" + randomLocalID(t))
-	for _, flowID := range []FlowID{activeFlowID, terminalFlowID} {
-		requestID := "legacy-start:" + string(flowID)
-		if _, err := environment.sdk.StartFlow(
-			t.Context(),
-			legacyFlow,
-			string(flowID),
-			config,
-			dex.StartFlowOptions{IDReusePolicy: dex.IDReuseDisallow, RequestID: &requestID},
-		); err != nil {
-			t.Fatal(err)
-		}
-		var status AgentInteractionStatus
-		if err := environment.sdk.WaitForAttributeMatch(
-			t.Context(),
-			string(flowID),
-			originMainInteractionStatusAttribute,
-			dex.AttributeMatchEqual(AgentInteractionStatusWaiting),
-			&status,
-		); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := environment.sdk.StopFlow(t.Context(), string(terminalFlowID), dex.StopOptions{
-		Type:   dex.TerminateFlow,
-		Reason: "legacy terminal compatibility",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := environment.sdk.WaitForFlow(t.Context(), string(terminalFlowID), dex.WaitForFlowOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := environment.stopWorker(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	environment.startWorker(t)
-	uninitializedFlowID := FlowID("agent-legacy-uninitialized-" + randomLocalID(t))
-	uninitializedRequestID := "legacy-uninitialized:" + string(uninitializedFlowID)
-	if _, err := environment.sdk.StartFlow(
-		t.Context(),
-		environment.flow,
-		string(uninitializedFlowID),
-		config,
-		dex.StartFlowOptions{IDReusePolicy: dex.IDReuseDisallow, RequestID: &uninitializedRequestID},
-	); err != nil {
-		t.Fatal(err)
-	}
-	uninitializedResult, err := environment.sdk.WaitForFlow(
-		t.Context(),
-		string(uninitializedFlowID),
-		dex.WaitForFlowOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if uninitializedResult.Status != dex.FlowFailed ||
-		!strings.Contains(uninitializedResult.ErrorMessage, "legacy Agent start identity is unavailable") {
-		t.Fatalf("uninitialized legacy Flow result = %#v", uninitializedResult)
-	}
-
-	unprovenRequest := EnsureStartRequest{
-		RequestID: integrationRequestID("unproven-legacy"),
-		Config:    config,
-	}
-	_, unprovenErr := environment.agent.EnsureStarted(t.Context(), activeFlowID, unprovenRequest)
-	var legacyIdentity *LegacyStartIdentityError
-	if !errors.As(unprovenErr, &legacyIdentity) {
-		t.Fatalf("unproven active legacy identity = %T %v", unprovenErr, unprovenErr)
-	}
-	migrationRequest := EnsureStartRequest{
-		RequestID: originMainStartRequestID(activeFlowID),
-		Config:    config,
-	}
-	migrated, err := environment.agent.EnsureStarted(t.Context(), activeFlowID, migrationRequest)
-	if err != nil {
-		t.Fatalf("migrate active origin/main Flow: %v", err)
-	}
-	if !migrated.IsReplay {
-		t.Fatalf("active legacy migration receipt = %#v", migrated)
-	}
-	snapshot := readSnapshot(t, environment, activeFlowID)
-	if len(snapshot.History.Messages) != 1 || snapshot.History.Messages[0].Message.MessageID == "" ||
-		!strings.HasPrefix(string(snapshot.History.Messages[0].Message.MessageID), "legacy:") {
-		t.Fatalf("migrated legacy history = %#v", snapshot.History.Messages)
-	}
-	if _, err := environment.agent.SendMessage(t.Context(), activeFlowID, integrationUserMessage("/tool", false)); err != nil {
-		t.Fatal(err)
-	}
-	approval := waitForPendingApproval(t, environment, activeFlowID)
-	if _, err := environment.agent.ApproveTool(t.Context(), activeFlowID, ToolApprovalRequest{
-		RequestID: integrationRequestID("approve-legacy"),
-		CallID:    approval.CallID,
-		Approved:  true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	waitForAgentState(t, environment, activeFlowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
-	})
-	toolRegistry.assertApplicationContext(t, activeFlowID, approval.CallID, "")
-
-	conflictingMigration := migrationRequest
-	conflictingMigration.RequestID = integrationRequestID("migrate-context")
-	conflictingMigration.ApplicationContext = `{"resource_id":"cannot-infer"}`
-	_, conflictErr := environment.agent.EnsureStarted(t.Context(), activeFlowID, conflictingMigration)
-	var identityConflict *StartIdentityConflictError
-	if !errors.As(conflictErr, &identityConflict) {
-		t.Fatalf("migrated Flow context conflict = %T %v", conflictErr, conflictErr)
-	}
-
-	terminalReplay := EnsureStartRequest{RequestID: originMainStartRequestID(terminalFlowID), Config: config}
-	replayed, terminalErr := environment.agent.EnsureStarted(t.Context(), terminalFlowID, terminalReplay)
-	if terminalErr != nil || !replayed.IsReplay {
-		t.Fatalf("terminal legacy exact replay = %#v, %v", replayed, terminalErr)
-	}
-	terminalUnproven := terminalReplay
-	terminalUnproven.RequestID = integrationRequestID("unproven-terminal")
-	_, terminalUnprovenErr := environment.agent.EnsureStarted(t.Context(), terminalFlowID, terminalUnproven)
-	if !errors.As(terminalUnprovenErr, &legacyIdentity) {
-		t.Fatalf("terminal unproven legacy identity = %T %v", terminalUnprovenErr, terminalUnprovenErr)
-	}
-}
-
-func TestAgentMessageIdempotencyIntegration(t *testing.T) {
-	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
-	flowID := FlowID("agent-message-idempotency-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
-		t.Fatal(err)
-	}
-	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage
-	})
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/wait", false)); err != nil {
-		t.Fatal(err)
-	}
-	waitForPendingTimer(t, environment, flowID)
-
-	request := integrationUserMessage("one durable submission", false)
-	first, err := environment.agent.SendMessage(t.Context(), flowID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := environment.agent.SendMessage(t.Context(), flowID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.IsReplay || !replayed.IsReplay || first.AcceptedAt.IsZero() || replayed.AcceptedAt != first.AcceptedAt {
-		t.Fatalf("message receipts = first %#v, replay %#v", first, replayed)
-	}
-
-	secondRequest := request
-	secondRequest.RequestID = integrationRequestID("send-alias")
-	messageReplay, err := environment.agent.SendMessage(t.Context(), flowID, secondRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !messageReplay.IsReplay || messageReplay.AcceptedAt != first.AcceptedAt {
-		t.Fatalf("message-level replay = %#v; first = %#v", messageReplay, first)
-	}
-
-	requestConflict := request
-	requestConflict.Message.Content = "same request ID, different payload"
-	_, requestErr := environment.agent.SendMessage(t.Context(), flowID, requestConflict)
-	var commandConflict *CommandIdempotencyConflictError
-	if !errors.As(requestErr, &commandConflict) || commandConflict.Command != CommandSendMessage {
-		t.Fatalf("send request conflict = %T %v", requestErr, requestErr)
-	}
-
-	messageConflictRequest := requestConflict
-	messageConflictRequest.RequestID = integrationRequestID("send-conflict")
-	_, messageErr := environment.agent.SendMessage(t.Context(), flowID, messageConflictRequest)
-	var messageConflict *MessageIdempotencyConflictError
-	if !errors.As(messageErr, &messageConflict) || messageConflict.MessageID != request.Message.MessageID {
-		t.Fatalf("message identity conflict = %T %v", messageErr, messageErr)
-	}
-
-	queued := waitForQueuedMessages(t, environment, flowID, 1)
-	if queued[0].Value.MessageID != request.Message.MessageID || queued[0].Value.AcceptedAt != first.AcceptedAt {
-		t.Fatalf("queued message = %#v; receipt = %#v", queued[0].Value, first)
-	}
-	var accepted acceptedUserMessage
-	found, err := environment.sdk.GetAttributeMapInstance(
-		t.Context(),
-		string(flowID),
-		acceptedUserMessagesAttribute,
-		acceptedMessageInstance(request.Message.MessageID),
-		&accepted,
-	)
-	if err != nil || !found || accepted.MessageID != request.Message.MessageID || accepted.AcceptedAt != first.AcceptedAt {
-		t.Fatalf("accepted-message record = %#v, found %t, error %v", accepted, found, err)
-	}
-	encodedAccepted, err := json.Marshal(accepted)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encodedAccepted), request.Message.Content) {
-		t.Fatalf("accepted-message record copied content: %s", encodedAccepted)
-	}
-}
-
-func TestAgentMutationRevisionAndPendingAdmissionIntegration(t *testing.T) {
-	modelClient := newBlockingIntegrationModel()
-	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
-	t.Cleanup(modelClient.release)
-	flowID := FlowID("agent-mutation-revision-" + randomLocalID(t))
-	startRequest := EnsureStartRequest{
-		RequestID: integrationRequestID("revision-start"),
-		Config:    NewAgentConfig(),
-	}
-	started, err := environment.agent.EnsureStarted(t.Context(), flowID, startRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if started.MutationRevision != 1 {
-		t.Fatalf("start mutation revision = %d, want 1", started.MutationRevision)
-	}
-	initialSnapshot := readSnapshot(t, environment, flowID)
-	if initialSnapshot.MutationRevision != started.MutationRevision {
-		t.Fatalf("initial Snapshot revision = %d, want %d", initialSnapshot.MutationRevision, started.MutationRevision)
-	}
-
-	blockRequest := integrationUserMessage("/block", false)
-	blockRequest.ExpectedRevision = mutationRevisionPointer(initialSnapshot.MutationRevision)
-	blocked, err := environment.agent.SendMessage(t.Context(), flowID, blockRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if blocked.MutationRevision != 2 {
-		t.Fatalf("blocking message revision = %d, want 2", blocked.MutationRevision)
-	}
-	modelClient.waitUntilBlocked(t)
-
-	staleRequest := integrationUserMessage("stale mutation", false)
-	staleRequest.ExpectedRevision = mutationRevisionPointer(initialSnapshot.MutationRevision)
-	_, staleErr := environment.agent.SendMessage(t.Context(), flowID, staleRequest)
-	var staleRevision *StaleMutationRevisionError
-	if !errors.As(staleErr, &staleRevision) || staleRevision.Command != CommandSendMessage ||
-		staleRevision.Expected != 1 || staleRevision.Actual != 2 {
-		t.Fatalf("stale mutation error = %T %v", staleErr, staleErr)
-	}
-
-	replayed, err := environment.agent.SendMessage(t.Context(), flowID, blockRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !replayed.IsReplay || replayed.MutationRevision != blocked.MutationRevision {
-		t.Fatalf("replayed message = %#v, first = %#v", replayed, blocked)
-	}
-
-	queuedRequest := integrationUserMessage("move to steering", false)
-	queuedRequest.ExpectedRevision = mutationRevisionPointer(blocked.MutationRevision)
-	queuedReceipt, err := environment.agent.SendMessage(t.Context(), flowID, queuedRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	steerRequest := SteerMessageRequest{
-		RequestID:        integrationRequestID("revision-steer"),
-		MessageID:        queuedRequest.Message.MessageID,
-		ExpectedRevision: mutationRevisionPointer(queuedReceipt.MutationRevision),
-	}
-	steeredReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, steerRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if steeredReceipt.MutationRevision != queuedReceipt.MutationRevision+1 {
-		t.Fatalf("steer revision = %d, want %d", steeredReceipt.MutationRevision, queuedReceipt.MutationRevision+1)
-	}
-
-	directMessages := make([]any, MaximumPendingMessageCount-2)
-	for index := range directMessages {
-		directMessages[index] = UserMessage{
-			MessageID:  MessageID(fmt.Sprintf("capacity-fixture-%03d", index)),
-			Content:    "capacity fixture",
-			AcceptedAt: time.Now().UTC(),
-		}
-	}
-	if err := environment.sdk.PublishToChannel(
-		t.Context(),
-		string(flowID),
-		queuedUserMessagesChannel,
-		directMessages...,
-	); err != nil {
-		t.Fatal(err)
-	}
-	waitForPendingMessageTotal(t, environment, flowID, MaximumPendingMessageCount-1)
-
-	raceRequests := []SendMessageRequest{
-		integrationUserMessage("capacity race one", false),
-		integrationUserMessage("capacity race two", false),
-	}
-	races := invokeConcurrentMessages(t, environment, flowID, raceRequests)
-	acceptedCount := 0
-	var retryRequest *SendMessageRequest
-	for index := range races {
-		if races[index].err == nil {
-			acceptedCount++
-			continue
-		}
-		var capacity *PendingMessageCapacityError
-		var lockConflict *dex.RPCLockConflictError
-		if !errors.As(races[index].err, &capacity) && !errors.As(races[index].err, &lockConflict) {
-			t.Fatalf("capacity race error = %T %v", races[index].err, races[index].err)
-		}
-		retryRequest = &raceRequests[index]
-	}
-	if acceptedCount != 1 {
-		t.Fatalf("capacity race accepted %d messages, want 1", acceptedCount)
-	}
-	waitForPendingMessageTotal(t, environment, flowID, MaximumPendingMessageCount)
-	if retryRequest == nil {
-		extra := integrationUserMessage("capacity rejection", false)
-		retryRequest = &extra
-	}
-	_, capacityErr := environment.agent.SendMessage(t.Context(), flowID, *retryRequest)
-	var capacity *PendingMessageCapacityError
-	if !errors.As(capacityErr, &capacity) || capacity.Pending != MaximumPendingMessageCount ||
-		capacity.Limit != MaximumPendingMessageCount {
-		t.Fatalf("capacity error = %T %v", capacityErr, capacityErr)
-	}
-	fullSnapshot := readSnapshot(t, environment, flowID)
-	if len(fullSnapshot.Queued)+len(fullSnapshot.Steered) != MaximumPendingMessageCount ||
-		fullSnapshot.MutationRevision != steeredReceipt.MutationRevision+1 {
-		t.Fatalf("full pending Snapshot = revision %d, queued %d, steered %d", fullSnapshot.MutationRevision, len(fullSnapshot.Queued), len(fullSnapshot.Steered))
-	}
-
-	_, staleReplayErr := environment.agent.SendMessage(t.Context(), flowID, staleRequest)
-	var staleReplay *StaleMutationRevisionError
-	if !errors.As(staleReplayErr, &staleReplay) || staleReplay.Actual != staleRevision.Actual {
-		t.Fatalf("stale command replay = %T %v", staleReplayErr, staleReplayErr)
-	}
-	modelClient.release()
-}
-
-func TestAgentPendingMessageContentAdmissionIntegration(t *testing.T) {
-	modelClient := newBlockingIntegrationModel()
-	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
-	t.Cleanup(modelClient.release)
-	flowID := FlowID("agent-pending-content-" + randomLocalID(t))
-	if _, err := environment.agent.EnsureStarted(t.Context(), flowID, EnsureStartRequest{
-		RequestID: integrationRequestID("content-start"),
-		Config:    NewAgentConfig(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := environment.agent.SendMessage(
-		t.Context(),
-		flowID,
-		integrationUserMessage("/block", false),
-	); err != nil {
-		t.Fatal(err)
-	}
-	modelClient.waitUntilBlocked(t)
-
-	largeRequest := integrationUserMessage(
-		strings.Repeat("x", MaximumPendingMessageContentBytes-1),
-		false,
-	)
-	largeReceipt, err := environment.agent.SendMessage(t.Context(), flowID, largeRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	steeredReceipt, err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
-		RequestID:        integrationRequestID("content-steer"),
-		MessageID:        largeRequest.Message.MessageID,
-		ExpectedRevision: mutationRevisionPointer(largeReceipt.MutationRevision),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	raceRequests := []SendMessageRequest{
-		integrationUserMessage("a", false),
-		integrationUserMessage("b", false),
-	}
-	races := invokeConcurrentMessages(t, environment, flowID, raceRequests)
-	acceptedCount := 0
-	var retryRequest *SendMessageRequest
-	for index := range races {
-		if races[index].err == nil {
-			acceptedCount++
-			continue
-		}
-		var capacity *PendingMessageCapacityError
-		var lockConflict *dex.RPCLockConflictError
-		if !errors.As(races[index].err, &capacity) && !errors.As(races[index].err, &lockConflict) {
-			t.Fatalf("content capacity race error = %T %v", races[index].err, races[index].err)
-		}
-		retryRequest = &raceRequests[index]
-	}
-	if acceptedCount != 1 || retryRequest == nil {
-		t.Fatalf("content capacity race accepted %d messages; results = %#v", acceptedCount, races)
-	}
-	_, capacityErr := environment.agent.SendMessage(t.Context(), flowID, *retryRequest)
-	var capacity *PendingMessageCapacityError
-	if !errors.As(capacityErr, &capacity) || capacity.Pending != 2 ||
-		capacity.Limit != MaximumPendingMessageCount ||
-		capacity.PendingContentBytes != MaximumPendingMessageContentBytes ||
-		capacity.RequestedContentBytes != 1 ||
-		capacity.ContentByteLimit != MaximumPendingMessageContentBytes {
-		t.Fatalf("content capacity error = %T %#v", capacityErr, capacity)
-	}
-	snapshot := readSnapshot(t, environment, flowID)
-	if len(snapshot.Queued) != 1 || len(snapshot.Steered) != 1 ||
-		pendingSnapshotContentBytes(snapshot) != MaximumPendingMessageContentBytes ||
-		snapshot.MutationRevision != steeredReceipt.MutationRevision+1 {
-		t.Fatalf(
-			"bounded content Snapshot: queued %d, steered %d, bytes %d, revision %d",
-			len(snapshot.Queued),
-			len(snapshot.Steered),
-			pendingSnapshotContentBytes(snapshot),
-			snapshot.MutationRevision,
-		)
-	}
-}
-
-func pendingSnapshotContentBytes(snapshot AgentSnapshot) int {
-	contentBytes := 0
-	for _, message := range snapshot.Queued {
-		contentBytes += len(message.Value.Content)
-	}
-	for _, message := range snapshot.Steered {
-		contentBytes += len(message.Value.Content)
-	}
-	return contentBytes
-}
-
-func TestAgentCancelBeforeStartReservesIdentityIntegration(t *testing.T) {
-	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
-	flowID := FlowID("agent-cancel-before-start-" + randomLocalID(t))
-	missingFlowID := FlowID("agent-identity-absent-" + randomLocalID(t))
-	_, missingErr := environment.agent.VerifyIdentity(t.Context(), missingFlowID, "")
-	var identityNotFound *AgentIdentityNotFoundError
-	if !errors.As(missingErr, &identityNotFound) || identityNotFound.FlowID != missingFlowID {
-		t.Fatalf("absent Agent identity = %T %v", missingErr, missingErr)
-	}
-	request := CancelRequest{
-		RequestID: integrationRequestID("cancel-before-start"),
-		Reason:    "session was deleted before the Agent started",
-	}
-	first, err := environment.agent.EnsureCanceled(t.Context(), flowID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.IsReplay || first.FlowStatus != FlowStatusCanceled || first.MutationRevision != 1 {
-		t.Fatalf("first cancellation reservation = %#v", first)
-	}
-	reservedIdentity, err := environment.agent.VerifyIdentity(t.Context(), flowID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reservedIdentity.FlowID != flowID || reservedIdentity.RunID == "" || !reservedIdentity.IsTerminalReservation {
-		t.Fatalf("reserved Agent identity = %#v", reservedIdentity)
-	}
-	_, reservedMismatchErr := environment.agent.VerifyIdentity(t.Context(), flowID, `{"session_id":"not-reserved"}`)
-	var reservedMismatch *AgentIdentityMismatchError
-	if !errors.As(reservedMismatchErr, &reservedMismatch) {
-		t.Fatalf("reserved Agent identity mismatch = %T %v", reservedMismatchErr, reservedMismatchErr)
-	}
-	replayed, err := environment.agent.EnsureCanceled(t.Context(), flowID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !replayed.IsReplay || replayed.AcceptedAt != first.AcceptedAt ||
-		replayed.MutationRevision != first.MutationRevision {
-		t.Fatalf("replayed cancellation reservation = %#v, first = %#v", replayed, first)
-	}
-
-	conflicting := request
-	conflicting.Reason = "different reason"
-	_, conflictErr := environment.agent.EnsureCanceled(t.Context(), flowID, conflicting)
-	var conflict *CommandIdempotencyConflictError
-	if !errors.As(conflictErr, &conflict) || conflict.Command != CommandCancel {
-		t.Fatalf("cancellation reservation conflict = %T %v", conflictErr, conflictErr)
-	}
-	_, startErr := environment.agent.EnsureStarted(t.Context(), flowID, EnsureStartRequest{
-		RequestID: integrationRequestID("start-after-cancel"),
-		Config:    NewAgentConfig(),
-	})
-	var terminal *AgentAlreadyTerminalError
-	if !errors.As(startErr, &terminal) || terminal.Status != FlowStatusCanceled {
-		t.Fatalf("start after cancellation reservation = %T %v", startErr, startErr)
-	}
-	snapshot := readSnapshot(t, environment, flowID)
-	if snapshot.FlowStatus != FlowStatusCanceled || snapshot.MutationRevision != first.MutationRevision {
-		t.Fatalf("reserved terminal Snapshot = %#v", snapshot)
-	}
-	history, err := environment.agent.MessagesAfter(t.Context(), flowID, 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(history.Messages) != 0 || history.NextAfterSequence != nil ||
-		history.FirstRetainedSequence != 0 || history.LastSequence != 0 || history.IsTruncated {
-		t.Fatalf("reserved terminal history = %#v", history)
-	}
-
-	raceFlowID := FlowID("agent-start-cancel-race-" + randomLocalID(t))
-	raceStart := EnsureStartRequest{
-		RequestID: integrationRequestID("racing-start"),
-		Config:    NewAgentConfig(),
-	}
-	raceCancel := CancelRequest{
-		RequestID: integrationRequestID("racing-cancel"),
-		Reason:    "concurrent lifecycle cleanup",
-	}
-	gate := make(chan struct{})
-	startResult := make(chan error, 1)
-	cancelResult := make(chan error, 1)
-	go func() {
-		<-gate
-		_, startErr := environment.agent.EnsureStarted(t.Context(), raceFlowID, raceStart)
-		startResult <- startErr
-	}()
-	go func() {
-		<-gate
-		_, cancelErr := environment.agent.EnsureCanceled(t.Context(), raceFlowID, raceCancel)
-		cancelResult <- cancelErr
-	}()
-	close(gate)
-	if err := <-cancelResult; err != nil {
-		t.Fatalf("racing cancellation: %v", err)
-	}
-	_ = <-startResult
-	raceSnapshot := readSnapshot(t, environment, raceFlowID)
-	if raceSnapshot.FlowStatus != FlowStatusCanceled {
-		t.Fatalf("racing lifecycle Snapshot = %#v", raceSnapshot)
-	}
-}
-
-type concurrentMessageResult struct {
-	index   int
-	receipt MessageReceipt
-	err     error
-}
-
-func invokeConcurrentMessages(
-	t *testing.T,
-	environment *agentIntegrationEnvironment,
-	flowID FlowID,
-	requests []SendMessageRequest,
-) []concurrentMessageResult {
-	t.Helper()
-	gate := make(chan struct{})
-	results := make(chan concurrentMessageResult, len(requests))
-	var waitGroup sync.WaitGroup
-	for index, request := range requests {
-		request := request
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			<-gate
-			receipt, err := environment.agent.SendMessage(t.Context(), flowID, request)
-			results <- concurrentMessageResult{index: index, receipt: receipt, err: err}
-		}()
-	}
-	close(gate)
-	waitGroup.Wait()
-	close(results)
-	collected := make([]concurrentMessageResult, len(requests))
-	for result := range results {
-		collected[result.index] = result
-	}
-	return collected
-}
-
-func mutationRevisionPointer(revision MutationRevision) *MutationRevision {
-	return &revision
-}
-
-func TestAgentConcurrentDomainCommandFencingIntegration(t *testing.T) {
-	toolRegistry := newIntegrationToolRegistry()
-	environment := newAgentIntegrationEnvironment(t, integrationModel{}, toolRegistry)
-	flowID := FlowID("agent-command-fence-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/tool", false)); err != nil {
-		t.Fatal(err)
-	}
-	approval := waitForPendingApproval(t, environment, flowID)
-	approvalRequests := []ToolApprovalRequest{
-		{RequestID: integrationRequestID("approve-race"), CallID: approval.CallID, Approved: true},
-		{RequestID: integrationRequestID("approve-race"), CallID: approval.CallID, Approved: true},
-	}
-	approvalReceipts := invokeConcurrentApprovals(t, environment, flowID, approvalRequests)
-	assertOneDomainAcceptance(t, approvalReceipts)
-	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
-	})
-	toolRegistry.assertExecutionCount(t, 1)
-	oppositeRequest := ToolApprovalRequest{
-		RequestID: integrationRequestID("approve-opposite"),
-		CallID:    approval.CallID,
-		Approved:  false,
-	}
-	_, oppositeErr := environment.agent.ApproveTool(t.Context(), flowID, oppositeRequest)
-	var rejected *CommandRejectedError
-	if !errors.As(oppositeErr, &rejected) || rejected.Command != CommandApproveTool {
-		t.Fatalf("opposite approval after fenced acceptance = %T %v", oppositeErr, oppositeErr)
-	}
-
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("ship safely", true)); err != nil {
-		t.Fatal(err)
-	}
-	plan := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
-	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage
-	})
-	planRequests := []PlanExecutionRequest{
-		{RequestID: integrationRequestID("plan-race"), Revision: plan.Revision},
-		{RequestID: integrationRequestID("plan-race"), Revision: plan.Revision},
-	}
-	planReceipts := invokeConcurrentPlanExecutions(t, environment, flowID, planRequests)
-	assertOneDomainAcceptance(t, planReceipts)
-	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
-	if err := environment.sdk.StopFlow(t.Context(), string(flowID), dex.StopOptions{
-		Type:   dex.TerminateFlow,
-		Reason: "terminal command reconciliation integration",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := environment.sdk.WaitForFlow(t.Context(), string(flowID), dex.WaitForFlowOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	terminalApproval, err := environment.agent.ApproveTool(t.Context(), flowID, approvalRequests[0])
-	if err != nil || !terminalApproval.IsReplay || terminalApproval.AcceptedAt != approvalReceipts[0].AcceptedAt ||
-		terminalApproval.MutationRevision != approvalReceipts[0].MutationRevision {
-		t.Fatalf("terminal approval replay = %#v, %v", terminalApproval, err)
-	}
-	terminalPlan, err := environment.agent.ExecutePlan(t.Context(), flowID, planRequests[0])
-	if err != nil || !terminalPlan.IsReplay || terminalPlan.AcceptedAt != planReceipts[0].AcceptedAt ||
-		terminalPlan.MutationRevision != planReceipts[0].MutationRevision {
-		t.Fatalf("terminal plan replay = %#v, %v", terminalPlan, err)
-	}
-}
-
-func invokeConcurrentApprovals(
-	t *testing.T,
-	environment *agentIntegrationEnvironment,
-	flowID FlowID,
-	requests []ToolApprovalRequest,
-) []CommandReceipt {
-	t.Helper()
-	type result struct {
-		index   int
-		receipt CommandReceipt
-		err     error
-	}
-	gate := make(chan struct{})
-	results := make(chan result, len(requests))
-	var wg sync.WaitGroup
-	for index, request := range requests {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-gate
-			receipt, err := environment.agent.ApproveTool(t.Context(), flowID, request)
-			results <- result{index: index, receipt: receipt, err: err}
-		}()
-	}
-	close(gate)
-	wg.Wait()
-	close(results)
-	receipts := make([]CommandReceipt, len(requests))
-	for result := range results {
-		if result.err != nil {
-			var conflict *dex.RPCLockConflictError
-			if !errors.As(result.err, &conflict) {
-				t.Fatalf("concurrent approval %d: %v", result.index, result.err)
-			}
-			result.receipt, result.err = environment.agent.ApproveTool(t.Context(), flowID, requests[result.index])
-		}
-		if result.err != nil {
-			t.Fatalf("retry concurrent approval %d: %v", result.index, result.err)
-		}
-		receipts[result.index] = result.receipt
-	}
-	return receipts
-}
-
-func invokeConcurrentPlanExecutions(
-	t *testing.T,
-	environment *agentIntegrationEnvironment,
-	flowID FlowID,
-	requests []PlanExecutionRequest,
-) []CommandReceipt {
-	t.Helper()
-	type result struct {
-		index   int
-		receipt CommandReceipt
-		err     error
-	}
-	gate := make(chan struct{})
-	results := make(chan result, len(requests))
-	var wg sync.WaitGroup
-	for index, request := range requests {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-gate
-			receipt, err := environment.agent.ExecutePlan(t.Context(), flowID, request)
-			results <- result{index: index, receipt: receipt, err: err}
-		}()
-	}
-	close(gate)
-	wg.Wait()
-	close(results)
-	receipts := make([]CommandReceipt, len(requests))
-	for result := range results {
-		if result.err != nil {
-			var conflict *dex.RPCLockConflictError
-			if !errors.As(result.err, &conflict) {
-				t.Fatalf("concurrent plan execution %d: %v", result.index, result.err)
-			}
-			result.receipt, result.err = environment.agent.ExecutePlan(t.Context(), flowID, requests[result.index])
-		}
-		if result.err != nil {
-			t.Fatalf("retry concurrent plan execution %d: %v", result.index, result.err)
-		}
-		receipts[result.index] = result.receipt
-	}
-	return receipts
-}
-
-func assertOneDomainAcceptance(t *testing.T, receipts []CommandReceipt) {
-	t.Helper()
-	if len(receipts) != 2 || receipts[0].AcceptedAt.IsZero() || receipts[0].AcceptedAt != receipts[1].AcceptedAt ||
-		receipts[0].MutationRevision <= 0 || receipts[0].MutationRevision != receipts[1].MutationRevision {
-		t.Fatalf("fenced command receipts = %#v", receipts)
-	}
-	replayCount := 0
-	for _, receipt := range receipts {
-		if receipt.IsReplay {
-			replayCount++
-		}
-	}
-	if replayCount != 1 {
-		t.Fatalf("fenced command replay count = %d; receipts = %#v", replayCount, receipts)
-	}
-}
-
 func TestAgentMessageArchiveIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-archive-" + randomLocalID(t))
 	config := NewAgentConfig()
 	config.MaxContextTokens = 1_000_000
-	if _, err := environment.agent.Start(t.Context(), flowID, config); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -1325,7 +306,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 
 	for index := 1; index <= 15; index++ {
 		content := fmt.Sprintf("archive %02d", index)
-		if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage(content, false)); err != nil {
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: content}); err != nil {
 			t.Fatal(err)
 		}
 		lastSequence := Sequence(index * 2)
@@ -1378,12 +359,6 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 	if err != nil || len(empty.Messages) != 0 || empty.IsTruncated || empty.NextAfterSequence != nil {
 		t.Fatalf("empty forward page = %#v, %v", empty, err)
 	}
-	if _, err := environment.agent.MessagesAfter(t.Context(), flowID, -1, 1); err == nil {
-		t.Fatal("negative after sequence was accepted")
-	}
-	if _, err := environment.agent.MessagesAfter(t.Context(), flowID, 0, MaximumForwardHistoryLimit+1); err == nil {
-		t.Fatal("oversized forward page was accepted")
-	}
 }
 
 func assertArchiveWindow(
@@ -1408,14 +383,14 @@ func assertArchiveWindow(
 func TestAgentUserInputIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-input-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/ask-many What date should I use?", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/ask-many What date should I use?"}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1445,16 +420,12 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatalf("multi-call results = %#v / %#v", firstResult, secondResult)
 	}
 	environment.replaceWorker(t, flowID)
-	_, rejectedMessage := environment.agent.SendMessage(
-		t.Context(),
-		flowID,
-		integrationUserMessage("September 12", false),
-	)
+	rejectedMessage := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "September 12"})
 	var sendRejected *CommandRejectedError
 	if !errors.As(rejectedMessage, &sendRejected) || sendRejected.Command != CommandSendMessage {
 		t.Fatalf("message while question pending = %T %v", rejectedMessage, rejectedMessage)
 	}
-	if _, err := environment.agent.AnswerQuestions(
+	if err := environment.agent.AnswerQuestions(
 		t.Context(),
 		flowID,
 		answerRequest(*snapshot.Description.PendingUserInput, "September 12"),
@@ -1469,7 +440,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: September 12")
 	})
-	_, staleAnswer := environment.agent.AnswerQuestions(
+	staleAnswer := environment.agent.AnswerQuestions(
 		t.Context(),
 		flowID,
 		answerRequest(*snapshot.Description.PendingUserInput, "September 13"),
@@ -1479,7 +450,9 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatalf("stale answer error = %T %v", staleAnswer, staleAnswer)
 	}
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/choose Where should I deploy? | Staging | Production", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/choose Where should I deploy? | Staging | Production",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot = waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1493,7 +466,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		question.Options[0].Label != "Staging" || question.Options[1].Label != "Production" {
 		t.Fatalf("pending input = %#v", input)
 	}
-	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(*input, "Production")); err != nil {
+	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(*input, "Production")); err != nil {
 		t.Fatal(err)
 	}
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1501,70 +474,58 @@ func TestAgentUserInputIntegration(t *testing.T) {
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: Production")
 	})
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/questions", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/questions"}); err != nil {
 		t.Fatal(err)
 	}
 	multi := waitForPendingUserInput(t, environment, flowID)
 	if len(multi.Questions) != 3 {
 		t.Fatalf("question count = %d, want 3", len(multi.Questions))
 	}
-	missing := answerBatchRequest(multi.CallID, []UserInputAnswer{
+	missing := AnswerQuestionsRequest{CallID: multi.CallID, Answers: []UserInputAnswer{
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
-	})
-	_, missingErr := environment.agent.AnswerQuestions(t.Context(), flowID, missing)
-	assertAnswerRejected(t, missingErr)
-	unknown := answerBatchRequest(multi.CallID, []UserInputAnswer{
+	}}
+	assertAnswerRejected(t, environment.agent.AnswerQuestions(t.Context(), flowID, missing))
+	unknown := AnswerQuestionsRequest{CallID: multi.CallID, Answers: []UserInputAnswer{
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
 		{QuestionID: "unknown", Answer: "Detailed"},
-	})
-	_, unknownErr := environment.agent.AnswerQuestions(t.Context(), flowID, unknown)
-	assertAnswerRejected(t, unknownErr)
+	}}
+	assertAnswerRejected(t, environment.agent.AnswerQuestions(t.Context(), flowID, unknown))
 	if current := readSnapshot(t, environment, flowID); current.Description == nil ||
 		current.Description.PendingUserInput == nil || current.Description.PendingUserInput.CallID != multi.CallID {
 		t.Fatalf("invalid answer changed pending batch: %#v", current.Description)
 	}
 
-	answer := answerBatchRequest(multi.CallID, []UserInputAnswer{
+	answer := AnswerQuestionsRequest{CallID: multi.CallID, Answers: []UserInputAnswer{
 		{QuestionID: "format", Answer: "Detailed"},
 		{QuestionID: "region", Answer: "West"},
 		{QuestionID: "pace", Answer: "Careful"},
-	})
+	}}
 	environment.replaceWorker(t, flowID)
-	type answerResult struct {
-		receipt MessageReceipt
-		err     error
-	}
-	results := make(chan answerResult, 2)
+	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			receipt, err := environment.agent.AnswerQuestions(t.Context(), flowID, answer)
-			results <- answerResult{receipt: receipt, err: err}
+			results <- environment.agent.AnswerQuestions(t.Context(), flowID, answer)
 		}()
 	}
 	accepted := 0
-	replayed := 0
-	receipts := make([]MessageReceipt, 0, 2)
+	rejected := 0
 	for range 2 {
-		result := <-results
-		if result.err == nil {
+		err := <-results
+		if err == nil {
 			accepted++
-			receipts = append(receipts, result.receipt)
-			if result.receipt.IsReplay {
-				replayed++
-			}
 			continue
 		}
-		t.Fatalf("concurrent answer error = %T %v", result.err, result.err)
+		var commandRejected *CommandRejectedError
+		if errors.As(err, &commandRejected) && commandRejected.Command == CommandAnswerQuestions {
+			rejected++
+			continue
+		}
+		t.Fatalf("concurrent answer error = %T %v", err, err)
 	}
-	if accepted != 2 || replayed != 1 {
-		t.Fatalf("concurrent answers accepted/replayed = %d/%d, want 2/1", accepted, replayed)
-	}
-	if receipts[0].AcceptedAt != receipts[1].AcceptedAt ||
-		receipts[0].MutationRevision != receipts[1].MutationRevision ||
-		receipts[0].MutationRevision <= 0 {
-		t.Fatalf("concurrent answer receipts = %#v", receipts)
+	if accepted != 1 || rejected != 1 {
+		t.Fatalf("concurrent answers accepted/rejected = %d/%d, want 1/1", accepted, rejected)
 	}
 	const combinedAnswer = "**Region**: West\n\n**Pace**: Careful\n\n**Format**: Detailed"
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1572,43 +533,39 @@ func TestAgentUserInputIntegration(t *testing.T) {
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: "+combinedAnswer)
 	})
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/questions", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/questions"}); err != nil {
 		t.Fatal(err)
 	}
 	nextBatch := waitForPendingUserInput(t, environment, flowID)
 	if nextBatch.CallID == multi.CallID {
 		t.Fatal("a later question batch reused the resolved call ID")
 	}
-	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerBatchRequest(
-		nextBatch.CallID,
-		[]UserInputAnswer{
+	if err := environment.agent.AnswerQuestions(t.Context(), flowID, AnswerQuestionsRequest{
+		CallID: nextBatch.CallID,
+		Answers: []UserInputAnswer{
 			{QuestionID: "region", Answer: "East"},
 			{QuestionID: "pace", Answer: "Fast"},
 			{QuestionID: "format", Answer: "Short"},
 		},
-	)); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	waitForNoPendingUserInput(t, environment, flowID)
 
-	if _, err := environment.agent.SendMessage(
-		t.Context(),
-		flowID,
-		integrationUserMessage("/plan-question deployment", true),
-	); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/plan-question deployment", PlanMode: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	plan := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if _, err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-question-plan"), Revision: plan.Revision,
-	}); err != nil {
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: plan.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	planInput := waitForPendingUserInput(t, environment, flowID)
-	if _, err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(planInput, "Production")); err != nil {
+	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(planInput, "Production")); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
@@ -1625,18 +582,18 @@ func assertAnswerRejected(t *testing.T, err error) {
 func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-plan-guardrails-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("Plan the first objective", true)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "Plan the first objective", PlanMode: true}); err != nil {
 		t.Fatal(err)
 	}
 	first := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("Plan the revised objective", true)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "Plan the revised objective", PlanMode: true}); err != nil {
 		t.Fatal(err)
 	}
 	revised := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1646,14 +603,12 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 	if revised.Description.Plan.Tasks[0].Content != "Plan the revised objective" {
 		t.Fatalf("revised plan = %#v", revised.Description.Plan)
 	}
-	_, oldRevisionErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-plan"), Revision: first.Revision,
-	})
+	oldRevisionErr := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: first.Revision})
 	var rejected *CommandRejectedError
 	if !errors.As(oldRevisionErr, &rejected) {
 		t.Fatalf("old revision error = %T %v", oldRevisionErr, oldRevisionErr)
 	}
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/plan-clear", true)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/plan-clear", PlanMode: true}); err != nil {
 		t.Fatal(err)
 	}
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1661,15 +616,17 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 			snapshot.Description.Plan == nil
 	})
 
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/plan-stop demonstrate advisory completion", true)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/plan-stop demonstrate advisory completion", PlanMode: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
 		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
 	})
-	if _, err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-plan"), Revision: draftSnapshot.Description.Plan.Revision,
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: draftSnapshot.Description.Plan.Revision,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1677,7 +634,54 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive
 	})
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/tool integration_tool {}", false)); err != nil {
+	state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage && state.PlanNoProgressAttempts == 2
+	})
+	if state.PlanNoProgressAttempts != 2 {
+		t.Fatalf("Plan no-progress attempts = %d, want 2", state.PlanNoProgressAttempts)
+	}
+	if count := countHistoryMessages(
+		active.History.Messages,
+		MessageRoleAssistant,
+		"integration stopped before completing the active plan",
+	); count != 2 {
+		t.Fatalf("automatic Plan recovery responses = %d, want 2", count)
+	}
+
+	environment.replaceWorker(t, flowID)
+	submitted := make(chan error, 1)
+	go func() {
+		submitted <- environment.agent.WaitForInteractionStatus(
+			t.Context(),
+			flowID,
+			AgentInteractionStatusSubmitted,
+		)
+	}()
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: active.Description.Plan.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-submitted; err != nil {
+		t.Fatal(err)
+	}
+	continued := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive &&
+			countHistoryMessages(
+				snapshot.History.Messages,
+				MessageRoleAssistant,
+				"integration stopped before completing the active plan",
+			) == 4
+	})
+	if continued.Description.Plan.Revision != active.Description.Plan.Revision {
+		t.Fatalf("Continue changed Plan revision: got %d, want %d", continued.Description.Plan.Revision, active.Description.Plan.Revision)
+	}
+	state = readAgentState(t, environment, flowID)
+	if state.PlanNoProgressAttempts != 2 {
+		t.Fatalf("Continue recovery no-progress attempts = %d, want 2", state.PlanNoProgressAttempts)
+	}
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool integration_tool {}"}); err != nil {
 		t.Fatal(err)
 	}
 	afterBlockedTool := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -1688,30 +692,99 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		afterBlockedTool.Description.Plan.Revision != active.Description.Plan.Revision {
 		t.Fatalf("blocked tool changed active plan: %#v", afterBlockedTool.Description.Plan)
 	}
+	state = readAgentState(t, environment, flowID)
+	if state.PlanNoProgressAttempts != 0 {
+		t.Fatalf("user turn did not reset Plan no-progress attempts: %d", state.PlanNoProgressAttempts)
+	}
 }
 
-func TestAgentPlanTaskActivityIntegration(t *testing.T) {
-	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
-	flowID := FlowID("agent-plan-activity-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+func TestAgentRejectsPlanExecutionWhileBusyWithoutPublishing(t *testing.T) {
+	modelClient := newBlockingPlanModel()
+	environment := newAgentIntegrationEnvironment(t, modelClient, newIntegrationToolRegistry())
+	flowID := FlowID("agent-plan-busy-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if _, err := environment.agent.SendMessage(
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/plan-stop reject busy execution", PlanMode: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
+	})
+	draft := draftSnapshot.Description.Plan
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: draft.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-modelClient.started:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("timed out waiting for the active Plan model call")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusCallingModel
+	})
+
+	err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{Revision: draft.Revision})
+	var rejected *CommandRejectedError
+	if !errors.As(err, &rejected) || rejected.Command != CommandExecutePlan {
+		t.Fatalf("busy Execute Plan error = %T %v, want execute rejection", err, err)
+	}
+	var executions []dex.ChannelMessage[PlanExecutionRequest]
+	if err := environment.sdk.GetChannelMapMessages(
 		t.Context(),
-		flowID,
-		integrationUserMessage("stream task progress", true),
+		string(flowID),
+		planExecutionsChannel,
+		planRevisionKey(draft.Revision),
+		&executions,
 	); err != nil {
+		t.Fatal(err)
+	}
+	if len(executions) != 0 {
+		t.Fatalf("busy rejection left %d Plan execution message(s)", len(executions))
+	}
+	state := readAgentState(t, environment, flowID)
+	if state.PendingPlanExecutionRevision != nil {
+		t.Fatalf("busy rejection left pending Plan revision %d", *state.PendingPlanExecutionRevision)
+	}
+
+	close(modelClient.release)
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if calls := modelClient.activeCalls.Load(); calls != 2 {
+		t.Fatalf("active Plan model calls = %d, want exactly 2", calls)
+	}
+}
+
+func TestAgentPlanTaskActivityIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-plan-activity-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content:  "stream task progress",
+		PlanMode: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	draft := waitForAgentPlan(t, environment, flowID, PlanStatusDraft)
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if _, err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
-		RequestID: integrationRequestID("execute-activity-plan"), Revision: draft.Revision,
+	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
+		Revision: draft.Revision,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1736,26 +809,24 @@ func TestAgentPlanTaskActivityIntegration(t *testing.T) {
 func TestAgentBatchSteeringIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-steer-batch-" + randomLocalID(t))
-	if _, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig()); err != nil {
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
-	if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage("/wait", false)); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
 		t.Fatal(err)
 	}
 	waitForPendingTimer(t, environment, flowID)
 	for _, content := range []string{"first replacement objective", "final replacement objective"} {
-		if _, err := environment.agent.SendMessage(t.Context(), flowID, integrationUserMessage(content, false)); err != nil {
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: content}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	queued := waitForQueuedMessages(t, environment, flowID, 2)
 	for _, message := range queued {
-		if _, err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
-			RequestID: integrationRequestID("steer"), MessageID: message.Value.MessageID,
-		}); err != nil {
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: MessageID(message.MessageID)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1778,7 +849,7 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-terminal-" + randomLocalID(t))
-	runID, err := environment.agent.Start(t.Context(), flowID, NewAgentConfig())
+	runID, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1806,6 +877,79 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	if snapshot.Description != nil || snapshot.ErrorType != nil ||
 		len(snapshot.History.Messages) != 0 || len(snapshot.Queued) != 0 || len(snapshot.Steered) != 0 {
 		t.Fatalf("terminal Snapshot durable view = %#v", snapshot)
+	}
+}
+
+func TestAgentCancellationReservationIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	reservedFlowID := FlowID("agent-cancel-before-start-" + randomLocalID(t))
+	if err := environment.agent.Cancel(t.Context(), reservedFlowID, "session deleted before start"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := readSnapshot(t, environment, reservedFlowID)
+	if snapshot.FlowStatus != FlowStatusCanceled || snapshot.Description != nil {
+		t.Fatalf("reserved Snapshot = %#v", snapshot)
+	}
+	history, err := environment.agent.MessagesAfter(t.Context(), reservedFlowID, 0, 0)
+	if err != nil || len(history.Messages) != 0 || history.FirstRetainedSequence != 0 || history.LastSequence != 0 {
+		t.Fatalf("reserved history = %#v, %v", history, err)
+	}
+	_, startErr := environment.agent.Start(t.Context(), reservedFlowID, StartRequest{Config: NewAgentConfig()})
+	var alreadyStarted *dex.FlowAlreadyStartedError
+	if !errors.As(startErr, &alreadyStarted) {
+		t.Fatalf("start after reservation error = %T %v", startErr, startErr)
+	}
+	repeatErr := environment.agent.Cancel(t.Context(), reservedFlowID, "session deleted before start")
+	var terminal *AgentAlreadyTerminalError
+	if !errors.As(repeatErr, &terminal) || terminal.Status != FlowStatusCanceled {
+		t.Fatalf("repeat cancellation error = %T %v", repeatErr, repeatErr)
+	}
+
+	orphanedReservationFlowID := FlowID("agent-orphaned-reservation-" + randomLocalID(t))
+	initialReservation, err := dex.InitialAttribute(agentTerminalReservationAttribute, terminalReservation{
+		Reason: "simulate cancellation client loss",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := environment.sdk.StartFlow(
+		t.Context(),
+		environment.flow,
+		string(orphanedReservationFlowID),
+		NewAgentConfig(),
+		dex.StartFlowOptions{
+			IDReusePolicy: dex.IDReuseDisallow,
+			Attributes:    []dex.InitialAttributeDef{initialReservation},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	environment.replaceWorker(t, orphanedReservationFlowID)
+	recoveredReservationErr := environment.agent.Cancel(
+		t.Context(),
+		orphanedReservationFlowID,
+		"retry after cancellation client loss",
+	)
+	if !errors.As(recoveredReservationErr, &terminal) || terminal.Status != FlowStatusCanceled {
+		t.Fatalf("orphaned reservation retry error = %T %v", recoveredReservationErr, recoveredReservationErr)
+	}
+
+	activeFlowID := FlowID("agent-cancel-active-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), activeFlowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, activeFlowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.Cancel(t.Context(), activeFlowID, "user canceled active Agent"); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := readSnapshot(t, environment, activeFlowID); snapshot.FlowStatus != FlowStatusCanceled {
+		t.Fatalf("active canceled Snapshot = %#v", snapshot)
+	}
+	repeatErr = environment.agent.Cancel(t.Context(), activeFlowID, "user canceled active Agent")
+	if !errors.As(repeatErr, &terminal) || terminal.Status != FlowStatusCanceled {
+		t.Fatalf("repeat active cancellation error = %T %v", repeatErr, repeatErr)
 	}
 }
 
@@ -1847,6 +991,16 @@ func historyHasMessage(messages []SequencedMessage, role MessageRole, content st
 	return false
 }
 
+func countHistoryMessages(messages []SequencedMessage, role MessageRole, content string) int {
+	count := 0
+	for _, message := range messages {
+		if message.Message.Role == role && message.Message.Content == content {
+			count++
+		}
+	}
+	return count
+}
+
 func historyContainsText(messages []SequencedMessage, text string) bool {
 	for _, message := range messages {
 		if strings.Contains(message.Message.Content, text) {
@@ -1857,158 +1011,13 @@ func historyContainsText(messages []SequencedMessage, text string) bool {
 }
 
 func answerRequest(input PendingUserInput, answer string) AnswerQuestionsRequest {
-	return answerBatchRequest(input.CallID, []UserInputAnswer{{
-		QuestionID: input.Questions[0].ID,
-		Answer:     answer,
-	}})
-}
-
-func answerBatchRequest(callID CallID, answers []UserInputAnswer) AnswerQuestionsRequest {
-	identity := "answer:" + encodedFingerprint([]byte(fmt.Sprintf("%s:%v", callID, answers)))
 	return AnswerQuestionsRequest{
-		RequestID: RequestID(identity),
-		MessageID: MessageID(identity),
-		CallID:    callID,
-		Answers:   answers,
+		CallID: input.CallID,
+		Answers: []UserInputAnswer{{
+			QuestionID: input.Questions[0].ID,
+			Answer:     answer,
+		}},
 	}
-}
-
-var (
-	originMainConfigAttribute             = dex.DefineAttribute[AgentConfig]("AgentConfig")
-	originMainApplicationContextAttribute = dex.DefineAttribute[string]("ApplicationContext")
-	originMainInitializedAttribute        = dex.DefineAttribute[bool]("AgentInitialized")
-	originMainStateAttribute              = dex.DefineAttribute[AgentState]("AgentState")
-	originMainInteractionStatusAttribute  = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
-	originMainMessagesAttribute           = dex.DefineAttributeMap[originMainAgentMessage]("CurrentMessages")
-	originMainDurableCommandsAttribute    = dex.DefineAttributeMap[durableCommandRecord]("DurableCommands")
-	originMainQueuedChannel               = dex.DefineChannel[originMainUserMessage]("QueuedUserMessages")
-)
-
-type originMainUserMessage struct {
-	Content  string `json:"content"`
-	PlanMode bool   `json:"plan_mode"`
-}
-
-type originMainAgentMessage struct {
-	Role                 MessageRole           `json:"role"`
-	Content              string                `json:"content"`
-	ToolCalls            []ToolCall            `json:"tool_calls"`
-	ToolCallID           *CallID               `json:"tool_call_id,omitempty"`
-	ToolName             *ToolName             `json:"tool_name,omitempty"`
-	ProviderContextItems []ProviderContextItem `json:"provider_context_items"`
-	CreatedAt            time.Time             `json:"created_at"`
-}
-
-type originMainAgentFlow struct{}
-
-var _ dex.Flow = (*originMainAgentFlow)(nil)
-
-func (*originMainAgentFlow) GetFlowType() string { return flowTypeAIAgent }
-
-func (*originMainAgentFlow) GetSteps() []dex.StepDef {
-	return []dex.StepDef{
-		dex.DefineStartStep(originMainInitStep{}),
-		dex.DefineStep(originMainAwaitStep{}),
-	}
-}
-
-func (*originMainAgentFlow) GetPersistenceSchema() dex.PersistenceSchema {
-	return dex.PersistenceSchema{
-		Attributes: []dex.AttributeDef{
-			originMainConfigAttribute,
-			originMainApplicationContextAttribute,
-			originMainInitializedAttribute,
-			originMainStateAttribute,
-			originMainInteractionStatusAttribute,
-			originMainMessagesAttribute,
-			originMainDurableCommandsAttribute,
-		},
-		Channels: []dex.ChannelDef{originMainQueuedChannel},
-	}
-}
-
-type originMainInitStep struct {
-	dex.StepDefaultsNoWaitFor[AgentConfig]
-}
-
-var _ dex.Step[AgentConfig] = originMainInitStep{}
-
-func (originMainInitStep) GetStepType() string { return string(stepTypeInit) }
-
-func (originMainInitStep) Execute(ctx dex.Context, config AgentConfig) (*dex.StepDecision, error) {
-	state := NewAgentState()
-	state.NextSequence = 2
-	state.LastSequence = 1
-	if err := originMainConfigAttribute.Set(ctx, config); err != nil {
-		return nil, err
-	}
-	if err := originMainApplicationContextAttribute.Set(ctx, ""); err != nil {
-		return nil, err
-	}
-	if err := originMainStateAttribute.Set(ctx, state); err != nil {
-		return nil, err
-	}
-	if err := originMainInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
-		return nil, err
-	}
-	if err := originMainInitializedAttribute.Set(ctx, true); err != nil {
-		return nil, err
-	}
-	requestID := originMainStartRequestID(FlowID(ctx.FlowID()))
-	fingerprint, err := (EnsureStartRequest{RequestID: requestID, Config: config}).fingerprint()
-	if err != nil {
-		return nil, err
-	}
-	if err := originMainDurableCommandsAttribute.Set(
-		ctx,
-		durableCommandInstance(CommandStart, requestID),
-		durableCommandRecord{
-			RequestID:   requestID,
-			Command:     CommandStart,
-			Fingerprint: fingerprint,
-			RecordedAt:  time.Now().UTC(),
-			Outcome:     durableCommandAccepted,
-		},
-	); err != nil {
-		return nil, err
-	}
-	if err := originMainMessagesAttribute.Set(ctx, sequenceKey(1), originMainAgentMessage{
-		Role:                 MessageRoleUser,
-		Content:              "message persisted by origin/main",
-		ToolCalls:            []ToolCall{},
-		ProviderContextItems: []ProviderContextItem{},
-		CreatedAt:            time.Now().UTC(),
-	}); err != nil {
-		return nil, err
-	}
-	return dex.GoTo(originMainAwaitStep{}, nil), nil
-}
-
-func originMainStartRequestID(flowID FlowID) RequestID {
-	return RequestID("origin-main-start:" + string(flowID))
-}
-
-type originMainAwaitStep struct {
-	dex.StepDefaults
-}
-
-var _ dex.Step[dex.None] = originMainAwaitStep{}
-
-func (originMainAwaitStep) GetStepType() string { return string(stepTypeAwaitUser) }
-
-func (originMainAwaitStep) GetStepOptions() *dex.StepOptions {
-	return &dex.StepOptions{ExecuteLoadAttributeMaps: []dex.AttributeDef{originMainMessagesAttribute}}
-}
-
-func (originMainAwaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
-	if err := originMainInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
-		return nil, err
-	}
-	return dex.Until(originMainQueuedChannel.ForOne()), nil
-}
-
-func (originMainAwaitStep) Execute(dex.Context, dex.None) (*dex.StepDecision, error) {
-	return dex.GoTo(originMainAwaitStep{}, nil), nil
 }
 
 type agentIntegrationEnvironment struct {
@@ -2043,16 +1052,7 @@ func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools
 
 func (environment *agentIntegrationEnvironment) startWorker(t *testing.T) {
 	t.Helper()
-	environment.startWorkerWithFlow(t, environment.flow, true)
-}
-
-func (environment *agentIntegrationEnvironment) startWorkerWithFlow(
-	t *testing.T,
-	registeredFlow dex.Flow,
-	isCurrentAgent bool,
-) {
-	t.Helper()
-	registry, err := dex.NewRegistry([]dex.Flow{registeredFlow})
+	registry, err := dex.NewRegistry([]dex.Flow{environment.flow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2091,11 +1091,7 @@ func (environment *agentIntegrationEnvironment) startWorkerWithFlow(
 	environment.worker = worker
 	environment.workerResult = workerResult
 	environment.sdk = sdkClient
-	if isCurrentAgent {
-		environment.agent = NewClient(sdkClient, environment.flow)
-	} else {
-		environment.agent = nil
-	}
+	environment.agent = NewClient(sdkClient, environment.flow)
 	waitForWorkerAddress(t, environment)
 }
 
@@ -2105,19 +1101,6 @@ func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T, flow
 		t.Fatal(err)
 	}
 	environment.startWorker(t)
-	waitForWorkerFlowRPC(t, environment, flowID)
-}
-
-// waitForWorkerFlowRPC waits for Dex Server's cached connection to the restarted
-// Worker to recover. A raw TCP probe only proves that the new listener is ready;
-// the server-side gRPC connection can remain in transient failure after the old
-// Worker stopped, especially on slower CI runners.
-func waitForWorkerFlowRPC(
-	t *testing.T,
-	environment *agentIntegrationEnvironment,
-	flowID FlowID,
-) {
-	t.Helper()
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	deadline := time.NewTimer(integrationWaitTimeout)
@@ -2130,14 +1113,11 @@ func waitForWorkerFlowRPC(
 			lastErr = err
 		}
 		select {
-		case workerErr := <-environment.workerResult:
-			environment.workerResult <- workerErr
-			t.Fatalf("restarted integration Worker stopped: %v", workerErr)
 		case <-ticker.C:
 		case <-deadline.C:
-			t.Fatalf("Dex could not reach restarted integration Worker within %s: %v", integrationWaitTimeout, lastErr)
+			t.Fatalf("replacement Worker did not serve Agent RPCs: %v", lastErr)
 		case <-t.Context().Done():
-			t.Fatalf("wait for restarted integration Worker: %v", t.Context().Err())
+			t.Fatalf("wait for replacement Worker RPC: %v", t.Context().Err())
 		}
 	}
 }
@@ -2314,36 +1294,6 @@ func waitForQueuedMessages(
 		return len(messages) == count, err
 	})
 	return messages
-}
-
-func waitForPendingMessageTotal(
-	t *testing.T,
-	environment *agentIntegrationEnvironment,
-	flowID FlowID,
-	count int,
-) {
-	t.Helper()
-	waitUntil(t, environment, "pending message total", func() (bool, error) {
-		var queued []dex.ChannelMessage[UserMessage]
-		if err := environment.sdk.GetChannelMessages(
-			t.Context(),
-			string(flowID),
-			queuedUserMessagesChannel,
-			&queued,
-		); err != nil {
-			return false, err
-		}
-		var steered []dex.ChannelMessage[UserMessage]
-		if err := environment.sdk.GetChannelMessages(
-			t.Context(),
-			string(flowID),
-			steeredUserMessagesChannel,
-			&steered,
-		); err != nil {
-			return false, err
-		}
-		return len(queued)+len(steered) == count, nil
-	})
 }
 
 func waitUntil(
@@ -2653,60 +1603,40 @@ func (integrationModel) CountTokens(_ Model, messages []AgentMessage) int {
 	return total
 }
 
-type blockingIntegrationModel struct {
-	started       chan struct{}
-	releaseSignal chan struct{}
-	startOnce     sync.Once
-	releaseOnce   sync.Once
+type blockingPlanModel struct {
+	integrationModel
+	started     chan struct{}
+	release     chan struct{}
+	activeCalls atomic.Int32
 }
 
-var _ ModelClient = (*blockingIntegrationModel)(nil)
+var _ ModelClient = (*blockingPlanModel)(nil)
 
-func newBlockingIntegrationModel() *blockingIntegrationModel {
-	return &blockingIntegrationModel{
-		started:       make(chan struct{}),
-		releaseSignal: make(chan struct{}),
+func newBlockingPlanModel() *blockingPlanModel {
+	return &blockingPlanModel{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
 	}
 }
 
-func (model *blockingIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
-	if integrationLastUserContent(request.Messages) != "/block" {
-		return (integrationModel{}).Complete(ctx, request)
+func (model *blockingPlanModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	if _, hasActivePlan := integrationActivePlanTaskStatus(request.Messages); !hasActivePlan {
+		return model.integrationModel.Complete(ctx, request)
 	}
-	model.startOnce.Do(func() { close(model.started) })
-	select {
-	case <-model.releaseSignal:
-	case <-ctx.Done():
-		return ModelReply{}, ctx.Err()
+	call := model.activeCalls.Add(1)
+	if call == 1 {
+		model.started <- struct{}{}
+		select {
+		case <-model.release:
+		case <-ctx.Done():
+			return ModelReply{}, ctx.Err()
+		}
 	}
-	content := "integration block released"
+	content := "integration stopped before completing the active plan"
 	if err := request.WriteAssistant(content); err != nil {
 		return ModelReply{}, err
 	}
 	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
-}
-
-func (*blockingIntegrationModel) Summarize(ctx context.Context, request SummarizeRequest) (string, error) {
-	return (integrationModel{}).Summarize(ctx, request)
-}
-
-func (*blockingIntegrationModel) CountTokens(model Model, messages []AgentMessage) int {
-	return (integrationModel{}).CountTokens(model, messages)
-}
-
-func (model *blockingIntegrationModel) waitUntilBlocked(t *testing.T) {
-	t.Helper()
-	select {
-	case <-model.started:
-	case <-time.After(integrationWaitTimeout):
-		t.Fatal("blocking model did not start")
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
-	}
-}
-
-func (model *blockingIntegrationModel) release() {
-	model.releaseOnce.Do(func() { close(model.releaseSignal) })
 }
 
 func integrationToolReply(request ModelRequest, name ToolName, arguments JSONObject, content string) (ModelReply, error) {
@@ -2818,14 +1748,14 @@ func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool)
 }
 
 type integrationToolRegistry struct {
-	mutex      sync.Mutex
-	identities []toolInvocationIdentity
+	mutex       sync.Mutex
+	invocations []integrationToolInvocation
 }
 
-type toolInvocationIdentity struct {
-	flowID             FlowID
-	callID             CallID
-	applicationContext string
+type integrationToolInvocation struct {
+	flowID          FlowID
+	callID          CallID
+	runtimeMetadata JSONObject
 }
 
 var _ ToolRegistry = (*integrationToolRegistry)(nil)
@@ -2855,10 +1785,10 @@ func (registry *integrationToolRegistry) Execute(ctx context.Context, invocation
 		return ToolExecutionResult{}, fmt.Errorf("unexpected integration tool %q", invocation.Name)
 	}
 	registry.mutex.Lock()
-	registry.identities = append(registry.identities, toolInvocationIdentity{
-		flowID:             invocation.FlowID,
-		callID:             invocation.CallID,
-		applicationContext: invocation.ApplicationContext,
+	registry.invocations = append(registry.invocations, integrationToolInvocation{
+		flowID:          invocation.FlowID,
+		callID:          invocation.CallID,
+		runtimeMetadata: invocation.RuntimeMetadata,
 	})
 	registry.mutex.Unlock()
 	if err := invocation.WriteProgress("integration tool completed"); err != nil {
@@ -2867,49 +1797,44 @@ func (registry *integrationToolRegistry) Execute(ctx context.Context, invocation
 	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
 }
 
-func (registry *integrationToolRegistry) assertCallsUseIdentity(t *testing.T, flowID FlowID, callID CallID) {
+func (registry *integrationToolRegistry) assertCallsUseID(t *testing.T, callID CallID) {
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	if len(registry.identities) != 1 {
-		t.Fatalf("tool executions = %d, want exactly one", len(registry.identities))
+	if len(registry.invocations) != 1 {
+		t.Fatalf("tool executions = %d, want exactly one", len(registry.invocations))
 	}
-	for _, actual := range registry.identities {
-		if actual.flowID != flowID {
-			t.Fatalf("tool Flow ID changed across Worker replacement: got %q, want %q", actual.flowID, flowID)
-		}
+	for _, actual := range registry.invocations {
 		if actual.callID != callID {
 			t.Fatalf("tool call ID changed across Worker replacement: got %q, want %q", actual.callID, callID)
 		}
 	}
 }
 
-func (registry *integrationToolRegistry) assertApplicationContext(
+func (registry *integrationToolRegistry) assertInvocation(
 	t *testing.T,
 	flowID FlowID,
 	callID CallID,
-	applicationContext string,
+	runtimeMetadata JSONObject,
 ) {
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	for _, actual := range registry.identities {
-		if actual.flowID == flowID && actual.callID == callID {
-			if actual.applicationContext != applicationContext {
-				t.Fatalf("tool application context = %q, want %q", actual.applicationContext, applicationContext)
-			}
-			return
-		}
+	if len(registry.invocations) != 1 {
+		t.Fatalf("tool executions = %d, want exactly one", len(registry.invocations))
 	}
-	t.Fatalf("tool invocation %q/%q was not recorded", flowID, callID)
+	actual := registry.invocations[0]
+	if actual.flowID != flowID || actual.callID != callID || actual.runtimeMetadata != runtimeMetadata {
+		t.Fatalf("tool invocation = %#v", actual)
+	}
 }
 
 func (registry *integrationToolRegistry) assertExecutionCount(t *testing.T, expected int) {
 	t.Helper()
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	if len(registry.identities) != expected {
-		t.Fatalf("tool executions = %d, want %d", len(registry.identities), expected)
+	if len(registry.invocations) != expected {
+		t.Fatalf("tool executions = %d, want %d", len(registry.invocations), expected)
 	}
 }
 

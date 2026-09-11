@@ -28,8 +28,10 @@ retains the answered call ID internally for Plan execution semantics.
 
 `SendMessage` rejects while a batch is pending. The browser keeps answers only
 in its current React session, allows backward navigation and edits, and submits
-only when every question is answered. The generated `answerQuestions` client is
-the only pending-input mutation path.
+only when every question is answered. A selected option may include supplemental
+text, which the browser submits as `option: details`; `Other` submits only its
+required free text. The generated `answerQuestions` client is the only
+pending-input mutation path.
 
 ## Consequences
 

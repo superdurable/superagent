@@ -134,6 +134,16 @@
   cursor: pointer;
 }
 
+.sa-conversation-composer-actions {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.sa-conversation-composer-actions > button {
+  width: 100%;
+}
+
 .sa-conversation-composer-submit:disabled,
 .sa-message-queue button:disabled,
 .sa-question-batch button:disabled {

@@ -48,20 +48,21 @@ The optional `github.com/superdurable/superagent/model` package exposes the
 built-in provider router, provider adapters, and process-memory credential
 store. Embedders can use it without importing SuperAgent internals.
 
-Cloud control planes can call `Client.EnsureStarted` with a stable request ID,
-configuration, opaque application context, and optional initial message. Every
-message and mutation has caller-stable identity and durable exact-replay
-receipts. Receipts and Snapshots expose one monotonic `MutationRevision`.
-Send and Steer may use it as an optimistic precondition. Pending queued and
-steered input is capped at 200 messages and 256 KiB of aggregate content, with
-the same 256 KiB upper bound on one message.
-`Client.MessagesAfter` provides bounded forward canonical-history pagination.
-`Client.EnsureCanceled` also reserves an absent Flow ID so a delayed start
-cannot resurrect a canceled Agent. `Client.VerifyIdentity` compares the
-immutable application context supplied by a trusted caller without returning
-the persisted value. Trusted tools receive that context to recover integration
-routing after Worker replacement; providers and browser snapshots never
-receive it.
+Embedding applications start a non-reusable `FlowID` with `Client.Start` and a
+typed `StartRequest`. `RuntimeMetadata` is an optional JSON object of at most
+16 KiB for trusted routing data. It is persisted across Worker replacement and
+passed only to tool implementations, never to models, browser Snapshots, or
+Streams. Do not put secrets in it.
+
+Commands use Dex transactional RPC semantics. Callers do not create command or
+message IDs. Snapshot exposes Dex Channel message IDs for queued-message edit,
+delete, and steering. After an ambiguous network result, clients read Snapshot
+to reconcile current durable state instead of consulting stored command
+receipts. `Client.MessagesAfter` provides bounded canonical-history pagination.
+
+`Client.Cancel` uses a small independent terminal reservation when cancellation
+wins before start. This closes the cancel-before-start race without adding a
+general command ledger or changing the normal Agent identity model.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph

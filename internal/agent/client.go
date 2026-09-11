@@ -18,11 +18,8 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -44,119 +41,6 @@ type Client struct {
 	eventPoll      time.Duration
 }
 
-// EnsureStarted idempotently establishes one durable Agent and optional first message.
-func (client *Client) EnsureStarted(
-	ctx context.Context,
-	flowID FlowID,
-	request EnsureStartRequest,
-) (StartReceipt, error) {
-	if err := validateFlowID(flowID); err != nil {
-		return StartReceipt{}, err
-	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return StartReceipt{}, err
-	}
-	if err := client.flow.validateConfig(request.Config); err != nil {
-		return StartReceipt{}, fmt.Errorf("validate Agent config: %w", err)
-	}
-	if err := validateApplicationContext(request.ApplicationContext); err != nil {
-		return StartReceipt{}, err
-	}
-	if request.InitialMessage != nil {
-		if err := validateNewUserMessage(*request.InitialMessage); err != nil {
-			return StartReceipt{}, fmt.Errorf("validate initial message: %w", err)
-		}
-	}
-	fingerprint, fingerprintErr := request.fingerprint()
-	if fingerprintErr != nil {
-		return StartReceipt{}, fingerprintErr
-	}
-	identityFingerprint, identityErr := request.identityFingerprint()
-	if identityErr != nil {
-		return StartReceipt{}, identityErr
-	}
-	attributes, attributeErr := startAttributes(request, fingerprint, identityFingerprint)
-	if attributeErr != nil {
-		return StartReceipt{}, attributeErr
-	}
-	requestID := flowStartRequestID(flowID)
-	runID, startErr := client.sdk.StartFlow(ctx, client.flow, string(flowID), request.Config, dex.StartFlowOptions{
-		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    attributes,
-		AlreadyStarted: &dex.AlreadyStartedOptions{
-			IgnoreError: true,
-		},
-		RequestID: &requestID,
-	})
-	if startErr != nil {
-		var alreadyStarted *dex.FlowAlreadyStartedError
-		if !errors.As(startErr, &alreadyStarted) {
-			return StartReceipt{}, startErr
-		}
-	}
-	reservation, isReserved, reservationErr := client.readTerminalReservation(ctx, flowID)
-	if reservationErr != nil {
-		return StartReceipt{}, fmt.Errorf("read Agent terminal reservation: %w", reservationErr)
-	}
-	if isReserved {
-		if _, err := client.stopReservedAgent(ctx, flowID, reservation, true); err != nil {
-			return StartReceipt{}, err
-		}
-		return StartReceipt{}, &AgentAlreadyTerminalError{FlowID: flowID, Status: FlowStatusCanceled}
-	}
-	if waitErr := client.waitForInitialization(ctx, flowID); waitErr != nil {
-		return StartReceipt{}, fmt.Errorf("wait for Agent initialization: %w", waitErr)
-	}
-	allowsLegacyMigration, verifyErr := client.verifyStartIdentity(
-		ctx,
-		flowID,
-		request,
-		fingerprint,
-		identityFingerprint,
-	)
-	if verifyErr != nil {
-		return StartReceipt{}, verifyErr
-	}
-	confirmation, err := client.confirmStart(
-		ctx,
-		flowID,
-		request,
-		fingerprint,
-		identityFingerprint,
-		allowsLegacyMigration,
-	)
-	if err != nil {
-		return StartReceipt{}, err
-	}
-	if runID == "" {
-		currentRunID, runErr := client.currentRunID(ctx, flowID)
-		if runErr != nil {
-			return StartReceipt{}, runErr
-		}
-		runID = string(currentRunID)
-	}
-	commandConfirmation, err := commandReceipt(confirmation, CommandStart, request.RequestID, "")
-	if err != nil {
-		return StartReceipt{}, err
-	}
-	receipt := StartReceipt{
-		RequestID:        commandConfirmation.RequestID,
-		FlowID:           flowID,
-		RunID:            RunID(runID),
-		AcceptedAt:       commandConfirmation.AcceptedAt,
-		MutationRevision: commandConfirmation.MutationRevision,
-		IsReplay:         commandConfirmation.IsReplay,
-	}
-	if request.InitialMessage != nil {
-		messageReceipt, receiptErr := client.initialMessageReceipt(ctx, flowID, request, confirmation)
-		if receiptErr != nil {
-			return StartReceipt{}, receiptErr
-		}
-		receipt.InitialMessage = &messageReceipt
-	}
-	return receipt, nil
-}
-
 // NewClient constructs an Agent application client over one Dex client and Flow definition.
 func NewClient(sdkClient *dex.Client, flow *Flow) *Client {
 	if sdkClient == nil {
@@ -173,56 +57,28 @@ func NewClient(sdkClient *dex.Client, flow *Flow) *Client {
 	}
 }
 
-func startAttributes(
-	request EnsureStartRequest,
-	commandFingerprint string,
-	identityFingerprint string,
-) ([]dex.InitialAttributeDef, error) {
-	initialContext, err := dex.InitialAttribute(applicationContextAttribute, request.ApplicationContext)
-	if err != nil {
-		return nil, fmt.Errorf("encode application context: %w", err)
-	}
-	bootstrap, err := dex.InitialAttribute(agentBootstrapAttribute, agentBootstrap{
-		RequestID:           request.RequestID,
-		CommandFingerprint:  commandFingerprint,
-		IdentityFingerprint: identityFingerprint,
-		InitialMessage:      request.InitialMessage,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode Agent bootstrap: %w", err)
-	}
-	return []dex.InitialAttributeDef{initialContext, bootstrap}, nil
-}
-
 // Start creates one non-reusable durable Agent Flow.
-func (client *Client) Start(ctx context.Context, flowID FlowID, config AgentConfig) (RunID, error) {
-	if strings.TrimSpace(string(flowID)) == "" {
-		return "", errors.New("flow ID must not be empty")
-	}
-	if err := client.flow.validateConfig(config); err != nil {
-		return "", fmt.Errorf("validate Agent config: %w", err)
-	}
-	initialContext, err := dex.InitialAttribute(applicationContextAttribute, "")
-	if err != nil {
-		return "", fmt.Errorf("encode empty application context: %w", err)
-	}
-	identityFingerprint, err := (EnsureStartRequest{Config: config}).identityFingerprint()
-	if err != nil {
+func (client *Client) Start(ctx context.Context, flowID FlowID, request StartRequest) (RunID, error) {
+	if err := validateFlowID(flowID); err != nil {
 		return "", err
 	}
-	initialIdentity, err := dex.InitialAttribute(agentStartIdentityAttribute, agentStartIdentity{
-		Version:          1,
-		Fingerprint:      identityFingerprint,
-		MutationRevision: 1,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode Agent start identity: %w", err)
+	if err := client.flow.validateConfig(request.Config); err != nil {
+		return "", fmt.Errorf("validate Agent config: %w", err)
 	}
-	requestID := "start:" + string(flowID)
-	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), config, dex.StartFlowOptions{
+	if err := validateRuntimeMetadata(request.RuntimeMetadata); err != nil {
+		return "", err
+	}
+	metadata := request.RuntimeMetadata
+	if metadata == "" {
+		metadata = MustJSONObject(`{}`)
+	}
+	initialMetadata, err := dex.InitialAttribute(agentRuntimeMetadataAttribute, metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode Agent runtime metadata: %w", err)
+	}
+	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), request.Config, dex.StartFlowOptions{
 		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    []dex.InitialAttributeDef{initialContext, initialIdentity},
-		RequestID:     &requestID,
+		Attributes:    []dex.InitialAttributeDef{initialMetadata},
 	})
 	if err != nil {
 		return "", err
@@ -233,228 +89,101 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, config AgentConf
 	return RunID(runID), nil
 }
 
-// SendMessage idempotently invokes the durable SendMessage command.
-func (client *Client) SendMessage(
-	ctx context.Context,
-	flowID FlowID,
-	request SendMessageRequest,
-) (MessageReceipt, error) {
+// SendMessage invokes the durable SendMessage command.
+func (client *Client) SendMessage(ctx context.Context, flowID FlowID, message UserMessage) error {
 	if err := validateFlowID(flowID); err != nil {
-		return MessageReceipt{}, err
+		return err
 	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return MessageReceipt{}, err
+	if err := validateNewUserMessage(message); err != nil {
+		return err
 	}
-	if err := validateNewUserMessage(request.Message); err != nil {
-		return MessageReceipt{}, err
-	}
-	if err := validateExpectedRevision(request.ExpectedRevision); err != nil {
-		return MessageReceipt{}, err
-	}
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return MessageReceipt{}, err
-	}
-	commandInstance := durableCommandInstance(CommandSendMessage, request.RequestID)
-	messageInstance := acceptedMessageInstance(request.Message.MessageID)
-	var result durableCommandResult
-	invokeErr := client.invokeWithLockRetry(ctx, func(ctx context.Context) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, request, &result, dex.InvokeOptions{
-			Timeout:         client.commandTimeout,
-			IsTransactional: true,
-			LockAttributes: []dex.AttributeLock{
-				dex.LockAttribute(agentMutationRevisionAttribute),
-				dex.LockAttribute(pendingUserInputAttribute),
-				dex.LockAttributeMap(durableCommandsAttribute, commandInstance),
-				dex.LockAttributeMap(acceptedUserMessagesAttribute, messageInstance),
-			},
-			LoadAttributeMapInstances: []dex.AttributeMapLoad{
-				durableCommandsAttribute.Load(commandInstance),
-				acceptedUserMessagesAttribute.Load(messageInstance),
-			},
-			LoadChannels: []dex.ChannelDef{
-				queuedUserMessagesChannel,
-				steeredUserMessagesChannel,
-			},
+	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, message, accepted, dex.InvokeOptions{
+			Timeout:        client.commandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
 		})
 	})
-	if invokeErr != nil {
-		reconciled, found, reconcileErr := client.reconcileDurableCommand(
-			ctx,
-			flowID,
-			CommandSendMessage,
-			request.RequestID,
-			fingerprint,
-		)
-		if reconcileErr != nil {
-			return MessageReceipt{}, reconcileErr
-		}
-		if !found {
-			return MessageReceipt{}, invokeErr
-		}
-		result = reconciled
-	}
-	commandReceipt, err := commandReceipt(result, CommandSendMessage, request.RequestID, request.Message.MessageID)
 	if err != nil {
-		return MessageReceipt{}, err
+		return err
 	}
-	return MessageReceipt{
-		RequestID:        commandReceipt.RequestID,
-		MessageID:        request.Message.MessageID,
-		AcceptedAt:       commandReceipt.AcceptedAt,
-		MutationRevision: commandReceipt.MutationRevision,
-		IsReplay:         commandReceipt.IsReplay,
-	}, nil
+	return ensureAccepted(accepted, CommandSendMessage)
 }
 
-// AnswerQuestions idempotently answers one exact pending input batch.
+// AnswerQuestions invokes the durable command for one exact pending input batch.
 func (client *Client) AnswerQuestions(
 	ctx context.Context,
 	flowID FlowID,
 	request AnswerQuestionsRequest,
-) (MessageReceipt, error) {
+) error {
 	if err := validateFlowID(flowID); err != nil {
-		return MessageReceipt{}, err
+		return err
 	}
 	if err := validateAnswerQuestionsRequest(request); err != nil {
-		return MessageReceipt{}, err
+		return err
 	}
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return MessageReceipt{}, err
-	}
-	commandInstance := durableCommandInstance(CommandAnswerQuestions, request.RequestID)
-	messageInstance := acceptedMessageInstance(request.MessageID)
-	var result durableCommandResult
-	invokeErr := client.invokeWithLockRetry(ctx, func(ctx context.Context) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, &result, dex.InvokeOptions{
-			Timeout:         client.commandTimeout,
-			IsTransactional: true,
-			LockAttributes: []dex.AttributeLock{
-				dex.LockAttribute(agentMutationRevisionAttribute),
-				dex.LockAttribute(pendingUserInputAttribute),
-				dex.LockAttributeMap(durableCommandsAttribute, commandInstance),
-				dex.LockAttributeMap(acceptedUserMessagesAttribute, messageInstance),
-			},
-			LoadAttributeMapInstances: []dex.AttributeMapLoad{
-				durableCommandsAttribute.Load(commandInstance),
-				acceptedUserMessagesAttribute.Load(messageInstance),
-			},
+	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
+			Timeout:        client.commandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
 		})
 	})
-	if invokeErr != nil {
-		reconciled, found, reconcileErr := client.reconcileDurableCommand(
-			ctx,
-			flowID,
-			CommandAnswerQuestions,
-			request.RequestID,
-			fingerprint,
-		)
-		if reconcileErr != nil {
-			return MessageReceipt{}, reconcileErr
-		}
-		if !found {
-			return MessageReceipt{}, invokeErr
-		}
-		result = reconciled
-	}
-	commandReceipt, err := commandReceipt(result, CommandAnswerQuestions, request.RequestID, request.MessageID)
 	if err != nil {
-		return MessageReceipt{}, err
+		return err
 	}
-	return MessageReceipt{
-		RequestID:        commandReceipt.RequestID,
-		MessageID:        request.MessageID,
-		AcceptedAt:       commandReceipt.AcceptedAt,
-		MutationRevision: commandReceipt.MutationRevision,
-		IsReplay:         commandReceipt.IsReplay,
-	}, nil
+	return ensureAccepted(accepted, CommandAnswerQuestions)
 }
 
-func (client *Client) invokeWithLockRetry(
+func invokeLockedCommand(
 	ctx context.Context,
-	invoke func(context.Context) error,
-) error {
+	timeout time.Duration,
+	invoke func(context.Context, *bool) error,
+) (bool, error) {
 	const initialRetryDelay = 5 * time.Millisecond
 	const maximumRetryDelay = 100 * time.Millisecond
-	ctx, cancel := context.WithTimeout(ctx, client.commandTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	retryDelay := initialRetryDelay
 	for {
-		err := invoke(ctx)
+		var accepted bool
+		err := invoke(ctx, &accepted)
+		if err == nil {
+			return accepted, nil
+		}
 		var conflict *dex.RPCLockConflictError
-		var workerInvocation *dex.WorkerInvocationError
-		isWorkerTransportFailure := errors.As(err, &workerInvocation) && workerInvocation.Worker == nil
-		if !errors.As(err, &conflict) && !isWorkerTransportFailure {
-			return err
+		if !errors.As(err, &conflict) {
+			return false, err
 		}
 		timer := time.NewTimer(retryDelay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-timer.C:
 		}
 		retryDelay = min(retryDelay*2, maximumRetryDelay)
 	}
 }
 
-// SteerMessage idempotently invokes the durable SteerMessage command.
-func (client *Client) SteerMessage(
-	ctx context.Context,
-	flowID FlowID,
-	request SteerMessageRequest,
-) (CommandReceipt, error) {
+// SteerMessage invokes the durable SteerMessage command.
+func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request SteerMessageRequest) error {
 	if err := validateFlowID(flowID); err != nil {
-		return CommandReceipt{}, err
-	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return CommandReceipt{}, err
+		return err
 	}
 	if err := validateMessageID(request.MessageID); err != nil {
-		return CommandReceipt{}, err
+		return err
 	}
-	if err := validateExpectedRevision(request.ExpectedRevision); err != nil {
-		return CommandReceipt{}, err
-	}
-	instance := durableCommandInstance(CommandSteer, request.RequestID)
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return CommandReceipt{}, err
-	}
-	var result durableCommandResult
-	invokeErr := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, &result, dex.InvokeOptions{
+	var accepted bool
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, &accepted, dex.InvokeOptions{
 		Timeout:         client.commandTimeout,
 		IsTransactional: true,
-		LockAttributes: []dex.AttributeLock{
-			dex.LockAttribute(agentMutationRevisionAttribute),
-			dex.LockAttributeMap(durableCommandsAttribute, instance),
-		},
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			durableCommandsAttribute.Load(instance),
-		},
-		LoadChannels: []dex.ChannelDef{
-			queuedUserMessagesChannel,
-			steeredUserMessagesChannel,
-		},
-	})
-	if invokeErr != nil {
-		reconciled, found, reconcileErr := client.reconcileDurableCommand(
-			ctx,
-			flowID,
-			CommandSteer,
-			request.RequestID,
-			fingerprint,
-		)
-		if reconcileErr != nil {
-			return CommandReceipt{}, reconcileErr
-		}
-		if !found {
-			return CommandReceipt{}, pendingMessageMutationError(invokeErr, request.MessageID)
-		}
-		result = reconciled
+		LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
+	}); err != nil {
+		return err
 	}
-	return commandReceipt(result, CommandSteer, request.RequestID, request.MessageID)
+	if !accepted {
+		return &PendingMessageNotFoundError{MessageID: request.MessageID}
+	}
+	return nil
 }
 
 // Snapshot reads one atomic durable application view.
@@ -488,57 +217,6 @@ func (client *Client) Snapshot(
 	return terminal, nil
 }
 
-// VerifyIdentity compares the immutable application context without returning it.
-func (client *Client) VerifyIdentity(
-	ctx context.Context,
-	flowID FlowID,
-	expectedApplicationContext string,
-) (AgentIdentity, error) {
-	if err := validateFlowID(flowID); err != nil {
-		return AgentIdentity{}, err
-	}
-	if err := validateApplicationContext(expectedApplicationContext); err != nil {
-		return AgentIdentity{}, fmt.Errorf("validate expected application context: %w", err)
-	}
-	current, err := client.latestAgentRun(ctx, flowID)
-	if err != nil {
-		return AgentIdentity{}, err
-	}
-	if current == nil {
-		return AgentIdentity{}, &AgentIdentityNotFoundError{FlowID: flowID}
-	}
-	runID := RunID(current.RunID)
-	_, isTerminalReservation, err := client.readTerminalReservation(ctx, flowID)
-	if err != nil {
-		return AgentIdentity{}, fmt.Errorf("read Agent terminal reservation: %w", err)
-	}
-	var applicationContext string
-	if !isTerminalReservation {
-		found, contextErr := client.sdk.GetAttribute(
-			ctx,
-			string(flowID),
-			applicationContextAttribute,
-			&applicationContext,
-		)
-		if contextErr != nil {
-			return AgentIdentity{}, fmt.Errorf("read Agent application context: %w", contextErr)
-		}
-		if !found {
-			applicationContext = ""
-		}
-	}
-	persistedDigest := sha256.Sum256([]byte(applicationContext))
-	expectedDigest := sha256.Sum256([]byte(expectedApplicationContext))
-	if subtle.ConstantTimeCompare(persistedDigest[:], expectedDigest[:]) != 1 {
-		return AgentIdentity{}, &AgentIdentityMismatchError{FlowID: flowID}
-	}
-	return AgentIdentity{
-		FlowID:                flowID,
-		RunID:                 runID,
-		IsTerminalReservation: isTerminalReservation,
-	}, nil
-}
-
 func (client *Client) resolveSnapshotLifecycle(
 	ctx context.Context,
 	flowID FlowID,
@@ -557,14 +235,11 @@ func (client *Client) resolveSnapshotLifecycle(
 		dex.AttributeMatchEqual(snapshot.Description.InteractionStatus),
 		&matched,
 	)
-	if err == nil {
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
 		return snapshot, nil
 	}
 	if ctx.Err() != nil {
 		return AgentSnapshot{}, ctx.Err()
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return snapshot, nil
 	}
 	var inactive *dex.FlowNotActiveError
 	if errors.As(err, &inactive) {
@@ -610,13 +285,6 @@ func (client *Client) ArchivedMessages(ctx context.Context, flowID FlowID, befor
 		value := first
 		next = &value
 	}
-	for index := range chunk.Messages {
-		chunk.Messages[index].Message = messageWithStableIdentity(
-			flowID,
-			chunk.Messages[index].Sequence,
-			chunk.Messages[index].Message,
-		)
-	}
 	return HistoryPage{Messages: chunk.Messages, NextBeforeSequence: next}, nil
 }
 
@@ -645,11 +313,17 @@ func (client *Client) MessagesAfter(
 		return ForwardHistoryPage{}, err
 	}
 	if !found {
-		_, isTerminalReservation, reservationErr := client.readTerminalReservation(ctx, flowID)
+		var reservation terminalReservation
+		isReservation, reservationErr := client.sdk.GetAttribute(
+			ctx,
+			string(flowID),
+			agentTerminalReservationAttribute,
+			&reservation,
+		)
 		if reservationErr != nil {
-			return ForwardHistoryPage{}, fmt.Errorf("read Agent terminal reservation: %w", reservationErr)
+			return ForwardHistoryPage{}, reservationErr
 		}
-		if isTerminalReservation {
+		if isReservation {
 			return ForwardHistoryPage{Messages: []SequencedMessage{}}, nil
 		}
 		return ForwardHistoryPage{}, errors.New("agent state is not initialized")
@@ -704,9 +378,8 @@ func (client *Client) readCanonicalMessage(
 			return AgentMessage{}, err
 		}
 		if found {
-			return messageWithStableIdentity(flowID, sequence, message), nil
+			return message, nil
 		}
-		// The current window may have moved to an archive after the state read.
 	}
 	first := ((sequence - 1) / Sequence(archiveMessageChunkSize) * Sequence(archiveMessageChunkSize)) + 1
 	chunk, found := archiveCache[first]
@@ -731,7 +404,7 @@ func (client *Client) readCanonicalMessage(
 	if index < 0 || index >= Sequence(len(chunk.Messages)) || chunk.Messages[index].Sequence != sequence {
 		return AgentMessage{}, &HistoryMessageNotFoundError{Sequence: sequence}
 	}
-	return messageWithStableIdentity(flowID, sequence, chunk.Messages[index].Message), nil
+	return chunk.Messages[index].Message, nil
 }
 
 // WaitForInteractionStatus blocks until the durable synchronization status matches expected.
@@ -756,193 +429,77 @@ func (client *Client) WaitForInteractionStatus(
 	)
 }
 
-// Cancel preserves the request-ID-only cancellation API with a stable default reason.
-func (client *Client) Cancel(
-	ctx context.Context,
-	flowID FlowID,
-	requestID RequestID,
-) (CancellationReceipt, error) {
-	return client.EnsureCanceled(ctx, flowID, CancelRequest{
-		RequestID: requestID,
-		Reason:    "canceled through SuperAgent",
-	})
-}
-
-// EnsureCanceled reserves an absent Agent identity or durably cancels its active Flow.
-func (client *Client) EnsureCanceled(
-	ctx context.Context,
-	flowID FlowID,
-	request CancelRequest,
-) (CancellationReceipt, error) {
+// Cancel cancels an active Agent or reserves an absent non-reusable Flow ID.
+func (client *Client) Cancel(ctx context.Context, flowID FlowID, reason string) error {
 	if err := validateFlowID(flowID); err != nil {
-		return CancellationReceipt{}, err
+		return err
 	}
-	if err := validateCancelRequest(request); err != nil {
-		return CancellationReceipt{}, err
+	if err := validateCancelReason(reason); err != nil {
+		return err
 	}
-	fingerprint, err := request.fingerprint()
+	reservation := terminalReservation{Reason: reason}
+	initialReservation, err := dex.InitialAttribute(agentTerminalReservationAttribute, reservation)
 	if err != nil {
-		return CancellationReceipt{}, err
+		return fmt.Errorf("encode Agent terminal reservation: %w", err)
 	}
-	reservation, attributes, err := cancellationReservationAttributes(request, fingerprint)
-	if err != nil {
-		return CancellationReceipt{}, err
-	}
-	config := NewAgentConfig()
-	requestID := cancellationReservationStartRequestID(flowID, fingerprint)
-	_, startErr := client.sdk.StartFlow(ctx, client.flow, string(flowID), config, dex.StartFlowOptions{
+	_, startErr := client.sdk.StartFlow(ctx, client.flow, string(flowID), NewAgentConfig(), dex.StartFlowOptions{
 		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    attributes,
-		RequestID:     &requestID,
+		Attributes:    []dex.InitialAttributeDef{initialReservation},
 	})
 	if startErr == nil {
-		return client.stopReservedAgent(ctx, flowID, reservation, false)
-	}
-
-	persistedReservation, found, readErr := client.readTerminalReservation(ctx, flowID)
-	if readErr != nil {
-		return CancellationReceipt{}, errors.Join(startErr, readErr)
-	}
-	if found {
-		if persistedReservation.RequestID != request.RequestID || persistedReservation.Fingerprint != fingerprint {
-			if _, stopErr := client.stopReservedAgent(ctx, flowID, persistedReservation, true); stopErr != nil {
-				return CancellationReceipt{}, stopErr
-			}
-			if persistedReservation.RequestID == request.RequestID {
-				return CancellationReceipt{}, &CommandIdempotencyConflictError{
-					Command:   CommandCancel,
-					RequestID: request.RequestID,
-				}
-			}
-			return CancellationReceipt{}, &AgentAlreadyTerminalError{FlowID: flowID, Status: FlowStatusCanceled}
+		stopErr := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{Type: dex.CancelFlow, Reason: reason})
+		var inactive *dex.FlowNotActiveError
+		if stopErr == nil || errors.As(stopErr, &inactive) {
+			return nil
 		}
-		return client.stopReservedAgent(ctx, flowID, persistedReservation, true)
+		return stopErr
 	}
 	var alreadyStarted *dex.FlowAlreadyStartedError
 	if !errors.As(startErr, &alreadyStarted) {
-		return CancellationReceipt{}, startErr
+		return startErr
 	}
-	return client.cancelExistingAgent(ctx, flowID, request, fingerprint)
-}
-
-func (client *Client) cancelExistingAgent(
-	ctx context.Context,
-	flowID FlowID,
-	request CancelRequest,
-	fingerprint string,
-) (CancellationReceipt, error) {
-	instance := durableCommandInstance(CommandCancel, request.RequestID)
-	var result durableCommandResult
-	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AcceptCancellation, request, &result, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-		LockAttributes: []dex.AttributeLock{
-			dex.LockAttribute(agentMutationRevisionAttribute),
-			dex.LockAttributeMap(durableCommandsAttribute, instance),
-		},
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			durableCommandsAttribute.Load(instance),
-		},
-	})
-	if err != nil {
-		var inactive *dex.FlowNotActiveError
-		if !errors.As(err, &inactive) {
-			return CancellationReceipt{}, err
-		}
-		return client.reconcileInactiveCancellation(ctx, flowID, request, fingerprint)
-	}
-	receipt, err := commandReceipt(result, CommandCancel, request.RequestID, "")
-	if err != nil {
-		return CancellationReceipt{}, err
-	}
-	if err := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{
-		Type:   dex.CancelFlow,
-		Reason: request.Reason,
-	}); err != nil {
-		var inactive *dex.FlowNotActiveError
-		if !errors.As(err, &inactive) {
-			return CancellationReceipt{}, err
-		}
-	}
-	return client.waitForCancellation(ctx, flowID, receipt)
-}
-
-func cancellationReservationAttributes(
-	request CancelRequest,
-	fingerprint string,
-) (terminalReservation, []dex.InitialAttributeDef, error) {
-	acceptedAt := time.Now().UTC()
-	revision := MutationRevision(1)
-	reservation := terminalReservation{
-		RequestID:        request.RequestID,
-		Fingerprint:      fingerprint,
-		Reason:           request.Reason,
-		AcceptedAt:       acceptedAt,
-		MutationRevision: revision,
-	}
-	command := durableCommandRecord{
-		RequestID:        request.RequestID,
-		Command:          CommandCancel,
-		Fingerprint:      fingerprint,
-		RecordedAt:       acceptedAt,
-		MutationRevision: revision,
-		Outcome:          durableCommandAccepted,
-		IsBootstrap:      true,
-	}
-	initialReservation, err := dex.InitialAttribute(agentTerminalReservationAttribute, reservation)
-	if err != nil {
-		return terminalReservation{}, nil, fmt.Errorf("encode Agent terminal reservation: %w", err)
-	}
-	initialRevision, err := dex.InitialAttribute(agentMutationRevisionAttribute, revision)
-	if err != nil {
-		return terminalReservation{}, nil, fmt.Errorf("encode Agent mutation revision: %w", err)
-	}
-	initialCommand, err := dex.InitialAttributeMapValue(
-		durableCommandsAttribute,
-		durableCommandInstance(CommandCancel, request.RequestID),
-		command,
-	)
-	if err != nil {
-		return terminalReservation{}, nil, fmt.Errorf("encode Agent cancellation command: %w", err)
-	}
-	return reservation, []dex.InitialAttributeDef{initialReservation, initialRevision, initialCommand}, nil
-}
-
-func (client *Client) readTerminalReservation(
-	ctx context.Context,
-	flowID FlowID,
-) (terminalReservation, bool, error) {
-	var reservation terminalReservation
-	found, err := client.sdk.GetAttribute(
+	var persisted terminalReservation
+	isReservation, readErr := client.sdk.GetAttribute(
 		ctx,
 		string(flowID),
 		agentTerminalReservationAttribute,
-		&reservation,
+		&persisted,
 	)
-	return reservation, found, err
-}
-
-func (client *Client) stopReservedAgent(
-	ctx context.Context,
-	flowID FlowID,
-	reservation terminalReservation,
-	isReplay bool,
-) (CancellationReceipt, error) {
-	if err := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{
-		Type:   dex.CancelFlow,
-		Reason: reservation.Reason,
-	}); err != nil {
-		var inactive *dex.FlowNotActiveError
-		if !errors.As(err, &inactive) {
-			return CancellationReceipt{}, err
-		}
+	if readErr != nil {
+		return errors.Join(startErr, readErr)
 	}
-	return client.waitForCancellation(ctx, flowID, CommandReceipt{
-		RequestID:        reservation.RequestID,
-		AcceptedAt:       reservation.AcceptedAt,
-		MutationRevision: reservation.MutationRevision,
-		IsReplay:         isReplay,
-	})
+	if isReservation {
+		stopErr := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{
+			Type:   dex.CancelFlow,
+			Reason: persisted.Reason,
+		})
+		var inactive *dex.FlowNotActiveError
+		if stopErr != nil && !errors.As(stopErr, &inactive) {
+			return stopErr
+		}
+		status := FlowStatusCanceled
+		if errors.As(stopErr, &inactive) {
+			snapshot, snapshotErr := client.terminalSnapshot(ctx, flowID, "")
+			if snapshotErr != nil {
+				return errors.Join(stopErr, snapshotErr)
+			}
+			status = snapshot.FlowStatus
+		}
+		return &AgentAlreadyTerminalError{FlowID: flowID, Status: status}
+	}
+	stopErr := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{Type: dex.CancelFlow, Reason: reason})
+	if stopErr == nil {
+		return nil
+	}
+	var inactive *dex.FlowNotActiveError
+	if !errors.As(stopErr, &inactive) {
+		return stopErr
+	}
+	snapshot, snapshotErr := client.terminalSnapshot(ctx, flowID, "")
+	if snapshotErr != nil {
+		return errors.Join(stopErr, snapshotErr)
+	}
+	return &AgentAlreadyTerminalError{FlowID: flowID, Status: snapshot.FlowStatus}
 }
 
 func (client *Client) terminalSnapshot(
@@ -976,28 +533,14 @@ func (client *Client) terminalSnapshot(
 		message := result.ErrorMessage
 		errorMessage = &message
 	}
-	var mutationRevision MutationRevision
-	found, revisionErr := client.sdk.GetAttribute(
-		ctx,
-		string(flowID),
-		agentMutationRevisionAttribute,
-		&mutationRevision,
-	)
-	if revisionErr != nil {
-		return AgentSnapshot{}, fmt.Errorf("read terminal mutation revision: %w", revisionErr)
-	}
-	if !found {
-		mutationRevision = 0
-	}
 	return AgentSnapshot{
-		RunID:            runID,
-		FlowStatus:       status,
-		MutationRevision: mutationRevision,
-		ErrorType:        errorType,
-		ErrorMessage:     errorMessage,
-		History:          HistoryPage{Messages: []SequencedMessage{}},
-		Queued:           []PendingUserMessage{},
-		Steered:          []PendingUserMessage{},
+		RunID:        runID,
+		FlowStatus:   status,
+		ErrorType:    errorType,
+		ErrorMessage: errorMessage,
+		History:      HistoryPage{Messages: []SequencedMessage{}},
+		Queued:       []PendingUserMessage{},
+		Steered:      []PendingUserMessage{},
 	}, nil
 }
 
@@ -1082,153 +625,58 @@ func flowErrorTypeFromDex(errorType dex.FlowErrorType) (*FlowErrorType, error) {
 	return &mapped, nil
 }
 
-// DeleteQueuedMessage idempotently removes one exact pending user message.
-func (client *Client) DeleteQueuedMessage(
-	ctx context.Context,
-	flowID FlowID,
-	request DeleteQueuedMessageRequest,
-) (CommandReceipt, error) {
+// DeleteQueuedMessage removes one exact pending user message.
+func (client *Client) DeleteQueuedMessage(ctx context.Context, flowID FlowID, messageID MessageID) error {
 	if err := validateFlowID(flowID); err != nil {
-		return CommandReceipt{}, err
+		return err
 	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return CommandReceipt{}, err
+	if err := validateMessageID(messageID); err != nil {
+		return err
 	}
-	if err := validateMessageID(request.MessageID); err != nil {
-		return CommandReceipt{}, err
-	}
-	instance := durableCommandInstance(CommandDelete, request.RequestID)
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return CommandReceipt{}, err
-	}
-	var result durableCommandResult
-	invokeErr := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.DeleteQueuedMessage, request, &result, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-		LockAttributes: []dex.AttributeLock{
-			dex.LockAttribute(agentMutationRevisionAttribute),
-			dex.LockAttributeMap(durableCommandsAttribute, instance),
-		},
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			durableCommandsAttribute.Load(instance),
-		},
-		LoadChannels: []dex.ChannelDef{queuedUserMessagesChannel},
-	})
-	if invokeErr != nil {
-		reconciled, found, reconcileErr := client.reconcileDurableCommand(
-			ctx,
-			flowID,
-			CommandDelete,
-			request.RequestID,
-			fingerprint,
-		)
-		if reconcileErr != nil {
-			return CommandReceipt{}, reconcileErr
-		}
-		if !found {
-			return CommandReceipt{}, pendingMessageMutationError(invokeErr, request.MessageID)
-		}
-		result = reconciled
-	}
-	return commandReceipt(result, CommandDelete, request.RequestID, request.MessageID)
+	return client.sdk.DeleteChannelMessage(
+		ctx,
+		string(flowID),
+		queuedUserMessagesChannel,
+		string(messageID),
+	)
 }
 
-// ApproveTool idempotently invokes the durable ApproveTool command.
-func (client *Client) ApproveTool(ctx context.Context, flowID FlowID, request ToolApprovalRequest) (CommandReceipt, error) {
+// ApproveTool invokes the durable ApproveTool command.
+func (client *Client) ApproveTool(ctx context.Context, flowID FlowID, request ToolApprovalRequest) error {
 	if err := validateFlowID(flowID); err != nil {
-		return CommandReceipt{}, err
-	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return CommandReceipt{}, err
+		return err
 	}
 	if strings.TrimSpace(string(request.CallID)) == "" {
-		return CommandReceipt{}, errors.New("call ID must not be empty")
+		return errors.New("call ID must not be empty")
 	}
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return CommandReceipt{}, err
-	}
-	instance := durableCommandInstance(CommandApproveTool, request.RequestID)
-	effectInstance := acceptedToolApprovalInstance(request.CallID)
-	var result durableCommandResult
-	invokeErr := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, request, &result, dex.InvokeOptions{
+	var accepted bool
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, request, &accepted, dex.InvokeOptions{
 		Timeout:         client.commandTimeout,
 		IsTransactional: true,
-		LockAttributes: []dex.AttributeLock{
-			dex.LockAttribute(agentMutationRevisionAttribute),
-			dex.LockAttributeMap(durableCommandsAttribute, instance),
-			dex.LockAttributeMap(acceptedToolApprovalsAttribute, effectInstance),
-		},
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			durableCommandsAttribute.Load(instance),
-			acceptedToolApprovalsAttribute.Load(effectInstance),
-		},
-	})
-	if invokeErr != nil {
-		reconciled, found, reconcileErr := client.reconcileDurableCommand(
-			ctx,
-			flowID,
-			CommandApproveTool,
-			request.RequestID,
-			fingerprint,
-		)
-		if reconcileErr != nil {
-			return CommandReceipt{}, reconcileErr
-		}
-		if !found {
-			return CommandReceipt{}, invokeErr
-		}
-		result = reconciled
+		LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingApprovalAttribute)},
+	}); err != nil {
+		return err
 	}
-	return commandReceipt(result, CommandApproveTool, request.RequestID, "")
+	return ensureAccepted(accepted, CommandApproveTool)
 }
 
-// ExecutePlan idempotently invokes the durable ExecutePlan command.
-func (client *Client) ExecutePlan(ctx context.Context, flowID FlowID, request PlanExecutionRequest) (CommandReceipt, error) {
+// ExecutePlan invokes the durable ExecutePlan command.
+func (client *Client) ExecutePlan(ctx context.Context, flowID FlowID, request PlanExecutionRequest) error {
 	if err := validateFlowID(flowID); err != nil {
-		return CommandReceipt{}, err
+		return err
 	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return CommandReceipt{}, err
+	if request.Revision <= 0 {
+		return errors.New("plan revision must be positive")
 	}
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return CommandReceipt{}, err
-	}
-	instance := durableCommandInstance(CommandExecutePlan, request.RequestID)
-	effectInstance := acceptedPlanExecutionInstance(request.Revision)
-	var result durableCommandResult
-	invokeErr := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, request, &result, dex.InvokeOptions{
+	var accepted bool
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, request, &accepted, dex.InvokeOptions{
 		Timeout:         client.commandTimeout,
 		IsTransactional: true,
-		LockAttributes: []dex.AttributeLock{
-			dex.LockAttribute(agentMutationRevisionAttribute),
-			dex.LockAttributeMap(durableCommandsAttribute, instance),
-			dex.LockAttributeMap(acceptedPlanExecutionsAttribute, effectInstance),
-		},
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			durableCommandsAttribute.Load(instance),
-			acceptedPlanExecutionsAttribute.Load(effectInstance),
-		},
-	})
-	if invokeErr != nil {
-		reconciled, found, reconcileErr := client.reconcileDurableCommand(
-			ctx,
-			flowID,
-			CommandExecutePlan,
-			request.RequestID,
-			fingerprint,
-		)
-		if reconcileErr != nil {
-			return CommandReceipt{}, reconcileErr
-		}
-		if !found {
-			return CommandReceipt{}, invokeErr
-		}
-		result = reconciled
+		LockAttributes:  []dex.AttributeLock{dex.LockAttribute(agentStateAttribute)},
+	}); err != nil {
+		return err
 	}
-	return commandReceipt(result, CommandExecutePlan, request.RequestID, "")
+	return ensureAccepted(accepted, CommandExecutePlan)
 }
 
 // ReadEvent long-polls exactly one typed best-effort Stream.
@@ -1304,434 +752,11 @@ func validateFlowID(flowID FlowID) error {
 	return nil
 }
 
-func (client *Client) waitForInitialization(ctx context.Context, flowID FlowID) error {
-	var config AgentConfig
-	found, err := client.sdk.GetAttribute(ctx, string(flowID), agentConfigAttribute, &config)
-	if err != nil {
-		return err
+func ensureAccepted(accepted bool, command Command) error {
+	if !accepted {
+		return &CommandRejectedError{Command: command}
 	}
-	if found {
-		return nil
-	}
-	for {
-		var initialized bool
-		err = client.sdk.WaitForAttributeMatch(
-			ctx,
-			string(flowID),
-			agentInitializedAttribute,
-			dex.AttributeMatchEqual(true),
-			&initialized,
-		)
-		if err == nil {
-			return nil
-		}
-		var timeout *dex.LongPollTimeoutError
-		if !errors.As(err, &timeout) {
-			return err
-		}
-	}
-}
-
-func (client *Client) verifyStartIdentity(
-	ctx context.Context,
-	flowID FlowID,
-	request EnsureStartRequest,
-	commandFingerprint string,
-	identityFingerprint string,
-) (bool, error) {
-	var persistedConfig AgentConfig
-	found, err := client.sdk.GetAttribute(ctx, string(flowID), agentConfigAttribute, &persistedConfig)
-	if err != nil {
-		return false, fmt.Errorf("read persisted Agent config: %w", err)
-	}
-	if !found {
-		return false, errors.New("agent config is not initialized")
-	}
-	if !sameAgentConfig(persistedConfig, request.Config) {
-		return false, &StartIdentityConflictError{FlowID: flowID}
-	}
-	var persistedContext string
-	found, err = client.sdk.GetAttribute(ctx, string(flowID), applicationContextAttribute, &persistedContext)
-	if err != nil {
-		return false, fmt.Errorf("read persisted application context: %w", err)
-	}
-	if found && persistedContext != request.ApplicationContext {
-		return false, &StartIdentityConflictError{FlowID: flowID}
-	}
-
-	var identity agentStartIdentity
-	identityFound, identityErr := client.sdk.GetAttribute(
-		ctx,
-		string(flowID),
-		agentStartIdentityAttribute,
-		&identity,
-	)
-	if identityErr != nil {
-		return false, fmt.Errorf("read persisted Agent start identity: %w", identityErr)
-	}
-	if identityFound {
-		if identity.Version != 1 || identity.Fingerprint != identityFingerprint || !found {
-			return false, &StartIdentityConflictError{FlowID: flowID}
-		}
-		return false, nil
-	}
-
-	_, commandFound, commandErr := client.readDurableCommand(
-		ctx,
-		flowID,
-		CommandStart,
-		request.RequestID,
-		commandFingerprint,
-	)
-	if commandErr != nil {
-		return false, commandErr
-	}
-	if commandFound {
-		if !found && request.ApplicationContext != "" {
-			return false, &StartIdentityConflictError{FlowID: flowID}
-		}
-		return true, nil
-	}
-	return false, &LegacyStartIdentityError{FlowID: flowID}
-}
-
-func (client *Client) confirmStart(
-	ctx context.Context,
-	flowID FlowID,
-	request EnsureStartRequest,
-	fingerprint string,
-	identityFingerprint string,
-	allowsLegacyMigration bool,
-) (durableCommandResult, error) {
-	instance := durableCommandInstance(CommandStart, request.RequestID)
-	locks := []dex.AttributeLock{
-		dex.LockAttribute(agentStartIdentityAttribute),
-		dex.LockAttribute(agentMutationRevisionAttribute),
-		dex.LockAttributeMap(durableCommandsAttribute, instance),
-	}
-	loads := []dex.AttributeMapLoad{durableCommandsAttribute.Load(instance)}
-	if request.InitialMessage != nil {
-		messageRequestID := initialMessageRequestID(request.RequestID)
-		messageCommandInstance := durableCommandInstance(CommandSendMessage, messageRequestID)
-		messageInstance := acceptedMessageInstance(request.InitialMessage.MessageID)
-		locks = append(
-			locks,
-			dex.LockAttributeMap(durableCommandsAttribute, messageCommandInstance),
-			dex.LockAttributeMap(acceptedUserMessagesAttribute, messageInstance),
-		)
-		loads = append(
-			loads,
-			durableCommandsAttribute.Load(messageCommandInstance),
-			acceptedUserMessagesAttribute.Load(messageInstance),
-		)
-	}
-	var result durableCommandResult
-	invokeErr := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ConfirmStart, confirmStartRequest{
-		RequestID:             request.RequestID,
-		Config:                request.Config,
-		ApplicationContext:    request.ApplicationContext,
-		Fingerprint:           fingerprint,
-		IdentityFingerprint:   identityFingerprint,
-		InitialMessage:        request.InitialMessage,
-		AllowsLegacyMigration: allowsLegacyMigration,
-	}, &result, dex.InvokeOptions{
-		Timeout:                   client.commandTimeout,
-		IsTransactional:           true,
-		LockAttributes:            locks,
-		LoadAttributeMapInstances: loads,
-	})
-	if invokeErr == nil {
-		return result, nil
-	}
-	reconciled, found, reconcileErr := client.reconcileDurableCommand(
-		ctx,
-		flowID,
-		CommandStart,
-		request.RequestID,
-		fingerprint,
-	)
-	if reconcileErr != nil {
-		return durableCommandResult{}, reconcileErr
-	}
-	if found {
-		return reconciled, nil
-	}
-	var inactive *dex.FlowNotActiveError
-	if allowsLegacyMigration && errors.As(invokeErr, &inactive) {
-		return durableCommandResult{}, &LegacyStartIdentityError{FlowID: flowID}
-	}
-	return durableCommandResult{}, invokeErr
-}
-
-func (client *Client) initialMessageReceipt(
-	ctx context.Context,
-	flowID FlowID,
-	request EnsureStartRequest,
-	confirmation durableCommandResult,
-) (MessageReceipt, error) {
-	message := *request.InitialMessage
-	messageFingerprint, err := userMessageFingerprint(message)
-	if err != nil {
-		return MessageReceipt{}, err
-	}
-	var accepted acceptedUserMessage
-	found, err := client.sdk.GetAttributeMapInstance(
-		ctx,
-		string(flowID),
-		acceptedUserMessagesAttribute,
-		acceptedMessageInstance(message.MessageID),
-		&accepted,
-	)
-	if err != nil {
-		return MessageReceipt{}, fmt.Errorf("read accepted initial message: %w", err)
-	}
-	if !found || accepted.MessageID != message.MessageID || accepted.Fingerprint != messageFingerprint || accepted.AcceptedAt.IsZero() {
-		return MessageReceipt{}, errors.New("agent initial message acceptance is incomplete")
-	}
-	messageRequestID := initialMessageRequestID(request.RequestID)
-	messageRequest := SendMessageRequest{RequestID: messageRequestID, Message: message}
-	commandFingerprint, err := messageRequest.fingerprint()
-	if err != nil {
-		return MessageReceipt{}, err
-	}
-	command, found, err := client.readDurableCommand(
-		ctx,
-		flowID,
-		CommandSendMessage,
-		messageRequestID,
-		commandFingerprint,
-	)
-	if err != nil {
-		return MessageReceipt{}, err
-	}
-	if !found || command.Outcome != durableCommandAccepted || command.RecordedAt != accepted.AcceptedAt ||
-		command.MutationRevision != accepted.MutationRevision {
-		return MessageReceipt{}, errors.New("agent initial message command is incomplete")
-	}
-	return MessageReceipt{
-		RequestID:        messageRequestID,
-		MessageID:        message.MessageID,
-		AcceptedAt:       accepted.AcceptedAt,
-		MutationRevision: command.MutationRevision,
-		IsReplay: confirmation.Disposition == durableCommandReplayed ||
-			confirmation.Record.IsEffectReplay || command.IsEffectReplay || command.IsBootstrap,
-	}, nil
-}
-
-func sameAgentConfig(left AgentConfig, right AgentConfig) bool {
-	return left.Model == right.Model &&
-		optionalModelEqual(left.CompactionModel, right.CompactionModel) &&
-		left.SystemPrompt == right.SystemPrompt &&
-		left.MaxContextTokens == right.MaxContextTokens &&
-		left.CompactionTriggerFraction == right.CompactionTriggerFraction &&
-		left.CompactionKeepFraction == right.CompactionKeepFraction &&
-		left.MessageRetentionLimit == right.MessageRetentionLimit &&
-		left.MCPEnabled == right.MCPEnabled &&
-		slices.Equal(left.EnabledMCPServers, right.EnabledMCPServers) &&
-		slices.Equal(left.EnabledTools, right.EnabledTools)
-}
-
-func optionalModelEqual(left *Model, right *Model) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	return *left == *right
-}
-
-func flowStartRequestID(flowID FlowID) string {
-	digest := sha256.Sum256([]byte(flowID))
-	return fmt.Sprintf("agent-start:%x", digest)
-}
-
-func cancellationReservationStartRequestID(flowID FlowID, fingerprint string) string {
-	digest := sha256.Sum256([]byte(string(flowID) + "\x00" + fingerprint))
-	return fmt.Sprintf("agent-cancel-reservation:%x", digest)
-}
-
-func initialMessageRequestID(requestID RequestID) RequestID {
-	digest := sha256.Sum256([]byte(requestID))
-	return RequestID(fmt.Sprintf("agent-initial:%x", digest))
-}
-
-func commandReceipt(
-	result durableCommandResult,
-	command Command,
-	requestID RequestID,
-	messageID MessageID,
-) (CommandReceipt, error) {
-	if result.Disposition == durableCommandIdempotencyConflict {
-		return CommandReceipt{}, &CommandIdempotencyConflictError{Command: command, RequestID: requestID}
-	}
-	if result.Disposition != durableCommandCommitted && result.Disposition != durableCommandReplayed {
-		return CommandReceipt{}, fmt.Errorf("agent returned unknown %s disposition %q", command, result.Disposition)
-	}
-	if result.Record.RequestID != requestID || result.Record.Command != command {
-		return CommandReceipt{}, fmt.Errorf("agent returned an invalid %s receipt identity", command)
-	}
-	switch result.Record.Outcome {
-	case durableCommandAccepted:
-		if result.Record.RecordedAt.IsZero() {
-			return CommandReceipt{}, fmt.Errorf("agent returned an invalid %s acceptance timestamp", command)
-		}
-		return CommandReceipt{
-			RequestID:        requestID,
-			AcceptedAt:       result.Record.RecordedAt,
-			MutationRevision: result.Record.MutationRevision,
-			IsReplay:         result.Disposition == durableCommandReplayed || result.Record.IsEffectReplay,
-		}, nil
-	case durableCommandMessageConflict:
-		return CommandReceipt{}, &MessageIdempotencyConflictError{MessageID: messageID}
-	case durableCommandNotFound:
-		return CommandReceipt{}, &PendingMessageNotFoundError{MessageID: messageID}
-	case durableCommandRejected:
-		return CommandReceipt{}, &CommandRejectedError{Command: command}
-	case durableCommandStaleRevision:
-		if result.Record.ExpectedRevision == nil {
-			return CommandReceipt{}, fmt.Errorf("agent returned an invalid %s stale-revision outcome", command)
-		}
-		return CommandReceipt{}, &StaleMutationRevisionError{
-			Command:  command,
-			Expected: *result.Record.ExpectedRevision,
-			Actual:   result.Record.MutationRevision,
-		}
-	case durableCommandCapacityExceeded:
-		return CommandReceipt{}, &PendingMessageCapacityError{
-			Pending:               result.Record.PendingMessageCount,
-			Limit:                 MaximumPendingMessageCount,
-			PendingContentBytes:   result.Record.PendingMessageContentBytes,
-			RequestedContentBytes: result.Record.RequestedMessageContentBytes,
-			ContentByteLimit:      MaximumPendingMessageContentBytes,
-		}
-	default:
-		return CommandReceipt{}, fmt.Errorf("agent returned unknown %s outcome %q", command, result.Record.Outcome)
-	}
-}
-
-func (client *Client) reconcileInactiveCancellation(
-	ctx context.Context,
-	flowID FlowID,
-	request CancelRequest,
-	fingerprint string,
-) (CancellationReceipt, error) {
-	record, found, err := client.readDurableCommand(
-		ctx,
-		flowID,
-		CommandCancel,
-		request.RequestID,
-		fingerprint,
-	)
-	if err != nil {
-		return CancellationReceipt{}, err
-	}
-	if !found {
-		return client.alreadyTerminalCancellation(ctx, flowID)
-	}
-	if record.Outcome != durableCommandAccepted {
-		return CancellationReceipt{}, &CommandRejectedError{Command: CommandCancel}
-	}
-	return client.waitForCancellation(ctx, flowID, CommandReceipt{
-		RequestID:        request.RequestID,
-		AcceptedAt:       record.RecordedAt,
-		MutationRevision: record.MutationRevision,
-		IsReplay:         true,
-	})
-}
-
-func (client *Client) readDurableCommand(
-	ctx context.Context,
-	flowID FlowID,
-	command Command,
-	requestID RequestID,
-	fingerprint string,
-) (durableCommandRecord, bool, error) {
-	var record durableCommandRecord
-	found, err := client.sdk.GetAttributeMapInstance(
-		ctx,
-		string(flowID),
-		durableCommandsAttribute,
-		durableCommandInstance(command, requestID),
-		&record,
-	)
-	if err != nil || !found {
-		return durableCommandRecord{}, found, err
-	}
-	if record.RequestID != requestID || record.Command != command || record.Fingerprint != fingerprint {
-		return durableCommandRecord{}, false, &CommandIdempotencyConflictError{Command: command, RequestID: requestID}
-	}
-	return record, true, nil
-}
-
-func (client *Client) reconcileDurableCommand(
-	ctx context.Context,
-	flowID FlowID,
-	command Command,
-	requestID RequestID,
-	fingerprint string,
-) (durableCommandResult, bool, error) {
-	record, found, err := client.readDurableCommand(ctx, flowID, command, requestID, fingerprint)
-	if err != nil || !found {
-		return durableCommandResult{}, found, err
-	}
-	return durableCommandResult{
-		Disposition: durableCommandReplayed,
-		Record:      record,
-	}, true, nil
-}
-
-func (client *Client) waitForCancellation(
-	ctx context.Context,
-	flowID FlowID,
-	receipt CommandReceipt,
-) (CancellationReceipt, error) {
-	var result dex.FlowResult
-	for {
-		var err error
-		result, err = client.sdk.WaitForFlow(ctx, string(flowID), dex.WaitForFlowOptions{})
-		if err == nil {
-			break
-		}
-		var timeout *dex.LongPollTimeoutError
-		if !errors.As(err, &timeout) {
-			return CancellationReceipt{}, err
-		}
-	}
-	status, err := flowStatusFromDex(result.Status)
-	if err != nil {
-		return CancellationReceipt{}, err
-	}
-	if status != FlowStatusCanceled {
-		return CancellationReceipt{}, &AgentAlreadyTerminalError{FlowID: flowID, Status: status}
-	}
-	return CancellationReceipt{
-		RequestID:        receipt.RequestID,
-		AcceptedAt:       receipt.AcceptedAt,
-		MutationRevision: receipt.MutationRevision,
-		FlowStatus:       status,
-		IsReplay:         receipt.IsReplay,
-	}, nil
-}
-
-func (client *Client) alreadyTerminalCancellation(
-	ctx context.Context,
-	flowID FlowID,
-) (CancellationReceipt, error) {
-	result, err := client.sdk.WaitForFlow(ctx, string(flowID), dex.WaitForFlowOptions{})
-	if err != nil {
-		return CancellationReceipt{}, err
-	}
-	status, err := flowStatusFromDex(result.Status)
-	if err != nil {
-		return CancellationReceipt{}, err
-	}
-	return CancellationReceipt{}, &AgentAlreadyTerminalError{FlowID: flowID, Status: status}
-}
-
-func pendingMessageMutationError(err error, messageID MessageID) error {
-	var notFound *dex.ChannelMessageNotFoundError
-	if errors.As(err, &notFound) {
-		return &PendingMessageNotFoundError{MessageID: messageID}
-	}
-	return err
+	return nil
 }
 
 func textStreamEvent(kind StreamEventKind, message dex.StreamMessage, value string) StreamEvent {

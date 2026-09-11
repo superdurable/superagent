@@ -23,6 +23,8 @@ import {
 } from "@superdurable/superagent-ui";
 
 import {
+  AgentInteractionStatus,
+  AgentStatus,
   EventKind,
   MessageRole,
   PlanStatus,
@@ -43,6 +45,7 @@ import {
   type ActiveConversationState,
 } from "./conversation-state";
 import { buildConversationTimeline } from "./conversation-timeline";
+import { useTimelineFollow } from "./useTimelineFollow";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("@superdurable/superagent-ui");
@@ -102,11 +105,21 @@ export function ConversationView({
     state.activities,
     state.assistant,
   );
-  const liveContentVersion =
-    state.activities.length +
-    (state.assistant?.value.length ?? 0) +
-    state.reasoning.reduce((total, entry) => total + entry.value.length, 0);
-  useAutoScroll(description.lastSequence, liveContentVersion);
+  const liveContentVersion = [
+    String(state.activities.length),
+    state.activities.at(-1)?.resumeToken ?? "",
+    state.assistant === null
+      ? ""
+      : `${state.assistant.source}:${String(state.assistant.value.length)}:${String(state.assistant.isComplete)}`,
+    ...state.reasoning.map(
+      (entry) =>
+        `${entry.source}:${String(entry.value.length)}:${String(entry.isComplete)}`,
+    ),
+  ].join("|");
+  const { hasUnseenContent, jumpToLatest } = useTimelineFollow({
+    flowRunKey: `${flowId}:${snapshot.runId}`,
+    contentVersion: `${String(description.lastSequence)}:${liveContentVersion}`,
+  });
   useArchiveScroll(
     snapshot.history.nextBeforeSequence,
     state.historyRequest !== null,
@@ -125,6 +138,10 @@ export function ConversationView({
     }
   }, [state.pendingCommand]);
   const queueItems = mapPendingMessageQueueItems(state);
+  const submitFromComposer = () => {
+    onSubmit();
+    textareaRef.current?.focus();
+  };
 
   return (
     <main className="conversation-shell" ref={shellRef}>
@@ -136,14 +153,18 @@ export function ConversationView({
             Flow <code>{flowId}</code> · Run <code>{snapshot.runId}</code>
           </p>
         </div>
-        <div className="status-stack">
-          <span className={`connection-pill ${state.connection}`}>
-            {connectionLabel(state.connection)}
-          </span>
-          <strong>{statusLabel(description.status)}</strong>
-          <small>{description.model}</small>
-        </div>
       </header>
+
+      {hasUnseenContent && (
+        <button
+          type="button"
+          className="jump-to-latest"
+          aria-label="Jump to latest message"
+          onClick={jumpToLatest}
+        >
+          <span aria-hidden="true">…</span>
+        </button>
+      )}
 
       {state.error !== null && (
         <div className="error conversation-error" role="alert">
@@ -365,13 +386,18 @@ export function ConversationView({
           }}
         />
         {description.pendingUserInput !== null && (
-          <PendingQuestionsAdapter
-            key={`${flowId}:${description.pendingUserInput.callId}`}
-            pendingInput={description.pendingUserInput}
-            disabled={areMutationsDisabled}
-            isSubmitting={state.pendingCommand?.command.kind === "answer"}
-            onSubmit={onSubmitAnswers}
-          />
+          <>
+            <PendingQuestionsAdapter
+              key={`${flowId}:${description.pendingUserInput.callId}`}
+              pendingInput={description.pendingUserInput}
+              disabled={areMutationsDisabled}
+              isSubmitting={state.pendingCommand?.command.kind === "answer"}
+              onSubmit={onSubmitAnswers}
+            />
+            <div className="composer-status-only">
+              <AgentRuntimeStatus state={state} />
+            </div>
+          </>
         )}
         {description.pendingUserInput === null && (
           <label className="plan-mode">
@@ -388,9 +414,8 @@ export function ConversationView({
         )}
         {description.pendingUserInput === null && (
           <ConversationComposer
-            inputDisabled={isBusy}
             onChange={onComposerChange}
-            onSubmit={onSubmit}
+            onSubmit={submitFromComposer}
             placeholder={
               state.isPlanMode
                 ? "Describe what you want the Agent to plan…"
@@ -404,6 +429,7 @@ export function ConversationView({
                   ? "Create plan"
                   : "Send"
             }
+            status={<AgentRuntimeStatus state={state} />}
             textareaRef={textareaRef}
             value={state.composer}
           />
@@ -420,6 +446,20 @@ export function ConversationView({
         </div>
       </section>
     </main>
+  );
+}
+
+function AgentRuntimeStatus({ state }: { state: ActiveConversationState }) {
+  return (
+    <div className="status-stack" role="group" aria-label="Agent status">
+      <span className={`connection-pill ${state.connection}`}>
+        {connectionLabel(state.connection)}
+      </span>
+      <span className="status-copy">
+        <strong>{statusLabel(state.snapshot.description.status)}</strong>
+        <small>{state.snapshot.description.model}</small>
+      </span>
+    </div>
   );
 }
 
@@ -477,6 +517,12 @@ interface PlanPanelProps {
   onExecutePlan: (revision: number) => void;
 }
 
+interface PlanActionPresentation {
+  label: string;
+  isDisabled: boolean;
+  reason: string | null;
+}
+
 function PlanPanel({
   state,
   areMutationsDisabled,
@@ -497,6 +543,7 @@ function PlanPanel({
   const hasRunningTask = taskStatuses.some(
     (status) => status === TaskStatus.IN_PROGRESS,
   );
+  const action = planActionPresentation(state, areMutationsDisabled);
   const isContentVisible = !isNarrow || isExpanded;
   return (
     <section className="plan-card plan-panel" aria-label="Agent plan">
@@ -529,23 +576,23 @@ function PlanPanel({
             {plan.status !== PlanStatus.COMPLETED && (
               <button
                 type="button"
-                disabled={
-                  areMutationsDisabled || description.isPlanExecutionRequested
+                disabled={action.isDisabled}
+                aria-describedby={
+                  action.reason === null ? undefined : "plan-action-reason"
                 }
                 onClick={() => {
                   onExecutePlan(plan.revision);
                 }}
               >
-                {state.pendingCommand?.command.kind === "execute-plan"
-                  ? "Requesting execution…"
-                  : description.isPlanExecutionRequested
-                    ? "Execution requested"
-                    : plan.status === PlanStatus.DRAFT
-                      ? "Execute plan"
-                      : "Continue plan"}
+                {action.label}
               </button>
             )}
           </div>
+          {action.reason !== null && plan.status !== PlanStatus.COMPLETED && (
+            <p className="plan-action-reason" id="plan-action-reason">
+              {action.reason}
+            </p>
+          )}
           <ol className="plan-tasks">
             {plan.tasks.map((task, index) => {
               const status = taskStatuses[index] ?? task.status;
@@ -564,6 +611,89 @@ function PlanPanel({
       )}
     </section>
   );
+}
+
+function planActionPresentation(
+  state: ActiveConversationState,
+  areMutationsDisabled: boolean,
+): PlanActionPresentation {
+  const { description } = state.snapshot;
+  const plan = description.plan;
+  if (plan === null || plan.status === PlanStatus.COMPLETED) {
+    return { label: "Plan completed", isDisabled: true, reason: null };
+  }
+  if (state.pendingCommand?.command.kind === "execute-plan") {
+    return {
+      label: "Requesting execution…",
+      isDisabled: true,
+      reason: "Waiting for the execution request to finish.",
+    };
+  }
+  if (description.isPlanExecutionRequested) {
+    return {
+      label: "Execution requested",
+      isDisabled: true,
+      reason: "The Agent will start this Plan from its durable wait.",
+    };
+  }
+  if (areMutationsDisabled) {
+    return {
+      label: "Syncing plan…",
+      isDisabled: true,
+      reason: "Waiting for the current durable state reconciliation.",
+    };
+  }
+  if (description.pendingUserInput !== null) {
+    return {
+      label: "Answer questions first",
+      isDisabled: true,
+      reason: "Submit the requested answers before continuing this Plan.",
+    };
+  }
+  if (description.pendingApproval !== null) {
+    return {
+      label: "Resolve approval first",
+      isDisabled: true,
+      reason: "Approve or reject the pending tool before continuing this Plan.",
+    };
+  }
+  if (description.pendingTimer !== null) {
+    return {
+      label: "Timer is active",
+      isDisabled: true,
+      reason:
+        "The Plan can continue after the durable Timer finishes or is steered.",
+    };
+  }
+  if (
+    description.pendingQueuedMessageCount > 0 ||
+    description.pendingSteeredMessageCount > 0
+  ) {
+    return {
+      label: "Resolve queued messages",
+      isDisabled: true,
+      reason:
+        "The Agent must consume or remove queued messages before continuing this Plan.",
+    };
+  }
+  if (
+    description.interactionStatus !== AgentInteractionStatus.WAITING ||
+    description.status !== AgentStatus.WAITING_FOR_MESSAGE
+  ) {
+    const isDraft = plan.status === PlanStatus.DRAFT;
+    return {
+      label: isDraft ? "Preparing plan…" : "Plan running…",
+      isDisabled: true,
+      reason: isDraft
+        ? "Execute becomes available after the Agent reaches its next durable wait."
+        : "Continue becomes available if unfinished tasks remain at the next durable wait.",
+    };
+  }
+  return {
+    label: plan.status === PlanStatus.DRAFT ? "Execute plan" : "Continue plan",
+    isDisabled: false,
+    reason: null,
+  };
 }
 
 function TaskStatusIndicator({ status }: { status: TaskStatus }) {
@@ -703,40 +833,6 @@ function useArchiveScroll(
       window.scrollBy({ top: addedHeight, behavior: "auto" });
     previousHeight.current = null;
   }, [isLoading, messageCount]);
-}
-
-function useAutoScroll(lastSequence: number, liveContentVersion: number) {
-  const shouldStickToBottom = useRef(true);
-  const scrollToBottom = () => {
-    window.scrollTo({
-      top: document.documentElement.scrollHeight,
-      behavior: "auto",
-    });
-  };
-  useEffect(() => {
-    const update = () => {
-      const distance =
-        document.documentElement.scrollHeight -
-        window.scrollY -
-        window.innerHeight;
-      shouldStickToBottom.current = distance <= 160;
-    };
-    const keepBottomVisible = () => {
-      if (!shouldStickToBottom.current) return;
-      window.requestAnimationFrame(scrollToBottom);
-    };
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", keepBottomVisible);
-    update();
-    return () => {
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", keepBottomVisible);
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (!shouldStickToBottom.current) return;
-    scrollToBottom();
-  }, [lastSequence, liveContentVersion]);
 }
 
 function revealOpenedDetails(event: SyntheticEvent<HTMLDetailsElement>) {

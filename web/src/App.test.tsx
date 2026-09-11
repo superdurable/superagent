@@ -35,7 +35,6 @@ import {
   waitForAgentInteractionStatus,
   type AgentSnapshot,
   type AgentDescription,
-  type MessageReceipt,
   type Portal,
 } from "./api/generated";
 import type * as GeneratedAPI from "./api/generated";
@@ -117,11 +116,7 @@ describe("App", () => {
     window.history.replaceState({}, "", "/");
     vi.mocked(getPortal).mockResolvedValue(portal);
     vi.mocked(getAgentSnapshot).mockResolvedValue(snapshot);
-    vi.mocked(answerQuestions).mockResolvedValue({
-      messageId: "answer-message",
-      acceptedAt: "2026-09-03T00:00:00Z",
-      replayed: false,
-    });
+    vi.mocked(answerQuestions).mockResolvedValue({ accepted: true });
     vi.mocked(readEvent).mockImplementation(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
@@ -147,11 +142,7 @@ describe("App", () => {
         }),
     );
     vi.mocked(startAgent).mockResolvedValue({ flowId: "flow-created" });
-    vi.mocked(sendMessage).mockResolvedValue({
-      messageId: "message-send",
-      acceptedAt: "2026-09-03T00:00:00Z",
-      replayed: false,
-    });
+    vi.mocked(sendMessage).mockResolvedValue({ accepted: true });
     vi.mocked(steerQueuedMessage).mockResolvedValue({
       messageId: "message-1",
       action: "steered",
@@ -244,7 +235,6 @@ describe("App", () => {
       queued: [
         {
           messageId: "message-1",
-          acceptedAt: "2026-09-03T00:00:00Z",
           value: { content: "Please prioritize this", planMode: false },
         },
       ],
@@ -308,15 +298,21 @@ describe("App", () => {
     const composer = await screen.findByRole("textbox", { name: "Message" });
 
     fireEvent.change(composer, { target: { value: "new work" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const send = screen.getByRole("button", { name: "Send" });
+    send.focus();
+    fireEvent.click(send);
 
     expect(await screen.findByText("Submitting…")).toBeInTheDocument();
     expect(screen.getByText("new work")).toBeInTheDocument();
     expect(composer).toHaveValue("");
+    expect(composer).toBeEnabled();
+    expect(composer).toHaveFocus();
+    fireEvent.change(composer, { target: { value: "next message" } });
+    expect(composer).toHaveValue("next message");
   });
 
   it("gates mutations until the post-command Snapshot succeeds", async () => {
-    const command = deferred<MessageReceipt>();
+    const command = deferred<{ accepted: true }>();
     const reconciliation = deferred<AgentSnapshot>();
     vi.mocked(sendMessage).mockReturnValueOnce(command.promise);
     vi.mocked(getAgentSnapshot)
@@ -329,11 +325,7 @@ describe("App", () => {
     fireEvent.change(composer, { target: { value: "first" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     act(() => {
-      command.resolve({
-        messageId: "message-command",
-        acceptedAt: "2026-09-03T00:00:00Z",
-        replayed: false,
-      });
+      command.resolve({ accepted: true });
     });
 
     expect(await screen.findByRole("status")).toHaveTextContent(
@@ -460,7 +452,6 @@ describe("App", () => {
       queued: [
         {
           messageId: "queued-1",
-          acceptedAt: "2026-09-03T00:00:00Z",
           value: { content: "Follow up", planMode: false },
         },
       ],
@@ -497,6 +488,12 @@ describe("App", () => {
 
     const composer = await screen.findByLabelText("Message composer");
     const queue = within(composer).getByLabelText("Message queue");
+    const agentStatus = within(composer).getByRole("group", {
+      name: "Agent status",
+    });
+    const sendButton = within(composer).getByRole("button", { name: "Send" });
+    expect(agentStatus.parentElement).toHaveClass("composer-actions");
+    expect(agentStatus.nextElementSibling).toBe(sendButton);
     expect(within(queue).getByText("Follow up")).toBeInTheDocument();
     const plan = screen.getByLabelText("Agent plan");
     expect(plan.closest("aside")).not.toBeNull();
@@ -504,11 +501,167 @@ describe("App", () => {
       await within(plan).findByLabelText("In progress"),
     ).toBeInTheDocument();
     expect(within(plan).getByText("Implement the UI")).toBeInTheDocument();
+    const blockedAction = within(plan).getByRole("button", {
+      name: "Resolve queued messages",
+    });
+    expect(blockedAction).toBeDisabled();
+    expect(blockedAction).toHaveAccessibleDescription(
+      "The Agent must consume or remove queued messages before continuing this Plan.",
+    );
 
     const toggle = within(queue).getByRole("button", { name: /Message queue/ });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(within(queue).queryByText("Follow up")).not.toBeInTheDocument();
+  });
+
+  it("disables an active Plan action while the Agent is running", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        interactionStatus: AgentInteractionStatus.SUBMITTED,
+        plan: {
+          revision: 7,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const plan = await screen.findByLabelText("Agent plan");
+    const action = within(plan).getByRole("button", {
+      name: "Plan running…",
+    });
+    expect(action).toBeDisabled();
+    expect(action).toHaveAccessibleDescription(
+      "Continue becomes available if unfinished tasks remain at the next durable wait.",
+    );
+  });
+
+  it("closes the Plan execution boundary immediately on submitted status", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        plan: {
+          revision: 7,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
+        },
+      },
+    });
+    let resolveSubmitted:
+      ((value: { status: AgentInteractionStatus }) => void) | null = null;
+    vi.mocked(waitForAgentInteractionStatus).mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((resolve, reject) => {
+          resolveSubmitted = resolve;
+          signal?.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    const plan = await screen.findByLabelText("Agent plan");
+    expect(
+      within(plan).getByRole("button", { name: "Continue plan" }),
+    ).toBeEnabled();
+    act(() => {
+      resolveSubmitted?.({ status: AgentInteractionStatus.SUBMITTED });
+    });
+
+    await waitFor(() => {
+      expect(
+        within(plan).getByRole("button", { name: "Plan running…" }),
+      ).toBeDisabled();
+    });
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      name: "pending questions",
+      label: "Answer questions first",
+      reason: "Submit the requested answers before continuing this Plan.",
+      patch: {
+        pendingUserInput: {
+          callId: "call-input",
+          questions: [
+            {
+              id: "region",
+              header: "Region",
+              question: "Choose a region",
+              options: [
+                { label: "West", description: "Use West." },
+                { label: "East", description: "Use East." },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
+      name: "pending approval",
+      label: "Resolve approval first",
+      reason: "Approve or reject the pending tool before continuing this Plan.",
+      patch: {
+        pendingApproval: {
+          callId: "call-approval",
+          toolName: "fixture__echo",
+          argumentsJson: "{}",
+        },
+      },
+    },
+    {
+      name: "active timer",
+      label: "Timer is active",
+      reason:
+        "The Plan can continue after the durable Timer finishes or is steered.",
+      patch: {
+        pendingTimer: {
+          callId: "call-timer",
+          durationSeconds: 30,
+          reason: "wait for a dependency",
+        },
+      },
+    },
+  ] satisfies {
+    name: string;
+    label: string;
+    reason: string;
+    patch: Partial<AgentDescription>;
+  }[])("explains the $name Plan blocker", async ({ label, reason, patch }) => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        ...patch,
+        plan: {
+          revision: 7,
+          status: PlanStatus.ACTIVE,
+          tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const plan = await screen.findByLabelText("Agent plan");
+    const action = within(plan).getByRole("button", { name: label });
+    expect(action).toBeDisabled();
+    expect(action).toHaveAccessibleDescription(reason);
   });
 
   it("keeps a chosen answer local until the batch is submitted", async () => {
@@ -539,6 +692,10 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Relaxed/u }));
 
     expect(screen.getByLabelText("Answered")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Additional details for Pace" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Choose a pace")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit all" })).toBeEnabled();
     expect(answerQuestions).not.toHaveBeenCalled();
   });
@@ -572,13 +729,15 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
 
     await waitFor(() => {
-      const request = vi.mocked(answerQuestions).mock.calls[0]?.[0];
-      expect(request?.body).toMatchObject({
-        flowId: "flow-existing",
-        callId: "call-1",
-        answers: [{ questionId: "pace", answer: "Relaxed" }],
-      });
-      expect(request?.body.messageId).toMatch(/^[0-9a-f-]+$/u);
+      expect(answerQuestions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: {
+            flowId: "flow-existing",
+            callId: "call-1",
+            answers: [{ questionId: "pace", answer: "Relaxed" }],
+          },
+        }),
+      );
     });
     await waitFor(() => {
       expect(screen.queryByText("Choose a pace")).not.toBeInTheDocument();
@@ -611,8 +770,14 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^West/u }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Additional details for Region" }),
+      { target: { value: "California departure" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Which pace?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Fast/u }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Which format?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Other/u }));
     fireEvent.change(
@@ -627,17 +792,22 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
 
     await waitFor(() => {
-      const request = vi.mocked(answerQuestions).mock.calls[0]?.[0];
-      expect(request?.body).toMatchObject({
-        flowId: "flow-existing",
-        callId: "call-three",
-        answers: [
-          { questionId: "region", answer: "West" },
-          { questionId: "pace", answer: "Careful" },
-          { questionId: "format", answer: "Checklist" },
-        ],
-      });
-      expect(request?.body.messageId).toMatch(/^[0-9a-f-]+$/u);
+      expect(answerQuestions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: {
+            flowId: "flow-existing",
+            callId: "call-three",
+            answers: [
+              {
+                questionId: "region",
+                answer: "West: California departure",
+              },
+              { questionId: "pace", answer: "Careful" },
+              { questionId: "format", answer: "Checklist" },
+            ],
+          },
+        }),
+      );
     });
   });
 
@@ -653,7 +823,6 @@ describe("App", () => {
           {
             sequence: 1,
             message: {
-              messageId: "assistant-1",
               role: "assistant",
               content: "**Durable reply**",
               toolCalls: [
@@ -671,7 +840,6 @@ describe("App", () => {
           {
             sequence: 2,
             message: {
-              messageId: "tool-1",
               role: "tool",
               content: '{"status":"waiting_for_user"}',
               toolCalls: [],
@@ -737,7 +905,6 @@ function message(
   return {
     sequence,
     message: {
-      messageId: `message-${String(sequence)}`,
       role,
       content,
       toolCalls: [],
