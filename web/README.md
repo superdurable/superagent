@@ -31,7 +31,8 @@ the corresponding Web command. The UI package can also be checked directly with
 The production build is written to the ignored `web/dist/` directory. It is a
 standalone deployment artifact. The Go binary contains no frontend files.
 Generated API files are committed. `make check-generated` verifies that both
-the ogen server and Hey API client have zero drift.
+the ogen server and Hey API client have zero drift. JavaScript and CSS filenames
+include content hashes so a deployment cannot reuse stale browser assets.
 
 The build copies `public/config.json` into the artifact. The browser loads it
 before rendering. The file configures the generated Fetch client from
@@ -46,7 +47,8 @@ python3 -m http.server 3000 --directory web/dist
 ```
 
 Open `http://127.0.0.1:3000/`. Production `apiOrigin` values must use HTTPS.
-Serve `config.json` with `Cache-Control: no-store`. Configure the static host's
+Serve `index.html` with `Cache-Control: no-cache`, hashed assets as immutable,
+and `config.json` with `Cache-Control: no-store`. Configure the static host's
 Content Security Policy to allow connections only to the selected API origin.
 
 ## Durable and live state
