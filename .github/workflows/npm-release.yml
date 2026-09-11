@@ -1,0 +1,90 @@
+name: Publish SuperAgent UI to npm
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z release tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: superagent-ui-npm-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish @superdurable/superagent-ui
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Verify release tag and commit
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          release_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if ! git merge-base --is-ancestor "${release_commit}" origin/main; then
+            echo "Release tag ${RELEASE_TAG} is not on main" >&2
+            exit 1
+          fi
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11.19.0
+      - name: Verify package version
+        shell: bash
+        run: |
+          release_version="${RELEASE_TAG#v}"
+          package_version="$(node --print "require('./packages/superagent-ui/package.json').version")"
+          application_version="$(node --print "require('./package.json').dependencies['@superdurable/superagent-ui']")"
+          lock_version="$(node --print "require('./package-lock.json').packages['packages/superagent-ui'].version")"
+
+          if [[ "${package_version}" != "${release_version}" ]]; then
+            echo "Package version ${package_version} does not match tag ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          if [[ "${application_version}" != "${release_version}" ]]; then
+            echo "Web dependency ${application_version} does not match tag ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          if [[ "${lock_version}" != "${release_version}" ]]; then
+            echo "Lockfile version ${lock_version} does not match tag ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check static types
+        run: npm run typecheck --workspace @superdurable/superagent-ui
+      - name: Test package
+        run: npm run test --workspace @superdurable/superagent-ui
+      - name: Inspect package contents
+        run: npm pack --dry-run --workspace @superdurable/superagent-ui
+      - name: Publish package
+        working-directory: web/packages/superagent-ui
+        run: npm publish --access public --provenance

@@ -102,6 +102,19 @@ The CI workflow runs deterministic checks, fuzzing, Flow Definition validation,
 and real Dex integration. It uploads the Go backend and static frontend as
 separate artifacts so either deployment can be released independently.
 
+## npm releases
+
+The `npm-release.yml` workflow publishes `@superdurable/superagent-ui` from a
+strict `vX.Y.Z` tag on `main`. Before creating the tag, update the version in
+`web/packages/superagent-ui/package.json`, the Web dependency in
+`web/package.json`, and `web/package-lock.json`.
+
+The npm package must trust the `superdurable/superagent` GitHub repository with
+workflow filename `npm-release.yml`, no environment, and direct `npm publish`
+permission. The workflow uses npm trusted publishing and GitHub OIDC. Do not add
+an `NPM_TOKEN` secret. A manual workflow dispatch can publish an existing tag
+that did not complete automatically.
+
 Before committing, run the full applicable gates and `git diff --check`. Do not
 bypass hooks. Inspect the staged diff, commit with a meaningful message, verify
 the recorded author/message, and leave a clean worktree.
