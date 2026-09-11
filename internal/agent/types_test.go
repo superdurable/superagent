@@ -152,19 +152,11 @@ func TestRuntimeMetadataValidation(t *testing.T) {
 	}
 }
 
-func TestCommandInputLimits(t *testing.T) {
+func TestUserMessageInputLimit(t *testing.T) {
 	if err := validateNewUserMessage(UserMessage{Content: strings.Repeat("x", MaximumUserMessageContentBytes)}); err != nil {
 		t.Fatalf("maximum user message error = %v", err)
 	}
 	if err := validateNewUserMessage(UserMessage{Content: strings.Repeat("x", MaximumUserMessageContentBytes+1)}); err == nil {
 		t.Fatal("oversized user message error = nil")
-	}
-	if err := validateCancelReason("session deleted"); err != nil {
-		t.Fatalf("valid cancellation reason error = %v", err)
-	}
-	for _, reason := range []string{"", "contains\x00nul", strings.Repeat("x", maximumCancelReasonBytes+1)} {
-		if err := validateCancelReason(reason); err == nil {
-			t.Fatalf("invalid cancellation reason %q error = nil", reason)
-		}
 	}
 }

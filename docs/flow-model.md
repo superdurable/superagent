@@ -13,14 +13,6 @@
   `ExecutePlan`, and `Snapshot`
 - Browser synchronization Attribute: `AgentInteractionStatus`
 
-`Client.Cancel` is a lifecycle operation, not a Flow RPC. If the Flow ID is
-absent, it starts the same Flow with only `AgentTerminalReservation`; `Init`
-performs no Agent work and the client stops the reserved Flow. If the caller is
-lost first, the Flow remains inert until a later cancellation finishes it, and
-`IDReuseDisallow` prevents a normal start from taking its ID. This isolated
-mechanism orders cancellation against a concurrent start without adding a
-general command ledger.
-
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic
 commit. Provider and MCP calls are external effects and are not part of a Dex
 transaction.
@@ -67,7 +59,7 @@ application history, and makes the model replan.
 
 | Step | `WaitFor` | `Execute` and transition |
 |---|---|---|
-| `Init` | none | Stop for a terminal reservation, otherwise validate and persist config/state, then enter `AwaitUser` |
+| `Init` | none | Validate and persist config/state, then enter `AwaitUser` |
 | `AwaitUser` | steering, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected command |
 | `CompactContext` | none | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages |
 | `CallModel` | none | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress |
@@ -83,7 +75,6 @@ application history, and makes the model replan.
 |---|---|---|
 | `AgentConfig` | Attribute | Immutable execution configuration |
 | `AgentRuntimeMetadata` | Attribute | Trusted runtime routing metadata; never model or browser context |
-| `AgentTerminalReservation` | Attribute | Minimal cancel-before-start reservation |
 | `AgentState` | Attribute | Sequence range, mode, status, plan revision, pending-call cursor, and Plan no-progress count |
 | `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
 | `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
@@ -160,8 +151,7 @@ chunk for upward scrolling.
 `Client.MessagesAfter` reads at most 200 retained messages in ascending order
 after an exclusive sequence cursor. Watermarks let an adapter detect retention
 gaps. A concurrent archive move is retried through its immutable chunk; a trim
-returns `HistoryMessageNotFoundError`. A terminal reservation returns an empty
-page.
+returns `HistoryMessageNotFoundError`.
 
 Snapshot is the only durable browser read model. It returns the Dex Run ID,
 history, interaction description, and pending messages with their Dex Channel

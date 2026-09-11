@@ -182,7 +182,6 @@ type (
 	EnumValidationError           = agentinternal.EnumValidationError
 	CommandRejectedError          = agentinternal.CommandRejectedError
 	PendingMessageNotFoundError   = agentinternal.PendingMessageNotFoundError
-	AgentAlreadyTerminalError     = agentinternal.AgentAlreadyTerminalError
 	ArchivedMessagesNotFoundError = agentinternal.ArchivedMessagesNotFoundError
 	HistoryMessageNotFoundError   = agentinternal.HistoryMessageNotFoundError
 	JSONObject                    = agentinternal.JSONObject

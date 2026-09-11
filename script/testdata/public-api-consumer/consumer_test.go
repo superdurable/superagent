@@ -68,7 +68,6 @@ var (
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error                    = (*agent.Client).AnswerQuestions
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) error                       = (*agent.Client).SteerMessage
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.MessageID) error                                 = (*agent.Client).DeleteQueuedMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, string) error                                          = (*agent.Client).Cancel
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error                       = (*agent.Client).ApproveTool
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error                      = (*agent.Client).ExecutePlan
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence, int) (agent.ForwardHistoryPage, error) = (*agent.Client).MessagesAfter

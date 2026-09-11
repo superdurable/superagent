@@ -313,19 +313,6 @@ func (client *Client) MessagesAfter(
 		return ForwardHistoryPage{}, err
 	}
 	if !found {
-		var reservation terminalReservation
-		isReservation, reservationErr := client.sdk.GetAttribute(
-			ctx,
-			string(flowID),
-			agentTerminalReservationAttribute,
-			&reservation,
-		)
-		if reservationErr != nil {
-			return ForwardHistoryPage{}, reservationErr
-		}
-		if isReservation {
-			return ForwardHistoryPage{Messages: []SequencedMessage{}}, nil
-		}
 		return ForwardHistoryPage{}, errors.New("agent state is not initialized")
 	}
 	page := ForwardHistoryPage{
@@ -427,79 +414,6 @@ func (client *Client) WaitForInteractionStatus(
 		dex.AttributeMatchEqual(expected),
 		&matched,
 	)
-}
-
-// Cancel cancels an active Agent or reserves an absent non-reusable Flow ID.
-func (client *Client) Cancel(ctx context.Context, flowID FlowID, reason string) error {
-	if err := validateFlowID(flowID); err != nil {
-		return err
-	}
-	if err := validateCancelReason(reason); err != nil {
-		return err
-	}
-	reservation := terminalReservation{Reason: reason}
-	initialReservation, err := dex.InitialAttribute(agentTerminalReservationAttribute, reservation)
-	if err != nil {
-		return fmt.Errorf("encode Agent terminal reservation: %w", err)
-	}
-	_, startErr := client.sdk.StartFlow(ctx, client.flow, string(flowID), NewAgentConfig(), dex.StartFlowOptions{
-		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    []dex.InitialAttributeDef{initialReservation},
-	})
-	if startErr == nil {
-		stopErr := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{Type: dex.CancelFlow, Reason: reason})
-		var inactive *dex.FlowNotActiveError
-		if stopErr == nil || errors.As(stopErr, &inactive) {
-			return nil
-		}
-		return stopErr
-	}
-	var alreadyStarted *dex.FlowAlreadyStartedError
-	if !errors.As(startErr, &alreadyStarted) {
-		return startErr
-	}
-	var persisted terminalReservation
-	isReservation, readErr := client.sdk.GetAttribute(
-		ctx,
-		string(flowID),
-		agentTerminalReservationAttribute,
-		&persisted,
-	)
-	if readErr != nil {
-		return errors.Join(startErr, readErr)
-	}
-	if isReservation {
-		stopErr := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{
-			Type:   dex.CancelFlow,
-			Reason: persisted.Reason,
-		})
-		var inactive *dex.FlowNotActiveError
-		if stopErr != nil && !errors.As(stopErr, &inactive) {
-			return stopErr
-		}
-		status := FlowStatusCanceled
-		if errors.As(stopErr, &inactive) {
-			snapshot, snapshotErr := client.terminalSnapshot(ctx, flowID, "")
-			if snapshotErr != nil {
-				return errors.Join(stopErr, snapshotErr)
-			}
-			status = snapshot.FlowStatus
-		}
-		return &AgentAlreadyTerminalError{FlowID: flowID, Status: status}
-	}
-	stopErr := client.sdk.StopFlow(ctx, string(flowID), dex.StopOptions{Type: dex.CancelFlow, Reason: reason})
-	if stopErr == nil {
-		return nil
-	}
-	var inactive *dex.FlowNotActiveError
-	if !errors.As(stopErr, &inactive) {
-		return stopErr
-	}
-	snapshot, snapshotErr := client.terminalSnapshot(ctx, flowID, "")
-	if snapshotErr != nil {
-		return errors.Join(stopErr, snapshotErr)
-	}
-	return &AgentAlreadyTerminalError{FlowID: flowID, Status: snapshot.FlowStatus}
 }
 
 func (client *Client) terminalSnapshot(

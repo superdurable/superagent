@@ -60,10 +60,6 @@ delete, and steering. After an ambiguous network result, clients read Snapshot
 to reconcile current durable state instead of consulting stored command
 receipts. `Client.MessagesAfter` provides bounded canonical-history pagination.
 
-`Client.Cancel` uses a small independent terminal reservation when cancellation
-wins before start. This closes the cancel-before-start race without adding a
-general command ledger or changing the normal Agent identity model.
-
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
 reconciliation. See [docs/flow-model.md](docs/flow-model.md) for the Flow graph
 and resource model.

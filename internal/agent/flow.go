@@ -82,7 +82,6 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 		Attributes: []dex.AttributeDef{
 			agentConfigAttribute,
 			agentRuntimeMetadataAttribute,
-			agentTerminalReservationAttribute,
 			agentStateAttribute,
 			agentInteractionStatusAttribute,
 			contextSummaryAttribute,
@@ -1253,11 +1252,6 @@ var _ dex.Step[AgentConfig] = initStep{}
 func (initStep) GetStepType() string { return string(stepTypeInit) }
 
 func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecision, error) {
-	if _, err := agentTerminalReservationAttribute.Get(ctx); err == nil {
-		return dex.DeadEnd(), nil
-	} else if !isAttributeNotFound(err) {
-		return nil, err
-	}
 	if err := step.flow.validateConfig(input); err != nil {
 		return nil, err
 	}

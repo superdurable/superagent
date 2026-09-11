@@ -29,10 +29,9 @@ import (
 )
 
 const (
-	archiveMessageChunkSize  = 10
-	currentMessageLimit      = 2 * archiveMessageChunkSize
-	maximumMessageIDBytes    = 256
-	maximumCancelReasonBytes = 4 << 10
+	archiveMessageChunkSize = 10
+	currentMessageLimit     = 2 * archiveMessageChunkSize
+	maximumMessageIDBytes   = 256
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
 	MaximumRuntimeMetadataBytes = 16 << 10
 	// MaximumUserMessageContentBytes bounds one user-message body.
@@ -775,10 +774,6 @@ type UserMessage struct {
 	AnsweredInputCallID *CallID `json:"answered_input_call_id,omitempty"`
 }
 
-type terminalReservation struct {
-	Reason string `json:"reason"`
-}
-
 // SteerMessageRequest atomically moves one queued message into steering.
 type SteerMessageRequest struct {
 	MessageID MessageID `json:"message_id"`
@@ -909,19 +904,6 @@ type PendingMessageNotFoundError struct {
 	MessageID MessageID
 }
 
-// AgentAlreadyTerminalError reports an operation rejected by a terminal Flow.
-type AgentAlreadyTerminalError struct {
-	FlowID FlowID
-	Status FlowStatus
-}
-
-var _ error = (*AgentAlreadyTerminalError)(nil)
-
-// Error describes the terminal state.
-func (err *AgentAlreadyTerminalError) Error() string {
-	return fmt.Sprintf("agent Flow %q is already terminal with status %q", err.FlowID, err.Status)
-}
-
 var _ error = (*PendingMessageNotFoundError)(nil)
 
 // Error describes the stale queue identity.
@@ -1011,22 +993,6 @@ func validateRuntimeMetadata(value JSONObject) error {
 	}
 	_, err := ParseJSONObject(value.String())
 	return err
-}
-
-func validateCancelReason(reason string) error {
-	if !utf8.ValidString(reason) {
-		return errors.New("cancellation reason must be valid UTF-8")
-	}
-	if strings.ContainsRune(reason, '\x00') {
-		return errors.New("cancellation reason must not contain NUL")
-	}
-	if strings.TrimSpace(reason) == "" {
-		return errors.New("cancellation reason must not be empty")
-	}
-	if len(reason) > maximumCancelReasonBytes {
-		return fmt.Errorf("cancellation reason exceeds %d bytes", maximumCancelReasonBytes)
-	}
-	return nil
 }
 
 // ModelReply is one complete provider response.
