@@ -21,18 +21,18 @@ Agent state. Streams reduce latency but never become recovery state.
 
 ## Package ownership
 
-| Package           | Owns                                                                           | Must not own                                                       |
-| ----------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `agent`           | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle     |
-| `model`           | Public built-in provider adapters, router, and process-memory credentials      | Dex resources, provider protocol implementation, process lifecycle |
-| `internal/agent`  | Domain IDs/enums, Flow graph, private Dex descriptors, command client          | Provider protocols, HTTP transport models, global configuration    |
-| `internal/api`    | ogen implementation, validation mapping, problem responses                     | Handwritten routes, generated-model duplicates, durable state      |
-| `internal/app`    | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
-| `internal/config` | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
-| `internal/model`  | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
-| `internal/mcp`    | Trusted server config, discovery, policy, sessions, retries, brokers           | Agent state transitions or exported Dex resource access            |
-| `web`             | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
-| `web/packages/superagent-ui` | Transport-free React conversation components and local interaction behavior | Dex/API clients, routing, durable state, or product workflows |
+| Package                      | Owns                                                                           | Must not own                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `agent`                      | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle     |
+| `model`                      | Public built-in provider adapters, router, and process-memory credentials      | Dex resources, provider protocol implementation, process lifecycle |
+| `internal/agent`             | Domain IDs/enums, Flow graph, private Dex descriptors, command client          | Provider protocols, HTTP transport models, global configuration    |
+| `internal/api`               | ogen implementation, validation mapping, problem responses                     | Handwritten routes, generated-model duplicates, durable state      |
+| `internal/app`               | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
+| `internal/config`            | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
+| `internal/model`             | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
+| `internal/mcp`               | Trusted server config, discovery, policy, sessions, retries, brokers           | Agent state transitions or exported Dex resource access            |
+| `web`                        | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
+| `web/packages/superagent-ui` | Transport-free React conversation components and local interaction behavior    | Dex/API clients, routing, durable state, or product workflows      |
 
 Interfaces live at their consuming boundary. Concrete single-use components do
 not receive speculative interfaces, and there is no general-purpose helpers
@@ -108,11 +108,11 @@ boundary. Waiting state is written in the `WaitFor` that establishes the wait.
 Provider and MCP calls occur only in `Execute`. The complete graph and resource
 table are in `docs/flow-model.md`.
 
-History-reading Steps declare bounded AttributeMap loads explicitly. The public
-client can read at most 200 canonical retained messages after an exclusive
-sequence cursor without using Dex execution history or Streams. Tool
-invocations receive the stable Flow ID, model call ID, and runtime metadata as
-one durable routing identity, including after Worker replacement.
+History-reading Steps declare bounded AttributeMap loads explicitly. Integration
+tests use verb-first `ForTestOnly` RPCs rather than generic Dex Client resource
+operations. Tool invocations receive the stable Flow ID, model call ID, and
+runtime metadata as one durable routing identity, including after Worker
+replacement.
 
 ## Durable and live reconciliation
 
@@ -127,8 +127,9 @@ one durable routing identity, including after Worker replacement.
 
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
-and Run identity through one reducer action. Three cancellable event polls apply
-assistant, reasoning-summary, and activity deltas. The browser orders every
+and Run identity through one reducer action. It then lists the configured recent
+tail of each Stream, applies those events chronologically, and long-polls from
+the newest returned resume token. The browser orders every
 observed activity event, reasoning summary, live assistant response, and durable
 message in one timeline by creation time. Reasoning entries are keyed by the
 producing model invocation source. Completion activity marks later text from
@@ -148,16 +149,21 @@ Streams, Attribute waits, Snapshot work, and the timer.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Activity events are independent timeline rows keyed by resume token. A page
-refresh starts from an empty token, so Dex may replay events from its retained
-head. Events removed by Stream retention are not reconstructed. Completed-source
-tracking prevents replayed text from duplicating durable assistant messages and
-keeps replayed reasoning summaries in a completed state.
-The timeline follows new content only while the reader is at its bottom. Manual
-upward scrolling pauses that behavior. Later message, reasoning, or activity
-content exposes an explicit jump-to-latest control instead of moving the
-viewport. Archive prepends preserve the reading position and do not count as
-new timeline content. Agent status lives inside the fixed composer above its
-primary action, so it stays visible without covering the timeline.
+refresh uses `ListStreamMessages` once per Stream, bounded by
+`SUPERAGENT_STREAM_RECOVERY_LIMIT`, which defaults to 1000 and cannot exceed 1000. Events removed by Stream retention or beyond that tail are not
+reconstructed. Completed-source tracking prevents recovered text from
+duplicating durable assistant messages and keeps recovered reasoning summaries
+in a completed state.
+The timeline follows new content by default. Only an upward viewport movement
+pauses that behavior; composer and queue layout changes keep the latest content
+visible. Later message, reasoning, or activity content exposes an explicit
+jump-to-latest control instead of moving a reader who is viewing history.
+Returning to the bottom resumes following. Archive prepends preserve the
+reading position and do not count as new timeline content. The pending-message
+queue starts expanded as a compact, bounded list. Each message is one truncated
+row with inline actions; editing reveals the complete queued text. Agent status
+lives inside the fixed composer above its primary action, so it stays visible
+without covering the timeline.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot
@@ -186,8 +192,8 @@ models, and enums. Explicit mappers keep generated transport types out of the
 domain package.
 
 The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
-one exact archive-chunk read, interaction-status long polling, queue deletion
-and steering, typed event polling, health, and readiness. Mutation responses
+one exact archive-chunk read, one bounded recent-event read, interaction-status
+long polling, queue deletion and steering, typed event polling, health, and readiness. Mutation responses
 report acceptance without durable command receipts. The API process does not
 serve React files. Long-poll expiry has a generated typed body,
 so the browser can distinguish normal polling cadence from a transport failure.

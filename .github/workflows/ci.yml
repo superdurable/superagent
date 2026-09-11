@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           dex_log="$RUNNER_TEMP/dexcli.log"
-          PATH="$PWD/.cache/temporal-v1.8.2:$PATH" .cache/dexcli-v0.4.0 dev \
+          PATH="$PWD/.cache/temporal-v1.8.2:$PATH" .cache/dexcli-v0.6.0 dev \
             -open=false \
             -blob-store-dir "$RUNNER_TEMP/dex-blobs" \
             -sqlite-db-filename "$RUNNER_TEMP/dex.sqlite.db" \

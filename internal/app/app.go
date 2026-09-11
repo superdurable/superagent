@@ -141,7 +141,14 @@ func build(ctx context.Context, applicationConfig *config.Config, logger *slog.L
 	}
 	owned.dexClient = dexClient
 	agentClient := agent.NewClient(dexClient, flow)
-	apiHandler := httpapi.NewHandler(agentClient, toolRegistry, credentials, owned.ready.Load, logger)
+	apiHandler := httpapi.NewHandler(
+		agentClient,
+		toolRegistry,
+		credentials,
+		applicationConfig.Events,
+		owned.ready.Load,
+		logger,
+	)
 	generatedHandler, err := httpapi.NewHTTPHandler(apiHandler, applicationConfig.HTTP, logger)
 	if err != nil {
 		return nil, fmt.Errorf("construct OpenAPI server: %w", err)

@@ -152,7 +152,7 @@
 }
 
 .sa-message-queue {
-  margin-bottom: 10px;
+  margin-bottom: 7px;
   border: 1px solid var(--sa-queue-border, #e1e5eb);
   border-radius: 12px;
   background: var(--sa-queue-background, #fafbfc);
@@ -162,9 +162,9 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   width: 100%;
-  padding: 9px 11px;
+  padding: 6px 8px;
   border: 0;
   border-radius: 10px;
   color: var(--sa-heading-color, #344054);
@@ -190,18 +190,23 @@
 
 .sa-message-queue-items {
   display: grid;
-  gap: 8px;
-  max-height: min(280px, 34dvh);
-  padding: 0 9px 9px;
+  gap: 4px;
+  max-height: min(112px, 16dvh);
+  padding: 0 6px 6px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .sa-queue-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
   margin-top: 0;
-  padding: 11px;
+  padding: 4px 6px;
   border: 1px solid var(--sa-queue-border, #e1e5eb);
-  border-radius: 11px;
+  border-radius: 8px;
   background: var(--sa-queue-item-background, #f9fafb);
 }
 
@@ -216,32 +221,44 @@
   opacity: 0.82;
 }
 
-.sa-queue-message > strong {
+.sa-queue-message-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.sa-queue-message-meta strong {
   color: var(--sa-subtle-color, #667085);
-  font-size: 10px;
+  font-size: 9px;
   text-transform: uppercase;
 }
 
-.sa-queue-message small {
-  margin-left: 7px;
+.sa-queue-message-meta small {
   color: var(--sa-subtle-color, #667085);
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .sa-queue-message p {
-  margin: 4px 0 8px;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sa-queue-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
+  white-space: nowrap;
 }
 
 .sa-queue-action {
-  min-height: 30px;
+  min-height: 24px;
   border: 0;
   border-radius: 8px;
   font: inherit;
@@ -252,11 +269,12 @@
 .sa-queue-action--steer {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
+  gap: 3px;
+  padding: 4px 7px;
   color: var(--sa-button-text-color, white);
   background: var(--sa-steer-background, #3541a9);
-  box-shadow: 0 3px 9px rgb(53 65 169 / 22%);
+  box-shadow: 0 2px 6px rgb(53 65 169 / 18%);
+  font-size: 10px;
   transition:
     background-color 120ms ease,
     box-shadow 120ms ease,
@@ -274,10 +292,10 @@
 }
 
 .sa-queue-action--text {
-  padding: 4px 2px;
+  padding: 2px 1px;
   color: var(--sa-accent-color, #4353c7);
   background: transparent;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .sa-question-batch {

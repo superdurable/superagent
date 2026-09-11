@@ -6,7 +6,7 @@
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./agent/... ./cmd/... ./internal/... ./model/...
-DEXCLI_VERSION := v0.4.0
+DEXCLI_VERSION := v0.6.0
 DEXCLI_BINARY := $(CURDIR)/.cache/dexcli-$(DEXCLI_VERSION)
 OSV_SCANNER_VERSION := v2.5.1
 OSV_SCANNER_BINARY := $(CURDIR)/.cache/osv-scanner-$(OSV_SCANNER_VERSION)

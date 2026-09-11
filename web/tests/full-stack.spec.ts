@@ -71,7 +71,25 @@ test("renders chronological transient activity and durable queue interactions", 
   await composer.fill("/reason Checked the constraints | Durable answer");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(composer).toBeFocused();
+  const optimisticQueue = page.getByRole("region", { name: "Message queue" });
+  await expect(optimisticQueue).toContainText("1 queued · 0 steering");
+  await expect(
+    optimisticQueue.getByRole("button", { name: /Message queue/ }),
+  ).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("Submitting…")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Jump to latest message" }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollHeight -
+          window.scrollY -
+          window.innerHeight,
+      ),
+    )
+    .toBeLessThanOrEqual(12);
   releaseMessage();
 
   const history = page.getByRole("region", { name: "Conversation history" });
@@ -130,6 +148,7 @@ test("renders chronological transient activity and durable queue interactions", 
 
   const queue = page.getByRole("region", { name: "Message queue" });
   await expect(queue).toContainText("2 queued · 0 steering");
+  await expectMessageQueueExpanded(queue);
   await expect(queue.getByText("Plan", { exact: true })).toBeVisible();
   await expect(queue.getByText("Chat", { exact: true })).toBeVisible();
   expect(await queue.locator(".queue-message p").allTextContents()).toEqual([
@@ -246,6 +265,7 @@ test("keeps mutations gated until the post-command Snapshot completes", async ({
 
   await expect(page.getByRole("status")).toHaveText("Syncing durable state…");
   const queue = page.getByRole("region", { name: "Message queue" });
+  await expectMessageQueueExpanded(queue);
   await expect(queue.getByText("Queued", { exact: true })).toBeVisible();
   await expect(queue.getByText("verify reconciliation gate")).toBeVisible();
   await composer.fill("editable draft while syncing");
@@ -360,6 +380,9 @@ test("reconciles accepted commands when their browser responses are lost", async
   await expect(page.getByText("90s")).toBeVisible();
   await composer.fill("ambiguous steer is reconciled");
   await page.getByRole("button", { name: "Send" }).click();
+  await expectMessageQueueExpanded(
+    page.getByRole("region", { name: "Message queue" }),
+  );
   const queued = page
     .locator(".queue-message")
     .filter({ hasText: "ambiguous steer is reconciled" });
@@ -398,6 +421,9 @@ test("reconciles stale queue, question, and approval controls without damaging t
   await expect(page.getByText("90s")).toBeVisible();
   await composer.fill("stale queue target");
   await page.getByRole("button", { name: "Send" }).click();
+  await expectMessageQueueExpanded(
+    page.getByRole("region", { name: "Message queue" }),
+  );
   const staleQueue = page
     .locator(".queue-message")
     .filter({ hasText: "stale queue target" });
@@ -461,7 +487,13 @@ test("resumes each live Stream after interruption without duplicate timeline ent
   ]) {
     let deliveredEvent = false;
     let abortedPoll = false;
+    let recentReads = 0;
     const resumeTokens: string[] = [];
+    await page.route("**/products/ai-agent/events/recent?**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("stream") === stream) recentReads++;
+      await route.continue();
+    });
     await page.route("**/products/ai-agent/events?**", async (route) => {
       const url = new URL(route.request().url());
       if (url.searchParams.get("stream") !== stream) {
@@ -501,10 +533,15 @@ test("resumes each live Stream after interruption without duplicate timeline ent
       .locator(".activity-entry")
       .allTextContents();
     expect(new Set(activityRows).size).toBe(activityRows.length);
+    recentReads = 0;
+    resumeTokens.length = 0;
     await page.reload();
+    await expect.poll(() => recentReads).toBeGreaterThan(0);
+    await expect.poll(() => resumeTokens.length).toBeGreaterThan(0);
     await expect(
       page.locator(".message-bubble.assistant").filter({ hasText: message }),
     ).toHaveCount(1);
+    await page.unroute("**/products/ai-agent/events/recent?**");
     await page.unroute("**/products/ai-agent/events?**");
     await page.getByRole("button", { name: "Start another agent" }).click();
   }
@@ -1111,10 +1148,17 @@ test("keeps narrow queue actions visible and restores keyboard focus", async ({
   await composer.press("Control+Enter");
   await expect(page.getByText("90s")).toBeVisible();
   const queue = page.getByRole("region", { name: "Message queue" });
-  for (const content of ["narrow edit", "narrow delete", "narrow steer"]) {
+  const longEditMessage =
+    "narrow edit message whose complete content is only available through Edit";
+  const queueMessages = [longEditMessage, "narrow delete", "narrow steer"];
+  for (const content of queueMessages) {
     await composer.fill(content);
     await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
     await composer.press("Control+Enter");
+  }
+  await expect(queue).toContainText("3 queued · 0 steering");
+  await expectMessageQueueExpanded(queue);
+  for (const content of queueMessages) {
     await expect(
       queue.locator(".queue-message").filter({ hasText: content }),
     ).toBeVisible();
@@ -1122,7 +1166,7 @@ test("keeps narrow queue actions visible and restores keyboard focus", async ({
 
   const editRow = queue
     .locator(".queue-message")
-    .filter({ hasText: "narrow edit" });
+    .filter({ hasText: longEditMessage });
   const deleteRow = queue
     .locator(".queue-message")
     .filter({ hasText: "narrow delete" });
@@ -1132,6 +1176,16 @@ test("keeps narrow queue actions visible and restores keyboard focus", async ({
   const edit = editRow.getByRole("button", { name: "Edit" });
   const remove = deleteRow.getByRole("button", { name: "Delete" });
   const steer = steerRow.getByRole("button", { name: "Steer now" });
+  const truncatedContent = editRow.locator("p");
+  await expect(truncatedContent).toHaveCSS("white-space", "nowrap");
+  await expect(truncatedContent).toHaveCSS("text-overflow", "ellipsis");
+  await expect
+    .poll(() =>
+      truncatedContent.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      ),
+    )
+    .toBe(true);
   for (const control of [edit, remove, steer]) {
     await control.scrollIntoViewIfNeeded();
     await expect(control).toBeInViewport();
@@ -1140,7 +1194,7 @@ test("keeps narrow queue actions visible and restores keyboard focus", async ({
 
   await edit.focus();
   await edit.press("Enter");
-  await expect(composer).toHaveValue("narrow edit");
+  await expect(composer).toHaveValue(longEditMessage);
   await expect(composer).toBeFocused();
   await expect(editRow).toHaveCount(0);
   await composer.fill("narrow edited replacement");
@@ -1180,6 +1234,11 @@ async function directTimelineText(history: Locator): Promise<string[]> {
   return history
     .locator(":scope > article, :scope > details")
     .allTextContents();
+}
+
+async function expectMessageQueueExpanded(queue: Locator): Promise<void> {
+  const toggle = queue.getByRole("button", { name: /Message queue/ });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 
 async function directTimelineTimes(history: Locator): Promise<number[]> {

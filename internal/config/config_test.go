@@ -26,9 +26,37 @@ func TestLoadUsesValidatedDefaults(t *testing.T) {
 	}
 	if config.HTTP.Address != defaultHTTPAddress ||
 		len(config.HTTP.AllowedOrigins) != 0 ||
+		config.Events.RecoveryLimit != defaultStreamRecoveryLimit ||
 		config.Dex.WorkerTarget != defaultWorkerBindAddress ||
 		config.BlobCache.MaxBytes != defaultBlobCacheMaxBytes {
 		t.Fatalf("unexpected defaults: %#v", config)
+	}
+}
+
+func TestLoadConfiguresBoundedStreamRecovery(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{string(EnvStreamRecoveryLimit): "250"}
+	config, err := load(func(name string) (string, bool) {
+		value, found := values[name]
+		return value, found
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Events.RecoveryLimit != 250 {
+		t.Fatalf("Stream recovery limit = %d, want 250", config.Events.RecoveryLimit)
+	}
+}
+
+func TestLoadRejectsExcessiveStreamRecovery(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{string(EnvStreamRecoveryLimit): "1001"}
+	_, err := load(func(name string) (string, bool) {
+		value, found := values[name]
+		return value, found
+	})
+	if err == nil {
+		t.Fatal("load error = nil")
 	}
 }
 

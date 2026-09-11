@@ -18,6 +18,7 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill.
   visualizer diagnostic in CI.
 - Put durable conditions in `WaitFor` and external effects in `Execute`.
 - Treat each WaitFor, Execute, and RPC as an independent atomic boundary.
+- Name every RPC with an action verb. Read RPCs start with `Get` or `List`.
 - Use typed Attributes for state, Channels for delivery, and buffered Streams
   for best-effort deltas.
 - Do not expose resource getter wrappers.

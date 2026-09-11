@@ -733,6 +733,95 @@ func (s *Server) handleGetReadinessRequest(args [0]string, argsEscaped bool, w h
 	}
 }
 
+// handleListRecentEventsRequest handles listRecentEvents operation.
+//
+// Returns at most the server-configured recovery limit in chronological order. The final event's
+// resume token continues the live long poll. Streams are live hints, never a durable state source.
+//
+// GET /products/ai-agent/events/recent
+func (s *Server) handleListRecentEventsRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	ctx := r.Context()
+
+	var (
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: ListRecentEventsOperation,
+			ID:   "listRecentEvents",
+		}
+	)
+	params, err := decodeListRecentEventsParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response ListRecentEventsRes
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    ListRecentEventsOperation,
+			OperationSummary: "List the configured recent tail of one best-effort Agent Stream",
+			OperationID:      "listRecentEvents",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "flowId",
+					In:   "query",
+				}: params.FlowId,
+				{
+					Name: "stream",
+					In:   "query",
+				}: params.Stream,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = ListRecentEventsParams
+			Response = ListRecentEventsRes
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackListRecentEventsParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.ListRecentEvents(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.ListRecentEvents(ctx, params)
+	}
+	if err != nil {
+		defer recordError("Internal", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	if err := encodeListRecentEventsResponse(response, w); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleReadEventRequest handles readEvent operation.
 //
 // Waits for one event for up to the server's bounded long-poll timeout. A 504 response means no event

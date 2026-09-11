@@ -97,6 +97,45 @@ describe("useTimelineFollow", () => {
     expect(result.current.hasUnseenContent).toBe(true);
   });
 
+  it("keeps following when layout growth moves the bottom", () => {
+    const { result, rerender } = renderHook(
+      ({ contentVersion }) =>
+        useTimelineFollow({ flowRunKey: "flow-1:run-1", contentVersion }),
+      { initialProps: { contentVersion: "1" } },
+    );
+    scrollTo.mockClear();
+
+    act(() => {
+      currentScrollHeight += 200;
+      window.dispatchEvent(new Event("scroll"));
+    });
+    rerender({ contentVersion: "2" });
+
+    expect(scrollTo).toHaveBeenLastCalledWith({
+      top: currentScrollHeight,
+      behavior: "auto",
+    });
+    expect(result.current.hasUnseenContent).toBe(false);
+  });
+
+  it("keeps the latest content clear when the composer changes height", () => {
+    const { result } = renderHook(() =>
+      useTimelineFollow({ flowRunKey: "flow-1:run-1", contentVersion: "1" }),
+    );
+    scrollTo.mockClear();
+
+    act(() => {
+      currentScrollHeight += 160;
+      result.current.keepLatestVisible();
+    });
+
+    expect(scrollTo).toHaveBeenLastCalledWith({
+      top: currentScrollHeight,
+      behavior: "auto",
+    });
+    expect(result.current.hasUnseenContent).toBe(false);
+  });
+
   it("jumps to the latest content and resumes following", () => {
     const { result, rerender } = renderHook(
       ({ contentVersion }) =>

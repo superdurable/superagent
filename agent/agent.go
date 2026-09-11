@@ -37,6 +37,8 @@ const (
 	MaximumUserMessageContentBytes = agentinternal.MaximumUserMessageContentBytes
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
 	MaximumRuntimeMetadataBytes = agentinternal.MaximumRuntimeMetadataBytes
+	// MaximumRecentEventLimit bounds one best-effort Stream recovery read.
+	MaximumRecentEventLimit = agentinternal.MaximumRecentEventLimit
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
 	DefaultSystemPrompt = agentinternal.DefaultSystemPrompt
 

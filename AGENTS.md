@@ -56,6 +56,7 @@ execution history.
   `Execute`.
 - Treat each `WaitFor`, `Execute`, and RPC invocation as an independent Dex
   atomic commit boundary. Use stable idempotency keys for external effects.
+- Name every RPC with an action verb. Read RPCs start with `Get` or `List`.
 - Write a waiting status in the target Step's `WaitFor`, not in the preceding
   Step.
 - Use Attributes for durable state and Channels for delivery, never as storage.

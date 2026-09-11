@@ -59,20 +59,22 @@ func (toolRegistry) Execute(context.Context, agent.ToolInvocation) (agent.ToolEx
 }
 
 var (
-	_ agent.ModelClient                                                                             = modelClient{}
-	_ agent.ToolRegistry                                                                            = toolRegistry{}
-	_ dex.Flow                                                                                      = (*agent.Flow)(nil)
-	_ func(*dex.Client, *agent.Flow) *agent.Client                                                  = agent.NewClient
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)   = (*agent.Client).Start
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.UserMessage) error                   = (*agent.Client).SendMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error        = (*agent.Client).AnswerQuestions
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) error           = (*agent.Client).SteerMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.MessageID) error                     = (*agent.Client).DeleteQueuedMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error           = (*agent.Client).ApproveTool
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error          = (*agent.Client).ExecutePlan
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error) = (*agent.Client).ArchivedMessages
-	_ agent.EventKind                                                                               = agent.EventKindPlanTaskUpdated
-	_ agent.PlanTaskIndex                                                                           = 0
+	_ agent.ModelClient                                                                                       = modelClient{}
+	_ agent.ToolRegistry                                                                                      = toolRegistry{}
+	_ dex.Flow                                                                                                = (*agent.Flow)(nil)
+	_ func(*dex.Client, *agent.Flow) *agent.Client                                                            = agent.NewClient
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)             = (*agent.Client).Start
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.UserMessage) error                             = (*agent.Client).SendMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error                  = (*agent.Client).AnswerQuestions
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) error                     = (*agent.Client).SteerMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.MessageID) error                               = (*agent.Client).DeleteQueuedMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error                     = (*agent.Client).ApproveTool
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error                    = (*agent.Client).ExecutePlan
+	_ func(*agent.Client, context.Context, agent.FlowID) (agent.AgentSnapshot, error)                         = (*agent.Client).GetSnapshot
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)           = (*agent.Client).GetArchivedMessages
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.EventStream, int) ([]agent.StreamEvent, error) = (*agent.Client).ListRecentEvents
+	_ agent.EventKind                                                                                         = agent.EventKindPlanTaskUpdated
+	_ agent.PlanTaskIndex                                                                                     = 0
 )
 
 func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {

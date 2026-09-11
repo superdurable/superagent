@@ -214,6 +214,130 @@ func decodeGetArchivedMessagesParams(args [0]string, argsEscaped bool, r *http.R
 	return params, nil
 }
 
+// ListRecentEventsParams is parameters of listRecentEvents operation.
+type ListRecentEventsParams struct {
+	FlowId FlowID
+	Stream EventStream
+}
+
+func unpackListRecentEventsParams(packed middleware.Parameters) (params ListRecentEventsParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "flowId",
+			In:   "query",
+		}
+		params.FlowId = packed[key].(FlowID)
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "stream",
+			In:   "query",
+		}
+		params.Stream = packed[key].(EventStream)
+	}
+	return params
+}
+
+func decodeListRecentEventsParams(args [0]string, argsEscaped bool, r *http.Request) (params ListRecentEventsParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Decode query: flowId.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "flowId",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotFlowIdVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotFlowIdVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.FlowId = FlowID(paramsDotFlowIdVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.FlowId.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "flowId",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	// Decode query: stream.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "stream",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Stream = EventStream(c)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.Stream.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "stream",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // ReadEventParams is parameters of readEvent operation.
 type ReadEventParams struct {
 	FlowId      FlowID

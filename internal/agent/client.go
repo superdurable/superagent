@@ -30,6 +30,8 @@ const (
 	defaultCommandTimeout = 20 * time.Second
 	defaultEventPoll      = 20 * time.Second
 	snapshotActiveProbe   = 100 * time.Millisecond
+	// MaximumRecentEventLimit matches Dex's default maximum Stream list page size.
+	MaximumRecentEventLimit = 1_000
 )
 
 // Client is the typed application boundary around Dex Agent operations.
@@ -186,8 +188,8 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 	return nil
 }
 
-// Snapshot reads one atomic durable application view.
-func (client *Client) Snapshot(
+// GetSnapshot reads one atomic durable application view.
+func (client *Client) GetSnapshot(
 	ctx context.Context,
 	flowID FlowID,
 ) (AgentSnapshot, error) {
@@ -195,7 +197,7 @@ func (client *Client) Snapshot(
 		return AgentSnapshot{}, err
 	}
 	var snapshot AgentSnapshot
-	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.Snapshot, nil, &snapshot, dex.InvokeOptions{
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.GetSnapshot, nil, &snapshot, dex.InvokeOptions{
 		Timeout:           client.commandTimeout,
 		LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
 		LoadChannels: []dex.ChannelDef{
@@ -249,8 +251,8 @@ func (client *Client) resolveSnapshotLifecycle(
 	return snapshot, nil
 }
 
-// ArchivedMessages reads exactly one immutable history chunk before a sequence boundary.
-func (client *Client) ArchivedMessages(ctx context.Context, flowID FlowID, before Sequence) (HistoryPage, error) {
+// GetArchivedMessages reads exactly one immutable history chunk before a sequence boundary.
+func (client *Client) GetArchivedMessages(ctx context.Context, flowID FlowID, before Sequence) (HistoryPage, error) {
 	if err := validateFlowID(flowID); err != nil {
 		return HistoryPage{}, err
 	}
@@ -259,7 +261,7 @@ func (client *Client) ArchivedMessages(ctx context.Context, flowID FlowID, befor
 		return HistoryPage{}, fmt.Errorf("before sequence must identify a %d-message boundary", archiveMessageChunkSize)
 	}
 	var result archivedMessagesRPCOutput
-	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ArchivedMessages, before, &result, dex.InvokeOptions{
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.GetArchivedMessages, before, &result, dex.InvokeOptions{
 		Timeout: client.commandTimeout,
 		LoadAttributeMapInstances: []dex.AttributeMapLoad{
 			archivedMessagesAttribute.Load(sequenceKey(first)),
@@ -427,12 +429,25 @@ func (client *Client) DeleteQueuedMessage(ctx context.Context, flowID FlowID, me
 	if err := validateMessageID(messageID); err != nil {
 		return err
 	}
-	return client.sdk.DeleteChannelMessage(
+	var deleted bool
+	if err := client.sdk.InvokeRPC(
 		ctx,
 		string(flowID),
-		queuedUserMessagesChannel,
-		string(messageID),
-	)
+		client.flow.DeleteQueuedMessage,
+		messageID,
+		&deleted,
+		dex.InvokeOptions{
+			Timeout:         client.commandTimeout,
+			IsTransactional: true,
+			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
+		},
+	); err != nil {
+		return err
+	}
+	if !deleted {
+		return &PendingMessageNotFoundError{MessageID: messageID}
+	}
+	return nil
 }
 
 // ApproveTool invokes the durable ApproveTool command.
@@ -539,6 +554,63 @@ func (client *Client) ReadEvent(
 	}
 }
 
+// ListRecentEvents reads one bounded chronological page from a best-effort Stream.
+func (client *Client) ListRecentEvents(
+	ctx context.Context,
+	flowID FlowID,
+	stream EventStream,
+	limit int,
+) ([]StreamEvent, error) {
+	if err := validateFlowID(flowID); err != nil {
+		return nil, err
+	}
+	if err := stream.Validate(); err != nil {
+		return nil, err
+	}
+	if limit < 1 || limit > MaximumRecentEventLimit {
+		return nil, fmt.Errorf("recent event limit must be between 1 and %d", MaximumRecentEventLimit)
+	}
+	switch stream {
+	case EventStreamReasoning:
+		var page dex.StreamMessagesPage[string]
+		if err := client.sdk.ListStreamMessages(
+			ctx, string(flowID), reasoningSummaryStream, int32(limit), "", &page,
+		); err != nil {
+			return nil, err
+		}
+		return recentTextStreamEvents(StreamEventKindReasoning, page.Messages), nil
+	case EventStreamAssistant:
+		var page dex.StreamMessagesPage[string]
+		if err := client.sdk.ListStreamMessages(
+			ctx, string(flowID), assistantTextStream, int32(limit), "", &page,
+		); err != nil {
+			return nil, err
+		}
+		return recentTextStreamEvents(StreamEventKindAssistant, page.Messages), nil
+	case EventStreamActivity:
+		var page dex.StreamMessagesPage[AgentEvent]
+		if err := client.sdk.ListStreamMessages(
+			ctx, string(flowID), agentActivityStream, int32(limit), "", &page,
+		); err != nil {
+			return nil, err
+		}
+		events := make([]StreamEvent, 0, len(page.Messages))
+		for index := len(page.Messages) - 1; index >= 0; index-- {
+			message := page.Messages[index]
+			events = append(events, StreamEvent{
+				Kind:        StreamEventKindActivity,
+				Activity:    message.Value,
+				ResumeToken: ResumeToken(message.ResumeToken),
+				CreatedAt:   message.CreatedTime,
+				Source:      message.Source,
+			})
+		}
+		return events, nil
+	default:
+		return nil, fmt.Errorf("unsupported event Stream %q", stream)
+	}
+}
+
 func validateFlowID(flowID FlowID) error {
 	if strings.TrimSpace(string(flowID)) == "" {
 		return errors.New("flow ID must not be empty")
@@ -561,4 +633,22 @@ func textStreamEvent(kind StreamEventKind, message dex.StreamMessage, value stri
 		CreatedAt:   message.CreatedTime,
 		Source:      message.Source,
 	}
+}
+
+func recentTextStreamEvents(
+	kind StreamEventKind,
+	messages []dex.ListedStreamMessage[string],
+) []StreamEvent {
+	events := make([]StreamEvent, 0, len(messages))
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		events = append(events, StreamEvent{
+			Kind:        kind,
+			Text:        message.Value,
+			ResumeToken: ResumeToken(message.ResumeToken),
+			CreatedAt:   message.CreatedTime,
+			Source:      message.Source,
+		})
+	}
+	return events
 }

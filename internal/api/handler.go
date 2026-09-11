@@ -28,6 +28,7 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/internal/agent"
 	transportapi "github.com/superdurable/superagent/internal/api/generated"
+	"github.com/superdurable/superagent/internal/config"
 )
 
 // AgentService is the command and live-event surface consumed by HTTP.
@@ -35,14 +36,15 @@ type AgentService interface {
 	Start(context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)
 	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
 	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
-	Snapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
-	ArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
+	GetSnapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
+	GetArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
 	WaitForInteractionStatus(context.Context, agent.FlowID, agent.AgentInteractionStatus) error
 	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
 	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
 	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error
 	ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error
 	ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error)
+	ListRecentEvents(context.Context, agent.FlowID, agent.EventStream, int) ([]agent.StreamEvent, error)
 }
 
 // ToolCatalog is the immutable MCP projection consumed by the launch portal.
@@ -65,6 +67,7 @@ type Handler struct {
 	agent       AgentService
 	tools       ToolCatalog
 	credentials CredentialLookup
+	events      *config.Events
 	ready       Readiness
 	logger      *slog.Logger
 }
@@ -76,16 +79,18 @@ func NewHandler(
 	agentService AgentService,
 	tools ToolCatalog,
 	credentials CredentialLookup,
+	events *config.Events,
 	ready Readiness,
 	logger *slog.Logger,
 ) *Handler {
-	if agentService == nil || tools == nil || credentials == nil || ready == nil || logger == nil {
+	if agentService == nil || tools == nil || credentials == nil || events == nil || ready == nil || logger == nil {
 		panic("API handler dependencies are required")
 	}
 	return &Handler{
 		agent:       agentService,
 		tools:       tools,
 		credentials: credentials,
+		events:      events,
 		ready:       ready,
 		logger:      logger,
 	}
@@ -220,7 +225,7 @@ func (handler *Handler) GetAgentSnapshot(
 	params transportapi.GetAgentSnapshotParams,
 ) (transportapi.GetAgentSnapshotRes, error) {
 	flowID := agent.FlowID(params.FlowId)
-	snapshot, err := handler.agent.Snapshot(ctx, flowID)
+	snapshot, err := handler.agent.GetSnapshot(ctx, flowID)
 	if err != nil {
 		return handler.snapshotError(ctx, flowID, err), nil
 	}
@@ -246,7 +251,7 @@ func (handler *Handler) GetArchivedMessages(
 		return (*transportapi.GetArchivedMessagesBadRequest)(&problem), nil
 	}
 	flowID := agent.FlowID(params.FlowId)
-	page, err := handler.agent.ArchivedMessages(ctx, flowID, agent.Sequence(params.BeforeSequence))
+	page, err := handler.agent.GetArchivedMessages(ctx, flowID, agent.Sequence(params.BeforeSequence))
 	if err != nil {
 		return handler.archivedMessagesError(ctx, flowID, err), nil
 	}
@@ -352,6 +357,38 @@ func (handler *Handler) ReadEvent(ctx context.Context, params transportapi.ReadE
 		return (*transportapi.ReadEventServiceUnavailable)(&problem), nil
 	}
 	return &result, nil
+}
+
+// ListRecentEvents returns one bounded chronological best-effort Stream tail.
+func (handler *Handler) ListRecentEvents(
+	ctx context.Context,
+	params transportapi.ListRecentEventsParams,
+) (transportapi.ListRecentEventsRes, error) {
+	stream, err := domainEventStream(params.Stream)
+	if err != nil {
+		problem := problemBadRequest(err)
+		return (*transportapi.ListRecentEventsBadRequest)(&problem), nil
+	}
+	events, err := handler.agent.ListRecentEvents(
+		ctx,
+		agent.FlowID(params.FlowId),
+		stream,
+		handler.events.RecoveryLimit,
+	)
+	if err != nil {
+		return handler.listRecentEventsError(ctx, agent.FlowID(params.FlowId), err), nil
+	}
+	result := make([]transportapi.StreamEvent, 0, len(events))
+	for _, event := range events {
+		mapped, mapErr := transportStreamEvent(event)
+		if mapErr != nil {
+			handler.logFailure(ctx, agent.FlowID(params.FlowId), mapErr)
+			problem := newProblem(503, "Service Unavailable", "the recent events could not be encoded")
+			return (*transportapi.ListRecentEventsServiceUnavailable)(&problem), nil
+		}
+		result = append(result, mapped)
+	}
+	return &transportapi.RecentEvents{Events: result}, nil
 }
 
 func (handler *Handler) portalProviders() []transportapi.PortalProvider {
@@ -1196,6 +1233,25 @@ func (handler *Handler) readEventError(ctx context.Context, flowID agent.FlowID,
 	default:
 		problem := newProblem(503, "Service Unavailable", "the event Stream is unavailable")
 		return (*transportapi.ReadEventServiceUnavailable)(&problem), nil
+	}
+}
+
+func (handler *Handler) listRecentEventsError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) transportapi.ListRecentEventsRes {
+	handler.logFailure(ctx, flowID, err)
+	switch classifyFailure(err) {
+	case failureNotFound:
+		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
+		return (*transportapi.ListRecentEventsNotFound)(&problem)
+	case failureConflict:
+		problem := newProblem(400, "Bad Request", "the Stream recovery request is invalid")
+		return (*transportapi.ListRecentEventsBadRequest)(&problem)
+	default:
+		problem := newProblem(503, "Service Unavailable", "the recent event Stream is unavailable")
+		return (*transportapi.ListRecentEventsServiceUnavailable)(&problem)
 	}
 }
 

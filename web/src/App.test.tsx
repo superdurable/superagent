@@ -28,6 +28,7 @@ import {
   answerQuestions,
   getAgentSnapshot,
   getPortal,
+  listRecentEvents,
   readEvent,
   sendMessage,
   startAgent,
@@ -49,6 +50,7 @@ vi.mock("./api/generated", async (importOriginal) => {
     executePlan: vi.fn(),
     getAgentSnapshot: vi.fn(),
     getPortal: vi.fn(),
+    listRecentEvents: vi.fn(),
     readEvent: vi.fn(),
     sendMessage: vi.fn(),
     startAgent: vi.fn(),
@@ -117,6 +119,7 @@ describe("App", () => {
     vi.mocked(getPortal).mockResolvedValue(portal);
     vi.mocked(getAgentSnapshot).mockResolvedValue(snapshot);
     vi.mocked(answerQuestions).mockResolvedValue({ accepted: true });
+    vi.mocked(listRecentEvents).mockResolvedValue({ events: [] });
     vi.mocked(readEvent).mockImplementation(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
@@ -205,8 +208,82 @@ describe("App", () => {
     expect(screen.getByText("run-1")).toBeInTheDocument();
     expect(getPortal).toHaveBeenCalledTimes(1);
     expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+    expect(listRecentEvents).toHaveBeenCalledTimes(3);
     expect(readEvent).toHaveBeenCalledTimes(3);
     expect(startAgent).not.toHaveBeenCalled();
+  });
+
+  it("recovers each bounded Stream tail before resuming live polls", async () => {
+    vi.mocked(listRecentEvents).mockImplementation(({ query }) => {
+      switch (query.stream) {
+        case EventStream.REASONING:
+          return Promise.resolve({
+            events: [
+              {
+                kind: "reasoning_summary",
+                value: "Recovered reasoning",
+                resumeToken: "reasoning-tail",
+                createdAt: "2026-09-03T00:01:00Z",
+                source: "model-1",
+              },
+            ],
+          });
+        case EventStream.ASSISTANT:
+          return Promise.resolve({
+            events: [
+              {
+                kind: "assistant_text",
+                value: "Recovered answer",
+                resumeToken: "assistant-tail",
+                createdAt: "2026-09-03T00:02:00Z",
+                source: "model-1",
+              },
+            ],
+          });
+        case EventStream.ACTIVITY:
+          return Promise.resolve({
+            events: [
+              activityEvent(
+                "activity-tail",
+                EventKind.TOOL_PROGRESS,
+                "Recovered activity",
+                "2026-09-03T00:03:00Z",
+              ),
+            ],
+          });
+      }
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const history = await screen.findByLabelText("Conversation history");
+    await within(history).findByText("Recovered activity");
+    expect(within(history).getByText("Recovered answer")).toBeInTheDocument();
+    expect(
+      within(history).getByText("Recovered reasoning"),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readEvent).toHaveBeenCalledTimes(3);
+    });
+    const queries = vi
+      .mocked(readEvent)
+      .mock.calls.map(([options]) => options.query);
+    expect(queries).toContainEqual({
+      flowId: "flow-existing",
+      stream: EventStream.ACTIVITY,
+      resumeToken: "activity-tail",
+    });
+    expect(queries).toContainEqual({
+      flowId: "flow-existing",
+      stream: EventStream.ASSISTANT,
+      resumeToken: "assistant-tail",
+    });
+    expect(queries).toContainEqual({
+      flowId: "flow-existing",
+      stream: EventStream.REASONING,
+      resumeToken: "reasoning-tail",
+    });
   });
 
   it("starts through the generated client and loads one Snapshot", async () => {
@@ -243,6 +320,9 @@ describe("App", () => {
 
     render(<App />);
 
+    expect(
+      await screen.findByRole("button", { name: /Message queue/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     const steer = await screen.findByRole("button", { name: "Steer now" });
     expect(steer).toHaveClass("steer-action");
     fireEvent.click(steer);
@@ -302,7 +382,11 @@ describe("App", () => {
     send.focus();
     fireEvent.click(send);
 
-    expect(await screen.findByText("Submitting…")).toBeInTheDocument();
+    const queueToggle = await screen.findByRole("button", {
+      name: /Message queue/,
+    });
+    expect(queueToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Submitting…")).toBeInTheDocument();
     expect(screen.getByText("new work")).toBeInTheDocument();
     expect(composer).toHaveValue("");
     expect(composer).toBeEnabled();
@@ -494,6 +578,8 @@ describe("App", () => {
     const sendButton = within(composer).getByRole("button", { name: "Send" });
     expect(agentStatus.parentElement).toHaveClass("composer-actions");
     expect(agentStatus.nextElementSibling).toBe(sendButton);
+    const toggle = within(queue).getByRole("button", { name: /Message queue/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(within(queue).getByText("Follow up")).toBeInTheDocument();
     const plan = screen.getByLabelText("Agent plan");
     expect(plan.closest("aside")).not.toBeNull();
@@ -509,7 +595,6 @@ describe("App", () => {
       "The Agent must consume or remove queued messages before continuing this Plan.",
     );
 
-    const toggle = within(queue).getByRole("button", { name: /Message queue/ });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(within(queue).queryByText("Follow up")).not.toBeInTheDocument();
@@ -748,6 +833,8 @@ describe("App", () => {
     await waitFor(() => {
       expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
     });
+    const queueToggle = screen.getByRole("button", { name: /Message queue/ });
+    expect(queueToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/Pace.*Relaxed/)).toBeInTheDocument();
   });
 

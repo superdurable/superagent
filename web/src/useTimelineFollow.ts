@@ -22,6 +22,7 @@ interface TimelineFollowOptions {
 interface TimelineFollowState {
   hasUnseenContent: boolean;
   jumpToLatest: () => void;
+  keepLatestVisible: () => void;
 }
 
 export function useTimelineFollow({
@@ -35,6 +36,16 @@ export function useTimelineFollow({
   const resizeFrame = useRef<number | null>(null);
   const [hasUnseenContent, setHasUnseenContent] = useState(false);
 
+  const keepLatestVisible = useCallback(() => {
+    if (!isFollowing.current) return;
+    if (resizeFrame.current !== null)
+      window.cancelAnimationFrame(resizeFrame.current);
+    resizeFrame.current = window.requestAnimationFrame(() => {
+      resizeFrame.current = null;
+      scrollToBottom("auto");
+    });
+  }, []);
+
   const jumpToLatest = useCallback(() => {
     isFollowing.current = true;
     setHasUnseenContent(false);
@@ -47,26 +58,25 @@ export function useTimelineFollow({
   }, []);
 
   useEffect(() => {
+    let previousScrollY = window.scrollY;
     const updateFollowState = () => {
+      const currentScrollY = window.scrollY;
+      const didScrollUp = currentScrollY < previousScrollY;
+      previousScrollY = currentScrollY;
       if (isAtBottom()) {
         isFollowing.current = true;
         isJumping.current = false;
         setHasUnseenContent(false);
         return;
       }
-      if (!isJumping.current) isFollowing.current = false;
+      if (!isJumping.current && didScrollUp) isFollowing.current = false;
     };
     const keepBottomVisible = () => {
       if (!isFollowing.current) {
         updateFollowState();
         return;
       }
-      if (resizeFrame.current !== null)
-        window.cancelAnimationFrame(resizeFrame.current);
-      resizeFrame.current = window.requestAnimationFrame(() => {
-        resizeFrame.current = null;
-        scrollToBottom("auto");
-      });
+      keepLatestVisible();
     };
     const cancelSmoothJump = () => {
       isJumping.current = false;
@@ -88,7 +98,7 @@ export function useTimelineFollow({
       window.removeEventListener("touchstart", cancelSmoothJump);
       window.removeEventListener("pointerdown", cancelSmoothJump);
     };
-  }, []);
+  }, [keepLatestVisible]);
 
   useLayoutEffect(() => {
     const didFlowRunChange = previousFlowRunKey.current !== flowRunKey;
@@ -111,7 +121,7 @@ export function useTimelineFollow({
     setHasUnseenContent(true);
   }, [contentVersion, flowRunKey]);
 
-  return { hasUnseenContent, jumpToLatest };
+  return { hasUnseenContent, jumpToLatest, keepLatestVisible };
 }
 
 function isAtBottom(): boolean {

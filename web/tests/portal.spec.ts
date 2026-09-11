@@ -140,6 +140,13 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
           json: { reason: "timeout" },
         });
         return;
+      case "/products/ai-agent/events/recent":
+        await route.fulfill({
+          headers,
+          contentType: "application/json",
+          json: { events: [] },
+        });
+        return;
       default:
         await route.fulfill({ status: 404, headers });
     }
@@ -184,4 +191,7 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
   expect(
     apiRequests.filter((path) => path === "/products/ai-agent/snapshot"),
   ).toHaveLength(1);
+  expect(
+    apiRequests.filter((path) => path === "/products/ai-agent/events/recent"),
+  ).toHaveLength(3);
 });

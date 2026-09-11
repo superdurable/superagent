@@ -384,6 +384,38 @@ paths:
                 $ref: "#/components/schemas/PollTimeout"
         "503":
           $ref: "#/components/responses/Problem"
+  /products/ai-agent/events/recent:
+    get:
+      operationId: listRecentEvents
+      summary: List the configured recent tail of one best-effort Agent Stream
+      description: >-
+        Returns at most the server-configured recovery limit in chronological
+        order. The final event's resume token continues the live long poll.
+        Streams are live hints, never a durable state source.
+      parameters:
+        - name: flowId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FlowId"
+        - name: stream
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/EventStream"
+      responses:
+        "200":
+          description: One bounded chronological Stream tail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentEvents"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
 components:
   responses:
     Problem:
@@ -1145,6 +1177,17 @@ components:
           reasoning_summary: "#/components/schemas/ReasoningStreamEvent"
           assistant_text: "#/components/schemas/AssistantStreamEvent"
           activity: "#/components/schemas/ActivityStreamEvent"
+    RecentEvents:
+      type: object
+      additionalProperties: false
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/StreamEvent"
     ReasoningStreamEvent:
       allOf:
         - $ref: "#/components/schemas/TextStreamEvent"

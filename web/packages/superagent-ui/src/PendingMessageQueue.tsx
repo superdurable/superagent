@@ -41,11 +41,7 @@ export function PendingMessageQueue({
   onAction,
   id = "message-queue",
 }: PendingMessageQueueProps) {
-  const signature = items.map((item) => `${item.kind}:${item.id}`).join("|");
-  const [collapsedSignature, setCollapsedSignature] = useState<string | null>(
-    null,
-  );
-  const isExpanded = collapsedSignature !== signature;
+  const [isExpanded, setIsExpanded] = useState(true);
   if (items.length === 0) return null;
 
   const queuedCount = items.filter((item) => item.kind !== "steered").length;
@@ -59,7 +55,7 @@ export function PendingMessageQueue({
         aria-controls={itemsID}
         aria-expanded={isExpanded}
         onClick={() => {
-          setCollapsedSignature(isExpanded ? signature : null);
+          setIsExpanded((current) => !current);
         }}
       >
         <span>Message queue</span>
@@ -101,8 +97,10 @@ function QueueItem({
     <div
       className={`sa-queue-message sa-queue-message--${item.kind} queue-message${stateClass}`}
     >
-      <strong>{item.label}</strong>
-      {item.modeLabel !== undefined && <small>{item.modeLabel}</small>}
+      <div className="sa-queue-message-meta">
+        <strong>{item.label}</strong>
+        {item.modeLabel !== undefined && <small>{item.modeLabel}</small>}
+      </div>
       <p>{item.content}</p>
       {item.kind === "queued" && (
         <div className="sa-queue-actions queue-actions">

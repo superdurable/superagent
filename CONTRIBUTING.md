@@ -11,7 +11,7 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill. Confirm APIs
 against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
-Snapshot code targets Dex Go SDK `v0.4.0`. Recheck the installed SDK source and
+Snapshot and Stream code target Dex Go SDK `v0.6.1`. Recheck the installed SDK source and
 the installed skill before changing its resource projection or errors. Never
 infer an API from a design screenshot or unreleased branch.
 
@@ -81,9 +81,9 @@ Set `SUPERAGENT_E2E_HTTP_ADDRESS`, `SUPERAGENT_E2E_WEB_ADDRESS`, and
 `SUPERAGENT_E2E_WORKER_ADDRESS` to isolate a local full-stack run from an
 already running development Agent.
 
-The integration suite reads private resources through the Dex Client only. It
-must not add an HTTP read endpoint or exported descriptor getter to make tests
-easier.
+The integration suite reads private resources only through Flow RPCs whose
+names end in `ForTestOnly`. It must not add an HTTP read endpoint or exported
+descriptor getter to make tests easier.
 
 `make check-flow-definition` generates JSON in a temporary directory and fails
 on any visualizer diagnostic. `make flow-visualize` analyzes

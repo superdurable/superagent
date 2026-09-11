@@ -14,10 +14,10 @@ var (
 	rn4AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn19AllowedHeaders = map[string]string{
+	rn20AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn15AllowedHeaders = map[string]string{
+	rn16AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
 	rn5AllowedHeaders = map[string]string{
@@ -26,7 +26,7 @@ var (
 	rn1AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
-	rn17AllowedHeaders = map[string]string{
+	rn18AllowedHeaders = map[string]string{
 		"POST": "Content-Type",
 	}
 	rn3AllowedHeaders = map[string]string{
@@ -155,7 +155,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
 						switch r.Method {
 						case "GET":
 							s.handleReadEventRequest([0]string{}, elemIsEscaped, w, r)
@@ -169,6 +168,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 
 						return
+					}
+					switch elem[0] {
+					case '/': // Prefix: "/recent"
+
+						if l := len("/recent"); len(elem) >= l && elem[0:l] == "/recent" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "GET":
+								s.handleListRecentEventsRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "GET",
+									allowedHeaders: nil,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
 					}
 
 				case 'i': // Prefix: "interaction-status"
@@ -261,7 +287,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								default:
 									s.notAllowed(w, r, notAllowedParams{
 										allowedMethods: "POST",
-										allowedHeaders: rn19AllowedHeaders,
+										allowedHeaders: rn20AllowedHeaders,
 										acceptPost:     "application/json",
 										acceptPatch:    "",
 									})
@@ -288,7 +314,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "POST",
-									allowedHeaders: rn15AllowedHeaders,
+									allowedHeaders: rn16AllowedHeaders,
 									acceptPost:     "application/json",
 									acceptPatch:    "",
 								})
@@ -441,7 +467,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "POST",
-									allowedHeaders: rn17AllowedHeaders,
+									allowedHeaders: rn18AllowedHeaders,
 									acceptPost:     "application/json",
 									acceptPatch:    "",
 								})
@@ -675,7 +701,6 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 					}
 
 					if len(elem) == 0 {
-						// Leaf node.
 						switch method {
 						case "GET":
 							r.name = ReadEventOperation
@@ -689,6 +714,33 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						default:
 							return
 						}
+					}
+					switch elem[0] {
+					case '/': // Prefix: "/recent"
+
+						if l := len("/recent"); len(elem) >= l && elem[0:l] == "/recent" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "GET":
+								r.name = ListRecentEventsOperation
+								r.summary = "List the configured recent tail of one best-effort Agent Stream"
+								r.operationID = "listRecentEvents"
+								r.operationGroup = ""
+								r.pathPattern = "/products/ai-agent/events/recent"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
 					}
 
 				case 'i': // Prefix: "interaction-status"

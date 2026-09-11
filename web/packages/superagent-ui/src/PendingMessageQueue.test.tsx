@@ -44,6 +44,9 @@ describe("PendingMessageQueue", () => {
     );
 
     expect(screen.getByText("2 queued · 1 steering")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Message queue/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     const messages = container.querySelectorAll(".queue-message");
     expect(messages).toHaveLength(3);
     expect(messages[0]).toHaveClass("steered", "sa-queue-message--steered");
@@ -55,14 +58,15 @@ describe("PendingMessageQueue", () => {
     expect(onAction).toHaveBeenCalledWith("queued-1", "steer");
   });
 
-  it("collapses until queue identity changes, then reveals new work", () => {
+  it("starts expanded and preserves an explicit collapse as identity changes", () => {
     const { rerender } = render(
       <PendingMessageQueue items={items} onAction={vi.fn()} />,
     );
     const toggle = screen.getByRole("button", { name: /Message queue/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Do this first")).toBeInTheDocument();
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("Do this first")).not.toBeInTheDocument();
 
     rerender(
       <PendingMessageQueue
@@ -79,8 +83,8 @@ describe("PendingMessageQueue", () => {
         onAction={vi.fn()}
       />,
     );
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("New work")).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("New work")).not.toBeInTheDocument();
   });
 
   it("disables mutations and shows a pending action without leaking state", () => {

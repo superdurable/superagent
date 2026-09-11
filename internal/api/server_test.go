@@ -54,6 +54,7 @@ func TestPortalEncodesEmptyMCPArrays(t *testing.T) {
 		&fakeAgentService{},
 		emptyToolCatalog{},
 		fakeCredentials{},
+		&config.Events{RecoveryLimit: agent.MaximumRecentEventLimit},
 		func() bool { return true },
 		slog.New(slog.DiscardHandler),
 	)

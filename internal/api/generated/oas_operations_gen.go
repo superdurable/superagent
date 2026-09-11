@@ -15,6 +15,7 @@ const (
 	GetHealthOperation                     OperationName = "GetHealth"
 	GetPortalOperation                     OperationName = "GetPortal"
 	GetReadinessOperation                  OperationName = "GetReadiness"
+	ListRecentEventsOperation              OperationName = "ListRecentEvents"
 	ReadEventOperation                     OperationName = "ReadEvent"
 	SendMessageOperation                   OperationName = "SendMessage"
 	StartAgentOperation                    OperationName = "StartAgent"

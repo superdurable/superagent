@@ -25,6 +25,7 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/internal/agent"
 	transportapi "github.com/superdurable/superagent/internal/api/generated"
+	"github.com/superdurable/superagent/internal/config"
 )
 
 func TestStartAgentQualifiesProviderModel(t *testing.T) {
@@ -192,6 +193,41 @@ func TestReadEventMapsPollTimeoutToTypedResponse(t *testing.T) {
 	timeout, ok := response.(*transportapi.PollTimeout)
 	if !ok || timeout.Reason != transportapi.PollTimeoutReasonTimeout {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestListRecentEventsMapsChronologicalTailAndConfiguredLimit(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{recentEvents: []agent.StreamEvent{
+		{
+			Kind: agent.StreamEventKindReasoning, Text: "first", ResumeToken: "resume-1",
+			CreatedAt: time.Unix(1, 0).UTC(), Source: "model-1",
+		},
+		{
+			Kind: agent.StreamEventKindAssistant, Text: "second", ResumeToken: "resume-2",
+			CreatedAt: time.Unix(2, 0).UTC(), Source: "model-1",
+		},
+	}}
+	handler := newTestHandler(service, fakeCredentials{})
+	handler.events.RecoveryLimit = 2
+	response, err := handler.ListRecentEvents(context.Background(), transportapi.ListRecentEventsParams{
+		FlowId: "flow-1",
+		Stream: transportapi.EventStreamAssistant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recent, ok := response.(*transportapi.RecentEvents)
+	if !ok || len(recent.Events) != 2 {
+		t.Fatalf("response = %#v", response)
+	}
+	first, isReasoning := recent.Events[0].GetReasoningStreamEvent()
+	second, isAssistant := recent.Events[1].GetAssistantStreamEvent()
+	if !isReasoning || !isAssistant || first.Value != "first" || second.Value != "second" {
+		t.Fatalf("events = %#v", recent.Events)
+	}
+	if service.recentEventLimit != 2 {
+		t.Fatalf("recovery limit = %d, want 2", service.recentEventLimit)
 	}
 }
 
@@ -489,7 +525,14 @@ func validStartRequest() *transportapi.StartAgentRequest {
 }
 
 func newTestHandler(service *fakeAgentService, credentials fakeCredentials) *Handler {
-	return NewHandler(service, fakeToolCatalog{}, credentials, func() bool { return true }, slog.New(slog.DiscardHandler))
+	return NewHandler(
+		service,
+		fakeToolCatalog{},
+		credentials,
+		&config.Events{RecoveryLimit: agent.MaximumRecentEventLimit},
+		func() bool { return true },
+		slog.New(slog.DiscardHandler),
+	)
 }
 
 type fakeAgentService struct {
@@ -512,6 +555,9 @@ type fakeAgentService struct {
 	executeErr       error
 	event            agent.StreamEvent
 	eventErr         error
+	recentEvents     []agent.StreamEvent
+	recentEventsErr  error
+	recentEventLimit int
 }
 
 var _ AgentService = (*fakeAgentService)(nil)
@@ -536,14 +582,14 @@ func (service *fakeAgentService) AnswerQuestions(
 	return service.answerErr
 }
 
-func (service *fakeAgentService) Snapshot(
+func (service *fakeAgentService) GetSnapshot(
 	context.Context,
 	agent.FlowID,
 ) (agent.AgentSnapshot, error) {
 	return service.snapshot, service.snapshotErr
 }
 
-func (service *fakeAgentService) ArchivedMessages(
+func (service *fakeAgentService) GetArchivedMessages(
 	context.Context,
 	agent.FlowID,
 	agent.Sequence,
@@ -588,6 +634,16 @@ func (service *fakeAgentService) ExecutePlan(context.Context, agent.FlowID, agen
 
 func (service *fakeAgentService) ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error) {
 	return service.event, service.eventErr
+}
+
+func (service *fakeAgentService) ListRecentEvents(
+	_ context.Context,
+	_ agent.FlowID,
+	_ agent.EventStream,
+	limit int,
+) ([]agent.StreamEvent, error) {
+	service.recentEventLimit = limit
+	return service.recentEvents, service.recentEventsErr
 }
 
 type fakeCredentials map[agent.Provider]bool
