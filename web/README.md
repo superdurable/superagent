@@ -57,3 +57,5 @@ cancellable `/events/recent` reads recover a bounded Stream tail before
 `/events` polls add assistant text, reasoning summaries, and structured
 activity. Disconnects and command completion reconcile with another Snapshot.
 Queue mutations optimistically update by stable message ID and then reconcile.
+The timeline follows the latest content until the user scrolls upward. Queue
+updates remain collapsed unless the user explicitly expands them.

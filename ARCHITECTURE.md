@@ -154,12 +154,15 @@ refresh uses `ListStreamMessages` once per Stream, bounded by
 reconstructed. Completed-source tracking prevents recovered text from
 duplicating durable assistant messages and keeps recovered reasoning summaries
 in a completed state.
-The timeline follows new content only while the reader is at its bottom. Manual
-upward scrolling pauses that behavior. Later message, reasoning, or activity
-content exposes an explicit jump-to-latest control instead of moving the
-viewport. Archive prepends preserve the reading position and do not count as
-new timeline content. Agent status lives inside the fixed composer above its
-primary action, so it stays visible without covering the timeline.
+The timeline follows new content by default. Only an upward viewport movement
+pauses that behavior; composer and queue layout changes keep the latest content
+visible. Later message, reasoning, or activity content exposes an explicit
+jump-to-latest control instead of moving a reader who is viewing history.
+Returning to the bottom resumes following. Archive prepends preserve the
+reading position and do not count as new timeline content. The pending-message
+queue starts collapsed and changes only when the user toggles it. Agent status
+lives inside the fixed composer above its primary action, so it stays visible
+without covering the timeline.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are
 single-flight and coalesce new triggers into at most one trailing read. A
 mutation increments an epoch, so a response started before that mutation cannot

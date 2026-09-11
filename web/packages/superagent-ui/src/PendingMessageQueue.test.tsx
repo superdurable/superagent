@@ -44,6 +44,7 @@ describe("PendingMessageQueue", () => {
     );
 
     expect(screen.getByText("2 queued · 1 steering")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Message queue/ }));
     const messages = container.querySelectorAll(".queue-message");
     expect(messages).toHaveLength(3);
     expect(messages[0]).toHaveClass("steered", "sa-queue-message--steered");
@@ -55,12 +56,11 @@ describe("PendingMessageQueue", () => {
     expect(onAction).toHaveBeenCalledWith("queued-1", "steer");
   });
 
-  it("collapses until queue identity changes, then reveals new work", () => {
+  it("stays collapsed as queue identity changes and preserves explicit expansion", () => {
     const { rerender } = render(
       <PendingMessageQueue items={items} onAction={vi.fn()} />,
     );
     const toggle = screen.getByRole("button", { name: /Message queue/ });
-    fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Do this first")).not.toBeInTheDocument();
 
@@ -79,6 +79,10 @@ describe("PendingMessageQueue", () => {
         onAction={vi.fn()}
       />,
     );
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("New work")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("New work")).toBeInTheDocument();
   });
@@ -92,6 +96,7 @@ describe("PendingMessageQueue", () => {
         pendingItemID="queued-1"
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /Message queue/ }));
     const updates = screen.getAllByRole("button", { name: "Updating…" });
     expect(updates).toHaveLength(3);
     for (const update of updates) expect(update).toBeDisabled();

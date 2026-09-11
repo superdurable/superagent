@@ -86,7 +86,6 @@ export function ConversationView({
   onMutateQueue,
   onStartAnother,
 }: ConversationViewProps) {
-  const { shellRef, composerRef } = useComposerClearance();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusAfterQueueMutation = useRef(false);
   const { snapshot } = state;
@@ -116,10 +115,12 @@ export function ConversationView({
         `${entry.source}:${String(entry.value.length)}:${String(entry.isComplete)}`,
     ),
   ].join("|");
-  const { hasUnseenContent, jumpToLatest } = useTimelineFollow({
-    flowRunKey: `${flowId}:${snapshot.runId}`,
-    contentVersion: `${String(description.lastSequence)}:${liveContentVersion}`,
-  });
+  const { hasUnseenContent, jumpToLatest, keepLatestVisible } =
+    useTimelineFollow({
+      flowRunKey: `${flowId}:${snapshot.runId}`,
+      contentVersion: `${String(description.lastSequence)}:${liveContentVersion}`,
+    });
+  const { shellRef, composerRef } = useComposerClearance(keepLatestVisible);
   useArchiveScroll(
     snapshot.history.nextBeforeSequence,
     state.historyRequest !== null,
@@ -766,7 +767,7 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-function useComposerClearance(): {
+function useComposerClearance(keepLatestVisible: () => void): {
   shellRef: React.RefObject<HTMLElement>;
   composerRef: React.RefObject<HTMLElement>;
 } {
@@ -781,6 +782,7 @@ function useComposerClearance(): {
         "--composer-height",
         `${String(Math.ceil(composer.getBoundingClientRect().height))}px`,
       );
+      keepLatestVisible();
     };
     update();
     if (typeof ResizeObserver === "undefined") {
@@ -794,7 +796,7 @@ function useComposerClearance(): {
       observer.disconnect();
       shell.style.removeProperty("--composer-height");
     };
-  }, []);
+  }, [keepLatestVisible]);
   return { shellRef, composerRef };
 }
 
