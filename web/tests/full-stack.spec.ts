@@ -77,6 +77,14 @@ test("renders chronological transient activity and durable queue interactions", 
     optimisticQueue.getByRole("button", { name: /Message queue/ }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("Submitting…")).toBeVisible();
+  await expect(page.locator(".queue-message.submitting")).toHaveCSS(
+    "border-color",
+    "rgb(245, 158, 11)",
+  );
+  await expect(page.locator(".queue-message.submitting")).toHaveCSS(
+    "background-color",
+    "rgb(255, 251, 235)",
+  );
   await expect(
     page.getByRole("button", { name: "Jump to latest message" }),
   ).toHaveCount(0);
@@ -230,6 +238,27 @@ test("renders chronological transient activity and durable queue interactions", 
       .locator(".message-bubble.assistant")
       .filter({ hasText: "Local demo response: steer the timer now" }),
   ).toHaveCount(1);
+});
+
+test("accepts the first message after Start and retains it across refresh", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+
+  const message = `first-message-${crypto.randomUUID()}`;
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.status() === 202 &&
+      new URL(response.url()).pathname === "/products/ai-agent/messages",
+  );
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill(message);
+  await page.getByRole("button", { name: "Send" }).click();
+  await accepted;
+
+  await page.reload();
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
 });
 
 test("keeps mutations gated until the post-command Snapshot completes", async ({

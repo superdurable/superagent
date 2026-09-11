@@ -36,7 +36,7 @@ SUPERAGENT_E2E_MCP_HELPER_DIRECTORY="$log_dir/mcp-helper" \
 "$repository_dir/bin/superagent" >"$log_dir/backend.log" 2>&1 &
 backend_pid=$!
 
-python3 -m http.server "$web_port" --bind "$web_host" --directory "$web_root" \
+node "$repository_dir/script/serve-web.mjs" --port "$web_port" --host "$web_host" --directory "$web_root" \
   >"$log_dir/web.log" 2>&1 &
 web_pid=$!
 

@@ -216,9 +216,8 @@
 }
 
 .sa-queue-message--submitting {
-  border-color: var(--sa-submitting-border, #aeb6ff);
-  background: var(--sa-submitting-background, #f4f5ff);
-  opacity: 0.82;
+  border-color: var(--sa-submitting-border, #f59e0b);
+  background: var(--sa-submitting-background, #fffbeb);
 }
 
 .sa-queue-message-meta {

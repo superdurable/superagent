@@ -43,7 +43,7 @@ For local development, start SuperAgent with the frontend origin allowlisted:
 
 ```bash
 SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent
-python3 -m http.server 3000 --directory web/dist
+node script/serve-web.mjs --directory web/dist --port 3000
 ```
 
 Open `http://127.0.0.1:3000/`. Production `apiOrigin` values must use HTTPS.

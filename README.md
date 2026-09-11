@@ -92,7 +92,7 @@ SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent
 Serve the frontend from a separate terminal:
 
 ```bash
-python3 -m http.server 3000 --directory web/dist
+node script/serve-web.mjs --directory web/dist --port 3000
 ```
 
 Open `http://127.0.0.1:3000/`. The local defaults are:
