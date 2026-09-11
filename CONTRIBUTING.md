@@ -115,6 +115,12 @@ permission. The workflow uses npm trusted publishing and GitHub OIDC. Do not add
 an `NPM_TOKEN` secret. A manual workflow dispatch can publish an existing tag
 that did not complete automatically.
 
+The `github-release-ui.yml` workflow attaches the matching npm-compatible
+archive to every published GitHub Release. Its manual dispatch repairs an
+existing Release only when a missing asset is generated, or when the existing
+asset is byte-for-byte identical. It never overwrites a different release
+artifact.
+
 Before committing, run the full applicable gates and `git diff --check`. Do not
 bypass hooks. Inspect the staged diff, commit with a meaningful message, verify
 the recorded author/message, and leave a clean worktree.
