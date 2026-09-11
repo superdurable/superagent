@@ -160,7 +160,8 @@ visible. Later message, reasoning, or activity content exposes an explicit
 jump-to-latest control instead of moving a reader who is viewing history.
 Returning to the bottom resumes following. Archive prepends preserve the
 reading position and do not count as new timeline content. The pending-message
-queue starts collapsed and changes only when the user toggles it. Agent status
+queue starts expanded as a compact, bounded list. Each message is one truncated
+row with inline actions; editing reveals the complete queued text. Agent status
 lives inside the fixed composer above its primary action, so it stays visible
 without covering the timeline.
 Every poll, Snapshot, and command owns cancellation. Snapshot reads are

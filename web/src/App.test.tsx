@@ -320,9 +320,9 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(
+    expect(
       await screen.findByRole("button", { name: /Message queue/ }),
-    );
+    ).toHaveAttribute("aria-expanded", "true");
     const steer = await screen.findByRole("button", { name: "Steer now" });
     expect(steer).toHaveClass("steer-action");
     fireEvent.click(steer);
@@ -385,9 +385,7 @@ describe("App", () => {
     const queueToggle = await screen.findByRole("button", {
       name: /Message queue/,
     });
-    expect(queueToggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("new work")).not.toBeInTheDocument();
-    fireEvent.click(queueToggle);
+    expect(queueToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Submitting…")).toBeInTheDocument();
     expect(screen.getByText("new work")).toBeInTheDocument();
     expect(composer).toHaveValue("");
@@ -581,9 +579,7 @@ describe("App", () => {
     expect(agentStatus.parentElement).toHaveClass("composer-actions");
     expect(agentStatus.nextElementSibling).toBe(sendButton);
     const toggle = within(queue).getByRole("button", { name: /Message queue/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(queue).queryByText("Follow up")).not.toBeInTheDocument();
-    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(within(queue).getByText("Follow up")).toBeInTheDocument();
     const plan = screen.getByLabelText("Agent plan");
     expect(plan.closest("aside")).not.toBeNull();
@@ -838,8 +834,7 @@ describe("App", () => {
       expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
     });
     const queueToggle = screen.getByRole("button", { name: /Message queue/ });
-    expect(queueToggle).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(queueToggle);
+    expect(queueToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/Pace.*Relaxed/)).toBeInTheDocument();
   });
 

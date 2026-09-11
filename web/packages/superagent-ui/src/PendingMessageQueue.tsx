@@ -41,7 +41,7 @@ export function PendingMessageQueue({
   onAction,
   id = "message-queue",
 }: PendingMessageQueueProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
   if (items.length === 0) return null;
 
   const queuedCount = items.filter((item) => item.kind !== "steered").length;
@@ -97,8 +97,10 @@ function QueueItem({
     <div
       className={`sa-queue-message sa-queue-message--${item.kind} queue-message${stateClass}`}
     >
-      <strong>{item.label}</strong>
-      {item.modeLabel !== undefined && <small>{item.modeLabel}</small>}
+      <div className="sa-queue-message-meta">
+        <strong>{item.label}</strong>
+        {item.modeLabel !== undefined && <small>{item.modeLabel}</small>}
+      </div>
       <p>{item.content}</p>
       {item.kind === "queued" && (
         <div className="sa-queue-actions queue-actions">
