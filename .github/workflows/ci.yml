@@ -42,6 +42,32 @@ jobs:
         run: make fuzz FUZZ_TIME=30s
       - name: Validate the Go Flow graph
         run: make check-flow-definition
+      - name: Verify tag-derived UI release archive
+        working-directory: web
+        shell: bash
+        run: |
+          release_tag="v99.99.99"
+          release_version="${release_tag#v}"
+          asset_directory="${RUNNER_TEMP}/superagent-ui-release"
+          asset_name="superdurable-superagent-ui-${release_version}.tgz"
+
+          npm version "${release_version}" \
+            --workspace @superdurable/superagent-ui \
+            --no-git-tag-version \
+            --allow-same-version \
+            --ignore-scripts \
+            --no-workspaces-update
+          mkdir -p "${asset_directory}"
+          npm pack \
+            --workspace @superdurable/superagent-ui \
+            --pack-destination "${asset_directory}"
+
+          asset_path="${asset_directory}/${asset_name}"
+          test -f "${asset_path}"
+          archived_version="$(tar -xOf "${asset_path}" package/package.json |
+            node --input-type=module --eval \
+              "let data = ''; for await (const chunk of process.stdin) data += chunk; console.log(JSON.parse(data).version)")"
+          test "${archived_version}" = "${release_version}"
       - name: Upload backend artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

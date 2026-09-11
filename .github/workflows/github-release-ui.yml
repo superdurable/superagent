@@ -53,32 +53,25 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Verify package version
-        shell: bash
-        run: |
-          release_version="${RELEASE_TAG#v}"
-          package_version="$(node --print "require('./packages/superagent-ui/package.json').version")"
-          application_version="$(node --print "require('./package.json').dependencies['@superdurable/superagent-ui']")"
-          lock_version="$(node --print "require('./package-lock.json').packages['packages/superagent-ui'].version")"
-
-          if [[ "${package_version}" != "${release_version}" ]]; then
-            echo "Package version ${package_version} does not match tag ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-          if [[ "${application_version}" != "${release_version}" ]]; then
-            echo "Web dependency ${application_version} does not match tag ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-          if [[ "${lock_version}" != "${release_version}" ]]; then
-            echo "Lockfile version ${lock_version} does not match tag ${RELEASE_TAG}" >&2
-            exit 1
-          fi
       - name: Install locked dependencies
         run: npm ci
       - name: Check static types
         run: npm run typecheck --workspace @superdurable/superagent-ui
       - name: Test package
         run: npm run test --workspace @superdurable/superagent-ui
+      - name: Set package version from release tag
+        shell: bash
+        run: |
+          release_version="${RELEASE_TAG#v}"
+          npm version "${release_version}" \
+            --workspace @superdurable/superagent-ui \
+            --no-git-tag-version \
+            --allow-same-version \
+            --ignore-scripts \
+            --no-workspaces-update
+
+          package_version="$(node --print "require('./packages/superagent-ui/package.json').version")"
+          test "${package_version}" = "${release_version}"
       - name: Build release archive
         shell: bash
         run: |
