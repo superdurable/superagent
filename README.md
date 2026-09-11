@@ -19,7 +19,8 @@ transport boundaries from one contract.
 The browser restores durable state through one
 `GET /products/ai-agent/snapshot` request. It applies Stream updates for low
 latency and reconciles after durable waits, server errors, explicit requests,
-and a visible-page ten-second lifecycle fallback.
+and a visible-page ten-second lifecycle fallback. Refresh recovers only the
+configured recent Stream tail before resuming live polls.
 
 ## Architecture
 
@@ -58,7 +59,7 @@ Commands use Dex transactional RPC semantics. Callers do not create command or
 message IDs. Snapshot exposes Dex Channel message IDs for queued-message edit,
 delete, and steering. After an ambiguous network result, clients read Snapshot
 to reconcile current durable state instead of consulting stored command
-receipts. `Client.ArchivedMessages` reads one immutable history page without
+receipts. `Client.GetArchivedMessages` reads one immutable history page without
 loading the current Agent interaction state.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries and durable/live
@@ -108,20 +109,21 @@ available.
 
 ## Configuration
 
-| Variable                          | Purpose                            | Default                      |
-| --------------------------------- | ---------------------------------- | ---------------------------- |
-| `SUPERAGENT_HTTP_ADDRESS`         | OpenAPI bind address               | `127.0.0.1:8080`             |
-| `SUPERAGENT_HTTP_ALLOWED_ORIGINS` | Exact comma-separated CORS origins | none                         |
-| `DEX_FLOW_SERVICE_ADDRESS`        | Dex FlowService address            | `127.0.0.1:8801`             |
-| `DEX_WORKER_BIND_ADDRESS`         | Local Worker bind address          | `127.0.0.1:8803`             |
-| `DEX_WORKER_TARGET`               | Worker address advertised to Dex   | Worker bind address          |
-| `DEX_BLOB_CACHE_DIR`              | Disposable BlobCache directory     | `/tmp/superagent-blob-cache` |
-| `DEX_BLOB_CACHE_MAX_BYTES`        | BlobCache size limit in bytes      | `536870912`                  |
-| `DEX_AGENT_MCP_CONFIG`            | Trusted MCP YAML path              | disabled                     |
-| `OPENAI_API_KEY`                  | OpenAI credential                  | unset                        |
-| `ANTHROPIC_API_KEY`               | Anthropic credential               | unset                        |
-| `GEMINI_API_KEY`                  | Gemini credential                  | unset                        |
-| `GROQ_API_KEY`                    | Groq credential                    | unset                        |
+| Variable                           | Purpose                                                       | Default                      |
+| ---------------------------------- | ------------------------------------------------------------- | ---------------------------- |
+| `SUPERAGENT_HTTP_ADDRESS`          | OpenAPI bind address                                          | `127.0.0.1:8080`             |
+| `SUPERAGENT_HTTP_ALLOWED_ORIGINS`  | Exact comma-separated CORS origins                            | none                         |
+| `SUPERAGENT_STREAM_RECOVERY_LIMIT` | Recent events read per Stream on refresh, from 1 through 1000 | `1000`                       |
+| `DEX_FLOW_SERVICE_ADDRESS`         | Dex FlowService address                                       | `127.0.0.1:8801`             |
+| `DEX_WORKER_BIND_ADDRESS`          | Local Worker bind address                                     | `127.0.0.1:8803`             |
+| `DEX_WORKER_TARGET`                | Worker address advertised to Dex                              | Worker bind address          |
+| `DEX_BLOB_CACHE_DIR`               | Disposable BlobCache directory                                | `/tmp/superagent-blob-cache` |
+| `DEX_BLOB_CACHE_MAX_BYTES`         | BlobCache size limit in bytes                                 | `536870912`                  |
+| `DEX_AGENT_MCP_CONFIG`             | Trusted MCP YAML path                                         | disabled                     |
+| `OPENAI_API_KEY`                   | OpenAI credential                                             | unset                        |
+| `ANTHROPIC_API_KEY`                | Anthropic credential                                          | unset                        |
+| `GEMINI_API_KEY`                   | Gemini credential                                             | unset                        |
+| `GROQ_API_KEY`                     | Groq credential                                               | unset                        |
 
 Each provider accepts a trusted HTTPS origin override named
 `<PROVIDER>_BASE_URL`. Provider credentials stay in Worker memory and are never

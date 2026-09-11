@@ -34,6 +34,7 @@ type EnvironmentVariable string
 const (
 	EnvHTTPAddress           EnvironmentVariable = "SUPERAGENT_HTTP_ADDRESS"
 	EnvHTTPAllowedOrigins    EnvironmentVariable = "SUPERAGENT_HTTP_ALLOWED_ORIGINS"
+	EnvStreamRecoveryLimit   EnvironmentVariable = "SUPERAGENT_STREAM_RECOVERY_LIMIT"
 	EnvDexFlowServiceAddress EnvironmentVariable = "DEX_FLOW_SERVICE_ADDRESS"
 	EnvDexWorkerBindAddress  EnvironmentVariable = "DEX_WORKER_BIND_ADDRESS"
 	EnvDexWorkerTarget       EnvironmentVariable = "DEX_WORKER_TARGET"
@@ -61,15 +62,24 @@ const (
 	defaultHTTPIdleTimeout        = 75 * time.Second
 	defaultHTTPShutdownTimeout    = 20 * time.Second
 	defaultProviderRequestTimeout = 10 * time.Minute
+	defaultStreamRecoveryLimit    = 1_000
+	maximumStreamRecoveryLimit    = 1_000
 )
 
 // Config is the immutable validated application configuration.
 type Config struct {
 	HTTP      *HTTP
+	Events    *Events
 	Dex       *Dex
 	BlobCache *BlobCache
 	MCP       *MCP
 	Providers *Providers
+}
+
+// Events configures best-effort Stream recovery reads.
+type Events struct {
+	// RecoveryLimit defaults to 1000, accepts 1 through 1000, is immutable, and bounds refresh recovery per Stream.
+	RecoveryLimit int
 }
 
 // HTTP configures the public OpenAPI server.
@@ -137,6 +147,10 @@ func load(lookup Lookup) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	streamRecoveryLimit, err := optionalPositiveInt(lookup, EnvStreamRecoveryLimit, defaultStreamRecoveryLimit)
+	if err != nil {
+		return nil, err
+	}
 	workerBind := optional(lookup, EnvDexWorkerBindAddress, defaultWorkerBindAddress)
 	workerTarget := optional(lookup, EnvDexWorkerTarget, workerBind)
 	config := &Config{
@@ -147,6 +161,7 @@ func load(lookup Lookup) (*Config, error) {
 			IdleTimeout:       defaultHTTPIdleTimeout,
 			ShutdownTimeout:   defaultHTTPShutdownTimeout,
 		},
+		Events: &Events{RecoveryLimit: streamRecoveryLimit},
 		Dex: &Dex{
 			FlowServiceAddress: optional(lookup, EnvDexFlowServiceAddress, defaultFlowServiceAddress),
 			WorkerBindAddress:  workerBind,
@@ -185,7 +200,7 @@ func load(lookup Lookup) (*Config, error) {
 
 // Validate rejects unsafe or unusable process configuration.
 func (config *Config) Validate() error {
-	if config == nil || config.HTTP == nil || config.Dex == nil || config.BlobCache == nil ||
+	if config == nil || config.HTTP == nil || config.Events == nil || config.Dex == nil || config.BlobCache == nil ||
 		config.MCP == nil || config.Providers == nil || config.Providers.OpenAI == nil ||
 		config.Providers.Anthropic == nil || config.Providers.Gemini == nil || config.Providers.Groq == nil {
 		return errors.New("every configuration section is required")
@@ -209,6 +224,9 @@ func (config *Config) Validate() error {
 	if config.HTTP.ReadHeaderTimeout <= 0 || config.HTTP.IdleTimeout <= 0 ||
 		config.HTTP.ShutdownTimeout <= 0 || config.Providers.RequestTimeout <= 0 {
 		return errors.New("HTTP and provider timeouts must be positive")
+	}
+	if config.Events.RecoveryLimit < 1 || config.Events.RecoveryLimit > maximumStreamRecoveryLimit {
+		return fmt.Errorf("stream recovery limit must be between 1 and %d", maximumStreamRecoveryLimit)
 	}
 	for _, origin := range config.HTTP.AllowedOrigins {
 		normalized, err := normalizeOrigin(string(origin))
@@ -344,6 +362,18 @@ func optionalPositiveInt64(lookup Lookup, name EnvironmentVariable, fallback int
 		return fallback, nil
 	}
 	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsed, nil
+}
+
+func optionalPositiveInt(lookup Lookup, name EnvironmentVariable, fallback int) (int, error) {
+	value, found := lookup(string(name))
+	if !found || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
 	}

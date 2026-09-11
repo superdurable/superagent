@@ -341,6 +341,10 @@ export type StreamEvent = ({
     kind: 'activity';
 } & ActivityStreamEvent);
 
+export type RecentEvents = {
+    events: Array<StreamEvent>;
+};
+
 export type ReasoningStreamEvent = TextStreamEvent & {
     kind: 'reasoning_summary';
 };
@@ -879,3 +883,39 @@ export type ReadEventResponses = {
 };
 
 export type ReadEventResponse = ReadEventResponses[keyof ReadEventResponses];
+
+export type ListRecentEventsData = {
+    body?: never;
+    path?: never;
+    query: {
+        flowId: FlowId;
+        stream: EventStream;
+    };
+    url: '/products/ai-agent/events/recent';
+};
+
+export type ListRecentEventsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type ListRecentEventsError = ListRecentEventsErrors[keyof ListRecentEventsErrors];
+
+export type ListRecentEventsResponses = {
+    /**
+     * One bounded chronological Stream tail.
+     */
+    200: RecentEvents;
+};
+
+export type ListRecentEventsResponse = ListRecentEventsResponses[keyof ListRecentEventsResponses];

@@ -155,6 +155,7 @@ export type ConversationAction =
   | { type: "older-loaded"; id: number; page: HistoryPage }
   | { type: "older-failed"; id: number; message: string }
   | { type: "stream-update"; update: LiveUpdate }
+  | { type: "stream-recovered"; updates: LiveUpdate[] }
   | { type: "stream-failed"; message: string }
   | { type: "interaction-submitted" }
   | { type: "composer-changed"; value: string }
@@ -223,6 +224,14 @@ export function conversationReducer(
       return state.kind === "ready" && state.lifecycle === "active"
         ? applyLiveUpdate(state, action.update)
         : state;
+    case "stream-recovered":
+      return action.updates.reduce<ConversationState>(
+        (current, update) =>
+          current.kind === "ready" && current.lifecycle === "active"
+            ? applyLiveUpdate(current, update)
+            : current,
+        state,
+      );
     case "stream-failed":
       if (state.kind !== "ready" || state.lifecycle === "terminal") {
         return state;

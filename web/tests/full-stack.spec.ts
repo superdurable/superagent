@@ -461,7 +461,13 @@ test("resumes each live Stream after interruption without duplicate timeline ent
   ]) {
     let deliveredEvent = false;
     let abortedPoll = false;
+    let recentReads = 0;
     const resumeTokens: string[] = [];
+    await page.route("**/products/ai-agent/events/recent?**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("stream") === stream) recentReads++;
+      await route.continue();
+    });
     await page.route("**/products/ai-agent/events?**", async (route) => {
       const url = new URL(route.request().url());
       if (url.searchParams.get("stream") !== stream) {
@@ -501,10 +507,15 @@ test("resumes each live Stream after interruption without duplicate timeline ent
       .locator(".activity-entry")
       .allTextContents();
     expect(new Set(activityRows).size).toBe(activityRows.length);
+    recentReads = 0;
+    resumeTokens.length = 0;
     await page.reload();
+    await expect.poll(() => recentReads).toBeGreaterThan(0);
+    await expect.poll(() => resumeTokens.length).toBeGreaterThan(0);
     await expect(
       page.locator(".message-bubble.assistant").filter({ hasText: message }),
     ).toHaveCount(1);
+    await page.unroute("**/products/ai-agent/events/recent?**");
     await page.unroute("**/products/ai-agent/events?**");
     await page.getByRole("button", { name: "Start another agent" }).click();
   }

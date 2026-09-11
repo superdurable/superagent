@@ -193,8 +193,8 @@ func (*Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCR
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
-// Snapshot returns one atomic durable application view without consuming Channels.
-func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSnapshot], error) {
+// GetSnapshot returns one atomic durable application view without consuming Channels.
+func (flow *Flow) GetSnapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSnapshot], error) {
 	queued, err := queuedUserMessagesChannel.PendingMessages(ctx)
 	if err != nil {
 		return nil, err
@@ -242,8 +242,8 @@ func (flow *Flow) Snapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[AgentSna
 	}}, nil
 }
 
-// ArchivedMessages returns one retained immutable history chunk.
-func (*Flow) ArchivedMessages(
+// GetArchivedMessages returns one retained immutable history chunk.
+func (*Flow) GetArchivedMessages(
 	ctx dex.Context,
 	before Sequence,
 ) (*dex.RPCResult[archivedMessagesRPCOutput], error) {
@@ -277,6 +277,24 @@ func (*Flow) ArchivedMessages(
 		Page:  page,
 		Found: true,
 	}}, nil
+}
+
+// DeleteQueuedMessage removes one exact pending user message.
+func (*Flow) DeleteQueuedMessage(ctx dex.Context, messageID MessageID) (*dex.RPCResult[bool], error) {
+	if strings.TrimSpace(string(messageID)) == "" {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	_, found, err := queuedUserMessagesChannel.FindPendingMessage(ctx, string(messageID))
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if err := queuedUserMessagesChannel.Delete(ctx, string(messageID)); err != nil {
+		return nil, err
+	}
+	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
 // ApproveTool publishes an approval only for the current exact call ID.

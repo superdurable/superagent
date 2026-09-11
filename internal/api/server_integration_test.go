@@ -52,6 +52,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 			Address: httpAddress, ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout: 75 * time.Second, ShutdownTimeout: 10 * time.Second,
 		},
+		Events: &config.Events{RecoveryLimit: 1_000},
 		Dex: &config.Dex{
 			FlowServiceAddress: flowServiceAddress,
 			WorkerBindAddress:  workerAddress,

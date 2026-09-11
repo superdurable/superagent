@@ -9,8 +9,9 @@ through its public exports and explicitly maps generated state into its view
 models. Network calls, durable-state reconciliation, and product orchestration
 remain in this application.
 
-The application restores a Flow with one generated Snapshot request and applies
-generated event polls for live updates.
+The application restores a Flow with one generated Snapshot request, lists the
+configured recent tail of each Stream, and resumes generated event polls from
+the newest returned token.
 
 ## Commands
 
@@ -52,7 +53,7 @@ Content Security Policy to allow connections only to the selected API origin.
 
 One reducer action atomically replaces application history, Agent description,
 queued messages, steered messages, and Run identity from `/snapshot`. Three
-cancellable `/events` polls add assistant text, reasoning summaries, and
-structured activity. Disconnects and command completion reconcile with another
-Snapshot. Queue mutations optimistically update by stable message ID and then
-reconcile.
+cancellable `/events/recent` reads recover a bounded Stream tail before
+`/events` polls add assistant text, reasoning summaries, and structured
+activity. Disconnects and command completion reconcile with another Snapshot.
+Queue mutations optimistically update by stable message ID and then reconcile.

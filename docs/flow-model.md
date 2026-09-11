@@ -10,7 +10,8 @@
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
 - RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
-  `ExecutePlan`, `Snapshot`, and `ArchivedMessages`
+  `ExecutePlan`, `DeleteQueuedMessage`, `GetSnapshot`, and
+  `GetArchivedMessages`
 - Browser synchronization Attribute: `AgentInteractionStatus`
 
 Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic
@@ -57,40 +58,40 @@ application history, and makes the model replan.
 
 ## Step responsibilities
 
-| Step | `WaitFor` | `Execute` and transition |
-|---|---|---|
-| `Init` | none | Validate and persist config/state, then enter `AwaitUser` |
-| `AwaitUser` | steering, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected command |
-| `CompactContext` | none | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages |
-| `CallModel` | none | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress |
-| `CheckSteered` | bounded steered batch | Apply steering at a safe boundary or route the explicit continuation |
-| `RouteTool` | none | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path |
-| `AwaitToolApproval` | exact call-ID approval or steering | Persist waiting status beside the wait; consume one decision or replan |
-| `ExecuteTool` | none | Perform one external MCP effect with stable Flow/call identity, then persist its result |
-| `DurableWait` | Timer or steering | Persist waiting status beside the wait; record completion or interruption and continue |
+| Step                | `WaitFor`                                                                           | `Execute` and transition                                                                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Init`              | none                                                                                | Validate and persist config/state, then enter `AwaitUser`                                                                                             |
+| `AwaitUser`         | steering, one queued message, or current plan execution when no question is pending | Persist waiting status beside the wait; prioritize steering and consume one selected command                                                          |
+| `CompactContext`    | none                                                                                | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages                                          |
+| `CallModel`         | none                                                                                | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress |
+| `CheckSteered`      | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                  |
+| `RouteTool`         | none                                                                                | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                                                       |
+| `AwaitToolApproval` | exact call-ID approval or steering                                                  | Persist waiting status beside the wait; consume one decision or replan                                                                                |
+| `ExecuteTool`       | none                                                                                | Perform one external MCP effect with stable Flow/call identity, then persist its result                                                               |
+| `DurableWait`       | Timer or steering                                                                   | Persist waiting status beside the wait; record completion or interruption and continue                                                                |
 
 ## Durable resources
 
-| Resource | Kind | Purpose |
-|---|---|---|
-| `AgentConfig` | Attribute | Immutable execution configuration |
-| `AgentRuntimeMetadata` | Attribute | Trusted runtime routing metadata; never model or browser context |
-| `AgentState` | Attribute | Sequence range, mode, status, plan revision, pending-call cursor, and Plan no-progress count |
-| `AgentInteractionStatus` | Attribute | Durable `submitted`/`waiting` browser synchronization boundary |
-| `ContextSummary` | Attribute | Cumulative summary and explicit covered sequence |
-| `CurrentMessages` | AttributeMap | Recent provider-neutral messages keyed by sequence |
-| `ArchivedMessages` | AttributeMap | Ten-message chunks keyed by first sequence |
-| `AgentPlan` | Attribute | Atomically replaced short plan |
-| `PendingApproval` | Attribute | Current reloadable approval request |
-| `PendingTimer` | Attribute | Reloadable durable wait description |
-| `PendingUserInput` | Attribute | Current batch of one to three structured questions |
-| `QueuedUserMessages` | Channel | FIFO messages that do not interrupt active work |
-| `SteeredUserMessages` | Channel | Messages consumed only at safe boundaries |
-| `ToolApprovals` | ChannelMap | Current decision delivery partitioned by call ID |
-| `PlanExecutions` | ChannelMap | Current execution delivery partitioned by plan revision |
-| `ReasoningSummary` | buffered Stream | Provider-authored reasoning summaries only |
-| `AssistantText` | buffered Stream | Visible response deltas |
-| `AgentActivity` | Stream | Bounded lifecycle and Plan task events |
+| Resource                 | Kind            | Purpose                                                                                      |
+| ------------------------ | --------------- | -------------------------------------------------------------------------------------------- |
+| `AgentConfig`            | Attribute       | Immutable execution configuration                                                            |
+| `AgentRuntimeMetadata`   | Attribute       | Trusted runtime routing metadata; never model or browser context                             |
+| `AgentState`             | Attribute       | Sequence range, mode, status, plan revision, pending-call cursor, and Plan no-progress count |
+| `AgentInteractionStatus` | Attribute       | Durable `submitted`/`waiting` browser synchronization boundary                               |
+| `ContextSummary`         | Attribute       | Cumulative summary and explicit covered sequence                                             |
+| `CurrentMessages`        | AttributeMap    | Recent provider-neutral messages keyed by sequence                                           |
+| `ArchivedMessages`       | AttributeMap    | Ten-message chunks keyed by first sequence                                                   |
+| `AgentPlan`              | Attribute       | Atomically replaced short plan                                                               |
+| `PendingApproval`        | Attribute       | Current reloadable approval request                                                          |
+| `PendingTimer`           | Attribute       | Reloadable durable wait description                                                          |
+| `PendingUserInput`       | Attribute       | Current batch of one to three structured questions                                           |
+| `QueuedUserMessages`     | Channel         | FIFO messages that do not interrupt active work                                              |
+| `SteeredUserMessages`    | Channel         | Messages consumed only at safe boundaries                                                    |
+| `ToolApprovals`          | ChannelMap      | Current decision delivery partitioned by call ID                                             |
+| `PlanExecutions`         | ChannelMap      | Current execution delivery partitioned by plan revision                                      |
+| `ReasoningSummary`       | buffered Stream | Provider-authored reasoning summaries only                                                   |
+| `AssistantText`          | buffered Stream | Visible response deltas                                                                      |
+| `AgentActivity`          | Stream          | Bounded lifecycle and Plan task events                                                       |
 
 Channels deliver work; they do not store application history. A queued message
 enters history only after a Step consumes it. Stream loss never changes durable
@@ -129,8 +130,9 @@ that pending revision and publishes the request in one commit. The consuming
 Step clears the pending field. Therefore the same still-active revision can be
 executed again later with `Continue plan` after two no-progress responses.
 
-Delete removes one exact queued Dex Channel message. A repeated delete returns
-the SDK's message-not-found error. After an ambiguous network result, every
+`DeleteQueuedMessage` removes one exact queued Dex Channel message in a
+transactional RPC. A repeated delete returns the application's pending-message
+not-found error. After an ambiguous network result, every
 client reconciles with Snapshot instead of looking up a stored command result.
 
 ## Application history and Snapshot
@@ -142,11 +144,11 @@ keys and never enumerates an unbounded map. Compaction commits a cumulative
 summary and covered sequence before deleting messages.
 
 Dex loads ordinary Attributes automatically, but Steps and RPCs declare bounded
-AttributeMap and Channel loads explicitly. `Snapshot` loads every current
+AttributeMap and Channel loads explicitly. `GetSnapshot` loads every current
 message plus pending queued and steered messages in one read-only invocation.
 It never consumes a Channel. At twenty current messages, the oldest ten move
 atomically to one archive chunk. The archive endpoint invokes one read-only
-`ArchivedMessages` Flow RPC. The RPC loads `AgentState` and the one exact
+`GetArchivedMessages` Flow RPC. The RPC loads `AgentState` and the one exact
 adjacent archive chunk selected by `beforeSequence`. It does not load current
 messages, pending Channels, interaction details, or the Agent configuration.
 
@@ -178,3 +180,5 @@ Dex result and visibility contracts and contains no active Agent description.
   changes.
 - BlobCache and Streams may disappear. A replacement Worker reconstructs all
   required state from Dex.
+- Refresh lists only the configured recent tail of each best-effort Stream,
+  then resumes long polling from the newest returned resume token.

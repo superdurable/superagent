@@ -1538,6 +1538,18 @@ func (s *HistoryPageHeaders) SetResponse(val HistoryPage) {
 
 func (*HistoryPageHeaders) getArchivedMessagesRes() {}
 
+type ListRecentEventsBadRequest Problem
+
+func (*ListRecentEventsBadRequest) listRecentEventsRes() {}
+
+type ListRecentEventsNotFound Problem
+
+func (*ListRecentEventsNotFound) listRecentEventsRes() {}
+
+type ListRecentEventsServiceUnavailable Problem
+
+func (*ListRecentEventsServiceUnavailable) listRecentEventsRes() {}
+
 type MessageID string
 
 // Ref: #/components/schemas/MessageRole
@@ -3209,6 +3221,23 @@ func (s *ReasoningStreamEventKind) UnmarshalText(data []byte) error {
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
+
+// Ref: #/components/schemas/RecentEvents
+type RecentEvents struct {
+	Events []StreamEvent `json:"events"`
+}
+
+// GetEvents returns the value of Events.
+func (s *RecentEvents) GetEvents() []StreamEvent {
+	return s.Events
+}
+
+// SetEvents sets the value of Events.
+func (s *RecentEvents) SetEvents(val []StreamEvent) {
+	s.Events = val
+}
+
+func (*RecentEvents) listRecentEventsRes() {}
 
 type ResumeToken string
 

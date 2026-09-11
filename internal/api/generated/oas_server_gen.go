@@ -64,6 +64,13 @@ type Handler interface {
 	//
 	// GET /readyz
 	GetReadiness(ctx context.Context) (GetReadinessRes, error)
+	// ListRecentEvents implements listRecentEvents operation.
+	//
+	// Returns at most the server-configured recovery limit in chronological order. The final event's
+	// resume token continues the live long poll. Streams are live hints, never a durable state source.
+	//
+	// GET /products/ai-agent/events/recent
+	ListRecentEvents(ctx context.Context, params ListRecentEventsParams) (ListRecentEventsRes, error)
 	// ReadEvent implements readEvent operation.
 	//
 	// Waits for one event for up to the server's bounded long-poll timeout. A 504 response means no event

@@ -33,6 +33,10 @@ type GetReadinessRes interface {
 	getReadinessRes()
 }
 
+type ListRecentEventsRes interface {
+	listRecentEventsRes()
+}
+
 type ReadEventRes interface {
 	readEventRes()
 }

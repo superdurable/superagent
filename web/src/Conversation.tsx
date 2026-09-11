@@ -22,6 +22,7 @@ import {
   executePlan,
   getAgentSnapshot,
   getArchivedMessages,
+  listRecentEvents,
   readEvent,
   sendMessage,
   steerQueuedMessage,
@@ -129,6 +130,31 @@ export function Conversation({
     let isCurrent = true;
     const poll = async (stream: EventStream): Promise<void> => {
       let resumeToken = resumeTokens.current[stream];
+      if (resumeToken === undefined) {
+        try {
+          const recent = await listRecentEvents({
+            query: { flowId, stream },
+            signal: controller.signal,
+          });
+          const newest = recent.events.at(-1);
+          resumeToken = newest?.resumeToken;
+          resumeTokens.current[stream] = resumeToken;
+          dispatch({
+            type: "stream-recovered",
+            updates: recent.events.map((event) => liveUpdate(stream, event)),
+          });
+        } catch (reason: unknown) {
+          if (isAbortError(reason)) return;
+          isCurrent = false;
+          controller.abort();
+          dispatch({
+            type: "stream-failed",
+            message: `Live updates disconnected: ${errorMessage(reason)}`,
+          });
+          requestSnapshot({ blocking: true, connection: "reconnecting" });
+          return;
+        }
+      }
       while (isCurrent && !controller.signal.aborted) {
         try {
           const event = await readEvent({

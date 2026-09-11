@@ -99,6 +99,9 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertTextStream(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
+	assertRecentTextEvents(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
+	assertRecentTextEvents(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
+	assertRecentActivityEvents(t, environment.agent, flowID)
 
 	environment.replaceWorker(t, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
@@ -223,8 +226,8 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	}
 	waitForQueuedMessages(t, environment, flowID, 1)
 	deleteErr := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID))
-	var channelMessageNotFound *dex.ChannelMessageNotFoundError
-	if !errors.As(deleteErr, &channelMessageNotFound) {
+	var deletedMessageNotFound *PendingMessageNotFoundError
+	if !errors.As(deleteErr, &deletedMessageNotFound) {
 		t.Fatalf("repeated queue delete error = %T %v", deleteErr, deleteErr)
 	}
 	if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
@@ -258,7 +261,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatalf("messages deleted before summary: state = %#v", state)
 	}
 	if state.FirstRetainedSequence > 1 {
-		_, archiveErr := environment.agent.ArchivedMessages(
+		_, archiveErr := environment.agent.GetArchivedMessages(
 			t.Context(),
 			flowID,
 			state.FirstRetainedSequence,
@@ -336,11 +339,11 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 	}
 	assertArchiveWindow(t, environment, flowID, 21, 30)
 
-	first, err := environment.agent.ArchivedMessages(t.Context(), flowID, 11)
+	first, err := environment.agent.GetArchivedMessages(t.Context(), flowID, 11)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := environment.agent.ArchivedMessages(t.Context(), flowID, 21)
+	second, err := environment.agent.GetArchivedMessages(t.Context(), flowID, 21)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +355,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		second.NextBeforeSequence == nil || *second.NextBeforeSequence != 11 {
 		t.Fatalf("second archive = %#v", second)
 	}
-	forward, err := environment.agent.MessagesAfterForTestOnly(t.Context(), flowID, 0, 7)
+	forward, err := environment.agent.GetMessagesAfterForTestOnly(t.Context(), flowID, 0, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +364,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		forward.FirstRetainedSequence != 1 || forward.LastSequence != 30 {
 		t.Fatalf("first forward page = %#v", forward)
 	}
-	forward, err = environment.agent.MessagesAfterForTestOnly(
+	forward, err = environment.agent.GetMessagesAfterForTestOnly(
 		t.Context(),
 		flowID,
 		*forward.NextAfterSequence,
@@ -374,7 +377,7 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		forward.NextAfterSequence != nil || forward.IsTruncated {
 		t.Fatalf("second forward page = %#v", forward)
 	}
-	empty, err := environment.agent.MessagesAfterForTestOnly(t.Context(), flowID, 30, 0)
+	empty, err := environment.agent.GetMessagesAfterForTestOnly(t.Context(), flowID, 30, 0)
 	if err != nil || len(empty.Messages) != 0 || empty.IsTruncated || empty.NextAfterSequence != nil {
 		t.Fatalf("empty forward page = %#v, %v", empty, err)
 	}
@@ -756,14 +759,10 @@ func TestAgentRejectsPlanExecutionWhileBusyWithoutPublishing(t *testing.T) {
 	if !errors.As(err, &rejected) || rejected.Command != CommandExecutePlan {
 		t.Fatalf("busy Execute Plan error = %T %v, want execute rejection", err, err)
 	}
-	var executions []dex.ChannelMessage[PlanExecutionRequest]
-	if err := environment.sdk.GetChannelMapMessages(
-		t.Context(),
-		string(flowID),
-		planExecutionsChannel,
-		planRevisionKey(draft.Revision),
-		&executions,
-	); err != nil {
+	executions, err := environment.agent.GetPlanExecutionMessagesForTestOnly(
+		t.Context(), flowID, draft.Revision,
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(executions) != 0 {
@@ -905,7 +904,7 @@ func readSnapshot(
 	flowID FlowID,
 ) AgentSnapshot {
 	t.Helper()
-	snapshot, err := environment.agent.Snapshot(t.Context(), flowID)
+	snapshot, err := environment.agent.GetSnapshot(t.Context(), flowID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,7 +921,7 @@ func waitForSnapshot(
 	var snapshot AgentSnapshot
 	waitUntil(t, environment, "Agent Snapshot", func() (bool, error) {
 		var err error
-		snapshot, err = environment.agent.Snapshot(t.Context(), flowID)
+		snapshot, err = environment.agent.GetSnapshot(t.Context(), flowID)
 		return err == nil && accept(snapshot), err
 	})
 	return snapshot
@@ -1053,7 +1052,7 @@ func (environment *agentIntegrationEnvironment) replaceWorker(t *testing.T, flow
 	defer deadline.Stop()
 	var lastErr error
 	for {
-		if _, err := environment.agent.Snapshot(t.Context(), flowID); err == nil {
+		if _, err := environment.agent.GetSnapshot(t.Context(), flowID); err == nil {
 			return
 		} else {
 			lastErr = err
@@ -1153,76 +1152,79 @@ func waitForAgentState(
 	t.Helper()
 	var state AgentState
 	waitUntil(t, environment, "Agent state", func() (bool, error) {
-		found, err := environment.sdk.GetAttribute(t.Context(), string(flowID), agentStateAttribute, &state)
-		return found && accept(state), err
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		state = view.State
+		return view.HasState && accept(state), err
 	})
 	return state
 }
 
 func readAgentState(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) AgentState {
 	t.Helper()
-	var state AgentState
-	found, err := environment.sdk.GetAttribute(t.Context(), string(flowID), agentStateAttribute, &state)
+	view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found {
+	if !view.HasState {
 		t.Fatal("Agent state is missing")
 	}
-	return state
+	return view.State
 }
 
 func waitForAgentPlan(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID, status PlanStatus) AgentPlan {
 	t.Helper()
-	var plan AgentPlan
+	var plan *AgentPlan
 	waitUntil(t, environment, "Agent plan", func() (bool, error) {
-		found, err := environment.sdk.GetAttribute(t.Context(), string(flowID), agentPlanAttribute, &plan)
-		return found && plan.Status == status, err
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		plan = view.Plan
+		return plan != nil && plan.Status == status, err
 	})
-	return plan
+	return *plan
 }
 
 func waitForPendingApproval(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) PendingApproval {
 	t.Helper()
-	var approval PendingApproval
+	var approval *PendingApproval
 	waitUntil(t, environment, "pending approval", func() (bool, error) {
-		return environment.sdk.GetAttribute(t.Context(), string(flowID), pendingApprovalAttribute, &approval)
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		approval = view.PendingApproval
+		return approval != nil, err
 	})
-	return approval
+	return *approval
 }
 
 func waitForPendingUserInput(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) PendingUserInput {
 	t.Helper()
-	var pending PendingUserInput
+	var pending *PendingUserInput
 	waitUntil(t, environment, "pending user input", func() (bool, error) {
-		return environment.sdk.GetAttribute(t.Context(), string(flowID), pendingUserInputAttribute, &pending)
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		pending = view.PendingInput
+		return pending != nil, err
 	})
-	return pending
+	return *pending
 }
 
 func waitForNoPendingUserInput(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) {
 	t.Helper()
 	waitUntil(t, environment, "cleared user input", func() (bool, error) {
-		var pending PendingUserInput
-		found, err := environment.sdk.GetAttribute(t.Context(), string(flowID), pendingUserInputAttribute, &pending)
-		return !found, err
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		return view.PendingInput == nil, err
 	})
 }
 
 func waitForPendingTimer(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) {
 	t.Helper()
-	var pending PendingTimer
 	waitUntil(t, environment, "pending timer", func() (bool, error) {
-		return environment.sdk.GetAttribute(t.Context(), string(flowID), pendingTimerAttribute, &pending)
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		return view.PendingTimer != nil, err
 	})
 }
 
 func waitForNoPendingTimer(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) {
 	t.Helper()
 	waitUntil(t, environment, "cleared timer", func() (bool, error) {
-		var pending PendingTimer
-		found, err := environment.sdk.GetAttribute(t.Context(), string(flowID), pendingTimerAttribute, &pending)
-		return !found, err
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		return view.PendingTimer == nil, err
 	})
 }
 
@@ -1235,8 +1237,8 @@ func waitForQueuedMessages(
 	t.Helper()
 	var messages []dex.ChannelMessage[UserMessage]
 	waitUntil(t, environment, "queued messages", func() (bool, error) {
-		messages = nil
-		err := environment.sdk.GetChannelMessages(t.Context(), string(flowID), queuedUserMessagesChannel, &messages)
+		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
+		messages = view.Queued
 		return len(messages) == count, err
 	})
 	return messages
@@ -1311,34 +1313,14 @@ func readApplicationMessage(
 	sequence Sequence,
 ) (AgentMessage, bool) {
 	t.Helper()
-	state := readAgentState(t, environment, flowID)
-	if sequence >= state.CurrentFirstSequence {
-		var message AgentMessage
-		found, err := environment.sdk.GetAttributeMapInstance(
-			t.Context(), string(flowID), currentMessagesAttribute, sequenceKey(sequence), &message,
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return message, found
-	}
-	firstSequence := ((sequence - 1) / archiveMessageChunkSize * archiveMessageChunkSize) + 1
-	var chunk ArchivedMessageChunk
-	found, err := environment.sdk.GetAttributeMapInstance(
-		t.Context(), string(flowID), archivedMessagesAttribute, sequenceKey(firstSequence), &chunk,
-	)
+	page, err := environment.agent.GetMessagesAfterForTestOnly(t.Context(), flowID, sequence-1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found {
+	if len(page.Messages) != 1 || page.Messages[0].Sequence != sequence {
 		return AgentMessage{}, false
 	}
-	for _, archived := range chunk.Messages {
-		if archived.Sequence == sequence {
-			return archived.Message, true
-		}
-	}
-	return AgentMessage{}, false
+	return page.Messages[0].Message, true
 }
 
 func assertTextStream(t *testing.T, client *Client, flowID FlowID, stream EventStream, expected string) {
@@ -1362,6 +1344,46 @@ func assertModelActivity(t *testing.T, client *Client, flowID FlowID, expectedSe
 		event.Activity.MessageSequence == nil ||
 		*event.Activity.MessageSequence != expectedSequence {
 		t.Fatalf("model activity = %#v", event)
+	}
+}
+
+func assertRecentTextEvents(
+	t *testing.T,
+	client *Client,
+	flowID FlowID,
+	stream EventStream,
+	expected string,
+) {
+	t.Helper()
+	events, err := client.ListRecentEvents(t.Context(), flowID, stream, MaximumRecentEventLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[len(events)-1].Text != expected {
+		t.Fatalf("recent %s events = %#v", stream, events)
+	}
+	latest, err := client.ListRecentEvents(t.Context(), flowID, stream, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest) != 1 || latest[0].ResumeToken != events[len(events)-1].ResumeToken {
+		t.Fatalf("latest %s event = %#v, want tail of %#v", stream, latest, events)
+	}
+}
+
+func assertRecentActivityEvents(t *testing.T, client *Client, flowID FlowID) {
+	t.Helper()
+	events, err := client.ListRecentEvents(t.Context(), flowID, EventStreamActivity, MaximumRecentEventLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) < 2 {
+		t.Fatalf("recent activity events = %#v", events)
+	}
+	for index := 1; index < len(events); index++ {
+		if events[index].CreatedAt.Before(events[index-1].CreatedAt) {
+			t.Fatalf("activity events are not chronological: %#v", events)
+		}
 	}
 }
 
