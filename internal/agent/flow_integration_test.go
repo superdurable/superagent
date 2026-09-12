@@ -42,6 +42,167 @@ const integrationToolName ToolName = "integration_tool"
 
 const integrationWaitTimeout = 30 * time.Second
 
+func TestAgentToolRetryIntegration(t *testing.T) {
+	t.Run("transient failure succeeds through Dex retry", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(2, false)
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-retry-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertAttemptsForTestOnly(t, []int32{1, 2, 3}, ToolOutcomeSucceeded)
+	})
+
+	t.Run("known failure is not retried", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(0, true)
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-known-failure-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertAttemptsForTestOnly(t, []int32{1}, ToolOutcomeKnownFailure)
+	})
+
+	t.Run("retry exhaustion records unknown and continues", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(10, false)
+		tools.maximumAttempts = 2
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-exhaustion-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertAttemptsForTestOnly(t, []int32{1, 2}, ToolOutcomeUnknown)
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "still alive"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage && state.LastSequence >= 6
+		})
+	})
+}
+
+func TestAgentRuntimeLeaseIntegration(t *testing.T) {
+	t.Run("initial state remains usable while refresh is blocked", func(t *testing.T) {
+		refresher := newBlockingLeaseRefresherForTestOnly()
+		tools := newLeaseToolRegistryForTestOnly(false)
+		environment := newAgentIntegrationEnvironmentWithOptions(
+			t,
+			integrationModel{},
+			tools,
+			WithLeaseExtension(refresher, nil),
+		)
+		flowID := FlowID("agent-lease-initial-" + randomLocalID(t))
+		initialState := MustJSONObject(`{"token":"initial","config":{"provider":"fixture"}}`)
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{
+			Config: NewAgentConfig(),
+			InitialLease: &LeaseInitialization{
+				State:     initialState,
+				RefreshAt: time.Now().Add(200 * time.Millisecond),
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		refresher.waitUntilStartedForTestOnly(t)
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState})
+
+		refresher.releaseForTestOnly()
+		waitForStepCompletionForTestOnly(t, environment, flowID, stepTypeRefreshLease, 1)
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForToolInvocationCountForTestOnly(t, tools, 2)
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 8)
+		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState, refreshedLeaseStateForTestOnly})
+		refresher.assertRequestForTestOnly(t, flowID, initialState, 2)
+		assertLeaseStateNotExposedForTestOnly(t, environment, flowID, "initial", "refreshed")
+	})
+
+	t.Run("one tool execution keeps its first Lease snapshot", func(t *testing.T) {
+		refresher := newImmediateLeaseRefresherForTestOnly()
+		tools := newLeaseToolRegistryForTestOnly(true)
+		environment := newAgentIntegrationEnvironmentWithOptions(
+			t,
+			integrationModel{},
+			tools,
+			WithLeaseExtension(refresher, nil),
+		)
+		flowID := FlowID("agent-lease-snapshot-" + randomLocalID(t))
+		initialState := MustJSONObject(`{"token":"snapshot-initial","config":{"provider":"fixture"}}`)
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{
+			Config: NewAgentConfig(),
+			InitialLease: &LeaseInitialization{
+				State:     initialState,
+				RefreshAt: time.Now().Add(5 * time.Second),
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		tools.waitUntilFirstAttemptStartedForTestOnly(t)
+		waitForStepCompletionForTestOnly(t, environment, flowID, stepTypeRefreshLease, 1)
+		tools.releaseFirstAttemptForTestOnly()
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState, initialState})
+
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForToolInvocationCountForTestOnly(t, tools, 3)
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 8)
+		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState, initialState, refreshedLeaseStateForTestOnly})
+	})
+
+	t.Run("known Lease failure causes one new model tool call", func(t *testing.T) {
+		refresher := newImmediateLeaseRefresherForTestOnly()
+		tools := newLeaseRecoveryToolRegistryForTestOnly()
+		model := &leaseRetryModelForTestOnly{}
+		environment := newAgentIntegrationEnvironmentWithOptions(
+			t,
+			model,
+			tools,
+			WithLeaseExtension(refresher, nil),
+		)
+		flowID := FlowID("agent-lease-model-retry-" + randomLocalID(t))
+		initialState := MustJSONObject(`{"token":"expired","config":{"provider":"fixture"}}`)
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{
+			Config: NewAgentConfig(),
+			InitialLease: &LeaseInitialization{
+				State:     initialState,
+				RefreshAt: time.Now().Add(5 * time.Second),
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		tools.waitUntilFirstCallStartedForTestOnly(t)
+		waitForStepCompletionForTestOnly(t, environment, flowID, stepTypeRefreshLease, 1)
+		tools.releaseFirstCallForTestOnly()
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 6)
+		tools.assertRecoveryCallsForTestOnly(t, initialState, refreshedLeaseStateForTestOnly)
+		model.assertLeasePromptForTestOnly(t)
+	})
+}
+
 func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	modelClient := integrationModel{}
 	toolRegistry := newIntegrationToolRegistry()
@@ -977,9 +1138,18 @@ type agentIntegrationEnvironment struct {
 }
 
 func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools ToolRegistry) *agentIntegrationEnvironment {
+	return newAgentIntegrationEnvironmentWithOptions(t, modelClient, tools)
+}
+
+func newAgentIntegrationEnvironmentWithOptions(
+	t *testing.T,
+	modelClient ModelClient,
+	tools ToolRegistry,
+	options ...FlowOption,
+) *agentIntegrationEnvironment {
 	t.Helper()
 	environment := &agentIntegrationEnvironment{
-		flow:          NewFlow(modelClient, tools),
+		flow:          NewFlow(modelClient, tools, options...),
 		address:       availableLocalAddress(t, t.Context()),
 		serverAddress: os.Getenv("DEX_FLOW_SERVICE_ADDRESS"),
 	}
@@ -1713,6 +1883,493 @@ func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool)
 		}
 	}
 	return "", false
+}
+
+var refreshedLeaseStateForTestOnly = MustJSONObject(`{"token":"refreshed","config":{"provider":"fixture"}}`)
+
+type blockingLeaseRefresherForTestOnly struct {
+	mutex    sync.Mutex
+	requests []LeaseRefreshRequest
+	started  chan struct{}
+	release  chan struct{}
+	start    sync.Once
+	unblock  sync.Once
+}
+
+func newBlockingLeaseRefresherForTestOnly() *blockingLeaseRefresherForTestOnly {
+	return &blockingLeaseRefresherForTestOnly{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (refresher *blockingLeaseRefresherForTestOnly) Refresh(
+	ctx context.Context,
+	request LeaseRefreshRequest,
+) (LeaseRefreshResult, error) {
+	refresher.mutex.Lock()
+	refresher.requests = append(refresher.requests, request)
+	refresher.mutex.Unlock()
+	refresher.start.Do(func() { close(refresher.started) })
+	select {
+	case <-refresher.release:
+		return LeaseRefreshResult{
+			State:     refreshedLeaseStateForTestOnly,
+			RefreshAt: time.Now().Add(time.Hour),
+		}, nil
+	case <-ctx.Done():
+		return LeaseRefreshResult{}, ctx.Err()
+	}
+}
+
+func (refresher *blockingLeaseRefresherForTestOnly) waitUntilStartedForTestOnly(t *testing.T) {
+	t.Helper()
+	select {
+	case <-refresher.started:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("Lease refresh did not start")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+}
+
+func (refresher *blockingLeaseRefresherForTestOnly) releaseForTestOnly() {
+	refresher.unblock.Do(func() { close(refresher.release) })
+}
+
+func (refresher *blockingLeaseRefresherForTestOnly) assertRequestForTestOnly(
+	t *testing.T,
+	flowID FlowID,
+	state JSONObject,
+	generation int64,
+) {
+	t.Helper()
+	refresher.mutex.Lock()
+	defer refresher.mutex.Unlock()
+	if len(refresher.requests) != 1 {
+		t.Fatalf("Lease refresh requests = %d, want 1", len(refresher.requests))
+	}
+	request := refresher.requests[0]
+	if request.FlowID != flowID || request.State != state || request.TargetGeneration != generation ||
+		request.RefreshID != stableLeaseRefreshID(flowID, generation) {
+		t.Fatalf("Lease refresh request = %#v", request)
+	}
+}
+
+type immediateLeaseRefresherForTestOnly struct{}
+
+func newImmediateLeaseRefresherForTestOnly() *immediateLeaseRefresherForTestOnly {
+	return &immediateLeaseRefresherForTestOnly{}
+}
+
+func (*immediateLeaseRefresherForTestOnly) Refresh(
+	context.Context,
+	LeaseRefreshRequest,
+) (LeaseRefreshResult, error) {
+	return LeaseRefreshResult{
+		State:     refreshedLeaseStateForTestOnly,
+		RefreshAt: time.Now().Add(time.Hour),
+	}, nil
+}
+
+type retryToolRegistryForTestOnly struct {
+	mutex             sync.Mutex
+	failuresRemaining int
+	knownFailure      bool
+	maximumAttempts   int
+	invocations       []ToolInvocation
+	returnedOutcomes  []ToolOutcome
+}
+
+func newRetryToolRegistryForTestOnly(failures int, knownFailure bool) *retryToolRegistryForTestOnly {
+	return &retryToolRegistryForTestOnly{
+		failuresRemaining: failures,
+		knownFailure:      knownFailure,
+		maximumAttempts:   3,
+	}
+}
+
+func (*retryToolRegistryForTestOnly) ServerNames() []string { return []string{"integration"} }
+
+func (registry *retryToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
+	return []RegisteredTool{{
+		ServerName: "integration",
+		RemoteName: string(integrationToolName),
+		Definition: registry.definitionForTestOnly(),
+	}}
+}
+
+func (registry *retryToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
+	return []ToolDefinition{registry.definitionForTestOnly()}
+}
+
+func (registry *retryToolRegistryForTestOnly) definitionForTestOnly() ToolDefinition {
+	return ToolDefinition{
+		Name:               integrationToolName,
+		Description:        "Exercise Dex-owned retries.",
+		InputSchema:        MustJSONObject(`{"type":"object","additionalProperties":false}`),
+		AttemptTimeout:     10 * time.Second,
+		MaximumAttempts:    registry.maximumAttempts,
+		RetryTotalDuration: 20 * time.Second,
+	}
+}
+
+func (registry *retryToolRegistryForTestOnly) Execute(
+	_ context.Context,
+	invocation ToolInvocation,
+) (ToolExecutionResult, error) {
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	registry.invocations = append(registry.invocations, invocation)
+	if registry.knownFailure {
+		registry.returnedOutcomes = append(registry.returnedOutcomes, ToolOutcomeKnownFailure)
+		return ToolExecutionResult{
+			Content: `{"status":"failed","error":"lease expired; retry with a new tool call"}`,
+			Outcome: ToolOutcomeKnownFailure,
+			IsError: true,
+		}, nil
+	}
+	if registry.failuresRemaining > 0 {
+		registry.failuresRemaining--
+		return ToolExecutionResult{}, errors.New("transient fixture failure")
+	}
+	registry.returnedOutcomes = append(registry.returnedOutcomes, ToolOutcomeSucceeded)
+	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
+}
+
+func (registry *retryToolRegistryForTestOnly) assertAttemptsForTestOnly(
+	t *testing.T,
+	attempts []int32,
+	outcome ToolOutcome,
+) {
+	t.Helper()
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.invocations) != len(attempts) {
+		t.Fatalf("tool invocations = %d, want %d", len(registry.invocations), len(attempts))
+	}
+	var callID CallID
+	var firstAttemptAt time.Time
+	for index, invocation := range registry.invocations {
+		if invocation.Attempt != attempts[index] {
+			t.Fatalf("attempt %d = %d, want %d", index, invocation.Attempt, attempts[index])
+		}
+		if index == 0 {
+			callID = invocation.CallID
+			firstAttemptAt = invocation.FirstAttemptAt
+		} else if invocation.CallID != callID || !invocation.FirstAttemptAt.Equal(firstAttemptAt) {
+			t.Fatalf("retry identity changed: %#v", invocation)
+		}
+	}
+	if firstAttemptAt.IsZero() {
+		t.Fatal("first attempt timestamp is empty")
+	}
+	if outcome == ToolOutcomeUnknown {
+		if len(registry.returnedOutcomes) != 0 {
+			t.Fatalf("returned outcomes = %v, want none", registry.returnedOutcomes)
+		}
+		return
+	}
+	if len(registry.returnedOutcomes) != 1 || registry.returnedOutcomes[0] != outcome {
+		t.Fatalf("returned outcomes = %v, want %q", registry.returnedOutcomes, outcome)
+	}
+}
+
+type leaseToolRegistryForTestOnly struct {
+	mutex               sync.Mutex
+	invocations         []ToolInvocation
+	failFirstAttempt    bool
+	firstAttempt        sync.Once
+	firstAttemptStarted chan struct{}
+	firstAttemptRelease chan struct{}
+	release             sync.Once
+}
+
+func newLeaseToolRegistryForTestOnly(failFirstAttempt bool) *leaseToolRegistryForTestOnly {
+	return &leaseToolRegistryForTestOnly{
+		failFirstAttempt:    failFirstAttempt,
+		firstAttemptStarted: make(chan struct{}),
+		firstAttemptRelease: make(chan struct{}),
+	}
+}
+
+func (*leaseToolRegistryForTestOnly) ServerNames() []string { return []string{"integration"} }
+
+func (*leaseToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
+	return []RegisteredTool{{ServerName: "integration", RemoteName: string(integrationToolName), Definition: leaseToolDefinitionForTestOnly()}}
+}
+
+func (*leaseToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
+	return []ToolDefinition{leaseToolDefinitionForTestOnly()}
+}
+
+func leaseToolDefinitionForTestOnly() ToolDefinition {
+	return ToolDefinition{
+		Name:               integrationToolName,
+		Description:        "Record runtime Lease snapshots.",
+		InputSchema:        MustJSONObject(`{"type":"object","additionalProperties":false}`),
+		AttemptTimeout:     10 * time.Second,
+		MaximumAttempts:    2,
+		RetryTotalDuration: 20 * time.Second,
+	}
+}
+
+func (registry *leaseToolRegistryForTestOnly) Execute(
+	ctx context.Context,
+	invocation ToolInvocation,
+) (ToolExecutionResult, error) {
+	registry.mutex.Lock()
+	invocationIndex := len(registry.invocations)
+	registry.invocations = append(registry.invocations, invocation)
+	registry.mutex.Unlock()
+	if registry.failFirstAttempt && invocationIndex == 0 {
+		registry.firstAttempt.Do(func() { close(registry.firstAttemptStarted) })
+		select {
+		case <-registry.firstAttemptRelease:
+			return ToolExecutionResult{}, errors.New("transient fixture failure after Lease refresh")
+		case <-ctx.Done():
+			return ToolExecutionResult{}, ctx.Err()
+		}
+	}
+	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
+}
+
+func (registry *leaseToolRegistryForTestOnly) waitUntilFirstAttemptStartedForTestOnly(t *testing.T) {
+	t.Helper()
+	select {
+	case <-registry.firstAttemptStarted:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("first tool attempt did not start")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+}
+
+func (registry *leaseToolRegistryForTestOnly) releaseFirstAttemptForTestOnly() {
+	registry.release.Do(func() { close(registry.firstAttemptRelease) })
+}
+
+func (registry *leaseToolRegistryForTestOnly) assertLeaseStatesForTestOnly(t *testing.T, expected []JSONObject) {
+	t.Helper()
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.invocations) != len(expected) {
+		t.Fatalf("tool invocations = %d, want %d", len(registry.invocations), len(expected))
+	}
+	for index, invocation := range registry.invocations {
+		if invocation.LeaseState == nil || *invocation.LeaseState != expected[index] {
+			t.Fatalf("Lease state %d = %v, want %s", index, invocation.LeaseState, expected[index])
+		}
+	}
+}
+
+func waitForToolInvocationCountForTestOnly(t *testing.T, registry *leaseToolRegistryForTestOnly, expected int) {
+	t.Helper()
+	deadline := time.NewTimer(integrationWaitTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		registry.mutex.Lock()
+		count := len(registry.invocations)
+		registry.mutex.Unlock()
+		if count >= expected {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("tool invocations = %d, want at least %d", count, expected)
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
+}
+
+type leaseRecoveryToolRegistryForTestOnly struct {
+	mutex       sync.Mutex
+	invocations []ToolInvocation
+	started     chan struct{}
+	release     chan struct{}
+	start       sync.Once
+	unblock     sync.Once
+}
+
+func newLeaseRecoveryToolRegistryForTestOnly() *leaseRecoveryToolRegistryForTestOnly {
+	return &leaseRecoveryToolRegistryForTestOnly{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (*leaseRecoveryToolRegistryForTestOnly) ServerNames() []string {
+	return []string{"integration"}
+}
+
+func (*leaseRecoveryToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
+	return []RegisteredTool{{
+		ServerName: "integration",
+		RemoteName: string(integrationToolName),
+		Definition: leaseToolDefinitionForTestOnly(),
+	}}
+}
+
+func (*leaseRecoveryToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
+	return []ToolDefinition{leaseToolDefinitionForTestOnly()}
+}
+
+func (registry *leaseRecoveryToolRegistryForTestOnly) Execute(
+	ctx context.Context,
+	invocation ToolInvocation,
+) (ToolExecutionResult, error) {
+	registry.mutex.Lock()
+	index := len(registry.invocations)
+	registry.invocations = append(registry.invocations, invocation)
+	registry.mutex.Unlock()
+	if index == 0 {
+		registry.start.Do(func() { close(registry.started) })
+		select {
+		case <-registry.release:
+			return ToolExecutionResult{
+				Content: `{"status":"failed","error":"lease_expired","message":"retry with a new tool call"}`,
+				Outcome: ToolOutcomeKnownFailure,
+				IsError: true,
+			}, nil
+		case <-ctx.Done():
+			return ToolExecutionResult{}, ctx.Err()
+		}
+	}
+	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
+}
+
+func (registry *leaseRecoveryToolRegistryForTestOnly) waitUntilFirstCallStartedForTestOnly(t *testing.T) {
+	t.Helper()
+	select {
+	case <-registry.started:
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("Lease failure tool call did not start")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+}
+
+func (registry *leaseRecoveryToolRegistryForTestOnly) releaseFirstCallForTestOnly() {
+	registry.unblock.Do(func() { close(registry.release) })
+}
+
+func (registry *leaseRecoveryToolRegistryForTestOnly) assertRecoveryCallsForTestOnly(
+	t *testing.T,
+	initial JSONObject,
+	refreshed JSONObject,
+) {
+	t.Helper()
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.invocations) != 2 {
+		t.Fatalf("Lease recovery tool calls = %d, want 2", len(registry.invocations))
+	}
+	expected := []JSONObject{initial, refreshed}
+	for index, invocation := range registry.invocations {
+		if invocation.Attempt != 1 || invocation.LeaseState == nil || *invocation.LeaseState != expected[index] {
+			t.Fatalf("Lease recovery invocation %d = %#v", index, invocation)
+		}
+	}
+	if registry.invocations[0].CallID == registry.invocations[1].CallID {
+		t.Fatal("model Lease recovery reused the original tool CallID")
+	}
+}
+
+type leaseRetryModelForTestOnly struct {
+	integrationModel
+	mutex          sync.Mutex
+	sawLeasePrompt bool
+}
+
+func (model *leaseRetryModelForTestOnly) Complete(
+	ctx context.Context,
+	request ModelRequest,
+) (ModelReply, error) {
+	model.mutex.Lock()
+	model.sawLeasePrompt = model.sawLeasePrompt || strings.Contains(request.Config.SystemPrompt, leaseRecoveryPrompt)
+	model.mutex.Unlock()
+	last := integrationLastConversationMessage(request.Messages)
+	if last != nil && last.Role == MessageRoleTool && strings.Contains(last.Content, "lease_expired") {
+		return integrationToolReply(
+			request,
+			integrationToolName,
+			MustJSONObject(`{}`),
+			"retrying tool with refreshed Lease",
+		)
+	}
+	return model.integrationModel.Complete(ctx, request)
+}
+
+func (model *leaseRetryModelForTestOnly) assertLeasePromptForTestOnly(t *testing.T) {
+	t.Helper()
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+	if !model.sawLeasePrompt {
+		t.Fatal("model did not receive the Lease recovery instruction")
+	}
+}
+
+func waitForCompletedToolTurnForTestOnly(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	minimumSequence Sequence,
+) {
+	t.Helper()
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage &&
+			len(state.PendingToolCalls) == 0 &&
+			state.LastSequence >= minimumSequence
+	})
+}
+
+func waitForStepCompletionForTestOnly(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	step stepType,
+	execution int32,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), integrationWaitTimeout)
+	defer cancel()
+	if err := environment.sdk.WaitForStepCompletion(ctx, string(flowID), dex.StepExecutionID{
+		StepType:        string(step),
+		ExecutionNumber: &execution,
+	}); err != nil {
+		t.Fatalf("wait for %s completion: %v", step, err)
+	}
+}
+
+func assertLeaseStateNotExposedForTestOnly(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	secrets ...string,
+) {
+	t.Helper()
+	values := make([]any, 0, 4)
+	values = append(values, readSnapshot(t, environment, flowID))
+	for _, stream := range []EventStream{EventStreamAssistant, EventStreamReasoning, EventStreamActivity} {
+		events, err := environment.agent.ListRecentEvents(t.Context(), flowID, stream, MaximumRecentEventLimit)
+		if err != nil {
+			t.Fatalf("list %s events: %v", stream, err)
+		}
+		values = append(values, events)
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("Lease value %q was exposed in browser read models", secret)
+		}
+	}
 }
 
 type integrationToolRegistry struct {

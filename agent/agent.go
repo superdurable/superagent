@@ -37,6 +37,8 @@ const (
 	MaximumUserMessageContentBytes = agentinternal.MaximumUserMessageContentBytes
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
 	MaximumRuntimeMetadataBytes = agentinternal.MaximumRuntimeMetadataBytes
+	// MaximumLeaseStateBytes bounds one opaque runtime Lease state.
+	MaximumLeaseStateBytes = agentinternal.MaximumLeaseStateBytes
 	// MaximumRecentEventLimit bounds one best-effort Stream recovery read.
 	MaximumRecentEventLimit = agentinternal.MaximumRecentEventLimit
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
@@ -222,11 +224,23 @@ type (
 	ToolInvocation                = agentinternal.ToolInvocation
 	ToolRegistry                  = agentinternal.ToolRegistry
 	RegisteredTool                = agentinternal.RegisteredTool
+	FlowOption                    = agentinternal.FlowOption
+	LeaseInitialization           = agentinternal.LeaseInitialization
+	LeaseRefreshID                = agentinternal.LeaseRefreshID
+	LeaseRefreshRequest           = agentinternal.LeaseRefreshRequest
+	LeaseRefreshResult            = agentinternal.LeaseRefreshResult
+	LeaseRefresher                = agentinternal.LeaseRefresher
+	LeaseExtensionConfig          = agentinternal.LeaseExtensionConfig
 )
 
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
-func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
-	return agentinternal.NewFlow(modelClient, tools)
+func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption) *Flow {
+	return agentinternal.NewFlow(modelClient, tools, options...)
+}
+
+// WithLeaseExtension enables durable maintenance of one opaque runtime Lease.
+func WithLeaseExtension(refresher LeaseRefresher, config *LeaseExtensionConfig) FlowOption {
+	return agentinternal.WithLeaseExtension(refresher, config)
 }
 
 // NewClient constructs an Agent application client over one Dex client and Flow definition.

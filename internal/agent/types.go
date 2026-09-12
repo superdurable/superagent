@@ -34,6 +34,8 @@ const (
 	maximumMessageIDBytes   = 256
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
 	MaximumRuntimeMetadataBytes = 16 << 10
+	// MaximumLeaseStateBytes bounds one opaque runtime Lease state.
+	MaximumLeaseStateBytes = 16 << 10
 	// MaximumUserMessageContentBytes bounds one user-message body.
 	MaximumUserMessageContentBytes = 256 << 10
 
@@ -563,10 +565,50 @@ type AgentConfig struct {
 	EnabledTools []ToolName `json:"enabled_tools"`
 }
 
-// StartRequest contains the Agent configuration and trusted runtime metadata.
+// StartRequest contains Agent configuration and optional trusted runtime state.
 type StartRequest struct {
-	Config          AgentConfig `json:"config"`
-	RuntimeMetadata JSONObject  `json:"runtime_metadata"`
+	Config          AgentConfig          `json:"config"`
+	RuntimeMetadata JSONObject           `json:"runtime_metadata"`
+	InitialLease    *LeaseInitialization `json:"initial_lease,omitempty"`
+}
+
+// LeaseInitialization supplies immediately usable state and its first refresh time.
+type LeaseInitialization struct {
+	State     JSONObject `json:"state"`
+	RefreshAt time.Time  `json:"refresh_at"`
+}
+
+// LeaseRefreshID identifies one idempotent refresh generation.
+type LeaseRefreshID string
+
+// LeaseRefreshRequest asks an integration to replace one runtime Lease generation.
+type LeaseRefreshRequest struct {
+	FlowID           FlowID
+	State            JSONObject
+	RefreshID        LeaseRefreshID
+	TargetGeneration int64
+}
+
+// LeaseRefreshResult contains immediately usable replacement state and its next refresh time.
+type LeaseRefreshResult struct {
+	State     JSONObject
+	RefreshAt time.Time
+}
+
+// LeaseRefresher replaces opaque runtime Lease state through an external control plane.
+type LeaseRefresher interface {
+	Refresh(context.Context, LeaseRefreshRequest) (LeaseRefreshResult, error)
+}
+
+// LeaseExtensionConfig controls the optional runtime Lease maintenance Step.
+type LeaseExtensionConfig struct {
+	// AttemptTimeout bounds one refresh attempt. Zero selects two minutes.
+	// Nonzero values must be whole seconds of at least ten seconds and remain
+	// fixed for the lifetime of the Flow definition.
+	AttemptTimeout time.Duration
+	// RetryTotalDuration bounds all attempts for one generation. Zero selects
+	// 30 minutes. Nonzero values must be whole seconds and at least AttemptTimeout.
+	RetryTotalDuration time.Duration
 }
 
 // NewAgentConfig returns deterministic local defaults.
@@ -982,6 +1024,40 @@ func validateRuntimeMetadata(value JSONObject) error {
 	return err
 }
 
+func validateLeaseInitialization(initial *LeaseInitialization, now time.Time) error {
+	if initial == nil {
+		return errors.New("initial Lease is required")
+	}
+	if initial.State == "" {
+		return errors.New("initial Lease state is required")
+	}
+	if len(initial.State) > MaximumLeaseStateBytes {
+		return fmt.Errorf("initial Lease state exceeds %d bytes", MaximumLeaseStateBytes)
+	}
+	if _, err := ParseJSONObject(initial.State.String()); err != nil {
+		return fmt.Errorf("initial Lease state: %w", err)
+	}
+	if initial.RefreshAt.IsZero() || !initial.RefreshAt.After(now) {
+		return errors.New("initial Lease refresh_at must be in the future")
+	}
+	return nil
+}
+
+func (config LeaseExtensionConfig) validate() error {
+	switch {
+	case config.AttemptTimeout < 10*time.Second:
+		return errors.New("attempt timeout must be at least 10 seconds")
+	case config.AttemptTimeout%time.Second != 0:
+		return errors.New("attempt timeout must use whole seconds")
+	case config.RetryTotalDuration < config.AttemptTimeout:
+		return errors.New("retry total duration must be at least the attempt timeout")
+	case config.RetryTotalDuration%time.Second != 0:
+		return errors.New("retry total duration must use whole seconds")
+	default:
+		return nil
+	}
+}
+
 // ModelReply is one complete provider response.
 type ModelReply struct {
 	Content              string                `json:"content"`
@@ -1044,11 +1120,14 @@ type ModelClient interface {
 type ToolInvocation struct {
 	FlowID          FlowID
 	RuntimeMetadata JSONObject
+	LeaseState      *JSONObject
 	Name            ToolName
 	Arguments       JSONObject
 	EnabledServers  []string
 	WriteProgress   TextWriter
 	CallID          CallID
+	Attempt         int32
+	FirstAttemptAt  time.Time
 }
 
 // ToolRegistry exposes trusted, discovered MCP capabilities.

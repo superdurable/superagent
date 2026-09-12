@@ -41,22 +41,10 @@ import (
 const (
 	defaultToolTimeout    = 60 * time.Second
 	defaultRetryDuration  = 5 * time.Minute
-	maximumRetryBackoff   = 5 * time.Second
 	maximumPublicNameSize = 64
 )
 
 var invalidNameCharacter = regexp.MustCompile(`[^A-Za-z0-9_]`)
-
-const toolFailureStatusFailed toolFailureStatus = "failed"
-
-type toolFailureStatus string
-
-type toolFailure struct {
-	Status    toolFailureStatus `json:"status"`
-	Attempts  int               `json:"attempts"`
-	Outcome   agent.ToolOutcome `json:"outcome"`
-	ErrorType string            `json:"error_type"`
-}
 
 type registryLifecycle uint8
 
@@ -302,7 +290,9 @@ func (registry *Registry) Execute(
 	if _, allowed := allowedServers[registered.ServerName]; !allowed {
 		return agent.ToolExecutionResult{}, fmt.Errorf("MCP server %q is not enabled", registered.ServerName)
 	}
-	return registry.executeWithRetry(ctx, registered, servers[registered.ServerName], invocation)
+	attemptCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	return registry.executeOnce(attemptCtx, cancel, registered, servers[registered.ServerName], invocation)
 }
 
 func (registry *Registry) discoverServer(
@@ -349,66 +339,6 @@ func (registry *Registry) discoverServer(
 		cursor = result.NextCursor
 	}
 	return operationErr
-}
-
-func (registry *Registry) executeWithRetry(
-	ctx context.Context,
-	tool agent.RegisteredTool,
-	server ServerConfig,
-	invocation agent.ToolInvocation,
-) (agent.ToolExecutionResult, error) {
-	definition := tool.Definition
-	deadline := time.Now().Add(definition.RetryTotalDuration)
-	var lastErr error
-	attempts := 0
-	for attempts < definition.MaximumAttempts && !time.Now().After(deadline) {
-		attempts++
-		if err := invocation.WriteProgress(fmt.Sprintf("Calling %s (attempt %d).", definition.Name, attempts)); err != nil {
-			return agent.ToolExecutionResult{}, err
-		}
-		attemptTimeout := definition.AttemptTimeout
-		if remaining := time.Until(deadline); remaining < attemptTimeout {
-			attemptTimeout = remaining
-		}
-		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
-		result, err := registry.executeOnce(attemptCtx, cancel, tool, server, invocation)
-		cancel()
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		if attempts >= definition.MaximumAttempts || time.Now().After(deadline) {
-			break
-		}
-		backoff := time.Second << (attempts - 1)
-		if backoff > maximumRetryBackoff {
-			backoff = maximumRetryBackoff
-		}
-		if remaining := time.Until(deadline); remaining < backoff {
-			backoff = remaining
-		}
-		if err := waitForRetry(ctx, backoff); err != nil {
-			return agent.ToolExecutionResult{}, err
-		}
-	}
-	if lastErr == nil {
-		lastErr = errors.New("MCP retry deadline expired before the first attempt")
-	}
-	registry.logger.WarnContext(ctx, "MCP tool failed", "tool", definition.Name, "attempts", attempts, "error_type", errorTypeName(lastErr))
-	outcome := agent.ToolOutcomeUnknown
-	if !definition.RequiresApproval {
-		outcome = agent.ToolOutcomeKnownFailure
-	}
-	encoded, err := json.Marshal(toolFailure{
-		Status:    toolFailureStatusFailed,
-		Attempts:  attempts,
-		Outcome:   outcome,
-		ErrorType: errorTypeName(lastErr),
-	})
-	if err != nil {
-		return agent.ToolExecutionResult{}, err
-	}
-	return agent.ToolExecutionResult{Content: string(encoded), Outcome: outcome, IsError: true}, nil
 }
 
 func (registry *Registry) executeOnce(
@@ -691,20 +621,6 @@ func decodeMCPArguments(encoded agent.JSONObject) (map[string]any, error) {
 		return nil, errors.New("MCP tool arguments must be an object")
 	}
 	return arguments, nil
-}
-
-func waitForRetry(ctx context.Context, duration time.Duration) error {
-	if duration <= 0 {
-		return context.DeadlineExceeded
-	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func errorTypeName(err error) string {

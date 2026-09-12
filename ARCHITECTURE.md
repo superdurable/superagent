@@ -30,7 +30,7 @@ Agent state. Streams reduce latency but never become recovery state.
 | `internal/app`               | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
 | `internal/config`            | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
 | `internal/model`             | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
-| `internal/mcp`               | Trusted server config, discovery, policy, sessions, retries, brokers           | Agent state transitions or exported Dex resource access            |
+| `internal/mcp`               | Trusted server config, discovery, policy, single-attempt sessions, brokers     | Agent state transitions, retry loops, or exported Dex resources     |
 | `web`                        | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
 | `web/packages/superagent-ui` | Transport-free React conversation components and local interaction behavior    | Dex/API clients, routing, durable state, or product workflows      |
 
@@ -62,6 +62,21 @@ immutable `AgentConfig` and optional `RuntimeMetadata`, then starts Dex with
 16 KiB. It exists for trusted integration routing across Worker replacement;
 tool implementations receive it with the Flow and call IDs. Models, browser
 Snapshots, Streams, and logs do not receive it. It must not contain secrets.
+
+An embedding application may configure one generic Runtime Lease extension.
+`Client.Start` then requires an immediately usable `InitialLease` containing
+opaque JSON state and the first `RefreshAt`. Both `AgentLeaseState` and its
+typed generation schedule are initial Dex Attributes, so the first tool call
+never waits for an initialization refresh. The state may retain private
+provider configuration needed by later refreshes and is capped at 16 KiB.
+
+The `Init` Step starts the conversation branch beside a maintenance branch.
+The maintenance branch waits on a durable Timer, calls the injected
+`LeaseRefresher`, then atomically replaces the state and schedule. A refresh ID
+derived from Flow ID and target generation makes the external refresh
+idempotent. The refresher chooses a time well before expiration; a one-hour
+credential should normally refresh about every 15 minutes. Lease state never
+enters model input, Snapshot, history, Streams, activity, logs, or HTTP models.
 
 `CurrentMessages` and `ArchivedMessages` are the typed application history;
 they are not Dex execution history. `AgentState` owns the retained sequence
@@ -112,7 +127,8 @@ History-reading Steps declare bounded AttributeMap loads explicitly. Integration
 tests use verb-first `ForTestOnly` RPCs rather than generic Dex Client resource
 operations. Tool invocations receive the stable Flow ID, model call ID, and
 runtime metadata as one durable routing identity, including after Worker
-replacement.
+replacement. They also receive Dex attempt metadata and, when enabled, the
+Runtime Lease snapshot loaded for that logical Step execution.
 
 ## Durable and live reconciliation
 
@@ -241,10 +257,18 @@ transport with SDK retries disabled.
 Discovery follows every pagination cursor and publishes tools atomically only
 after all configured servers succeed. Unknown and write-capable tools require
 approval and one attempt by default. Only explicitly trusted read-only tools can
-retry; each attempt and total retry duration are bounded. Tool-level `isError`
-is a completed known failure and is not blindly retried. Every session is closed,
-stdio subprocesses are reaped, and idle HTTP connections are closed by the
-registry owner.
+retry. `ToolDefinition` supplies attempt timeout, maximum attempts, and total
+duration to Dex StepOptions. The MCP registry performs one call per Dex attempt
+and never sleeps or retries internally. Tool-level `isError` is a completed
+known failure. A transient or ambiguous failure returns a Go error. Exhaustion
+routes to `RecoverToolExecution`, which records one unknown outcome and lets the
+Agent continue. Every session is closed, stdio subprocesses are reaped, and
+idle HTTP connections are closed by the registry owner.
+
+Every retry of one logical tool Step reuses its first Attribute snapshot. A
+background Lease refresh therefore cannot change an in-flight tool call. A
+Lease-expired tool result is a known failure; the Lease-enabled system prompt
+permits one new tool call, whose new Step execution reads the latest state.
 
 ## Process lifecycle
 

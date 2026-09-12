@@ -68,13 +68,11 @@ func (registry *Registry) executeBroker(
 	if !configured || !enabled {
 		return agent.ToolExecutionResult{}, fmt.Errorf("MCP server %q is not enabled", arguments.Server)
 	}
-	operationCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	session, err := registry.connect(operationCtx, server, nil)
+	session, err := registry.connect(ctx, server, nil)
 	if err != nil {
 		return agent.ToolExecutionResult{}, err
 	}
-	encoded, operationErr := invokeBroker(operationCtx, session, invocation.Name, arguments)
+	encoded, operationErr := invokeBroker(ctx, session, invocation.Name, arguments)
 	closeErr := session.Close()
 	if operationErr != nil {
 		return agent.ToolExecutionResult{}, errors.Join(operationErr, closeErr)
