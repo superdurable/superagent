@@ -6,13 +6,28 @@
 set -eu
 
 repository_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-log_dir=${TEST_LOG_DIR:-/tmp/superagent-full-stack}
-http_address=${SUPERAGENT_E2E_HTTP_ADDRESS:-127.0.0.1:8080}
+log_dir=${TEST_LOG_DIR:-/tmp/superagent-full-stack-$$}
+test_ports=$(node -e '
+  const net = require("node:net");
+  const servers = Array.from({ length: 3 }, () => net.createServer());
+  Promise.all(servers.map((server) => new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  }))).then((ports) => {
+    process.stdout.write(ports.join(" "));
+    return Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+  }).catch((error) => {
+    process.stderr.write(`${error}\n`);
+    process.exitCode = 1;
+  });
+')
+set -- $test_ports
+http_address=${SUPERAGENT_E2E_HTTP_ADDRESS:-127.0.0.1:$1}
 api_origin=${SUPERAGENT_E2E_API_ORIGIN:-http://$http_address}
-worker_bind_address=${SUPERAGENT_E2E_WORKER_BIND_ADDRESS:-127.0.0.1:8803}
+worker_bind_address=${SUPERAGENT_E2E_WORKER_BIND_ADDRESS:-127.0.0.1:$2}
 worker_target=${SUPERAGENT_E2E_WORKER_TARGET:-$worker_bind_address}
 web_host=${SUPERAGENT_E2E_WEB_HOST:-127.0.0.1}
-web_port=${SUPERAGENT_E2E_WEB_PORT:-4173}
+web_port=${SUPERAGENT_E2E_WEB_PORT:-$3}
 web_origin=${SUPERAGENT_E2E_WEB_ORIGIN:-http://$web_host:$web_port}
 web_root="$log_dir/web-root"
 mkdir -p "$log_dir"
