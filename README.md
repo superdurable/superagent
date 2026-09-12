@@ -13,6 +13,7 @@ transport boundaries from one contract.
 - OpenAI, Anthropic, Gemini, Groq, and deterministic mock providers
 - MCP over stdio and Streamable HTTP
 - Context compaction and Worker replacement recovery
+- Optional, generic Runtime Lease maintenance for external tools
 - Atomic Snapshot restoration with best-effort live event reconciliation
 - Separately deployable backend and frontend artifacts
 
@@ -54,6 +55,21 @@ typed `StartRequest`. `RuntimeMetadata` is an optional JSON object of at most
 16 KiB for trusted routing data. It is persisted across Worker replacement and
 passed only to tool implementations, never to models, browser Snapshots, or
 Streams. Do not put secrets in it.
+
+Embedders that need renewable tool credentials can add
+`agent.WithLeaseExtension(...)`. Start must provide a complete, immediately
+usable `InitialLease.State` plus its first `RefreshAt`; the Agent never waits for
+an initialization refresh. The same Flow maintains later generations with a
+durable Timer. The opaque state is passed only to tools and is never exposed by
+the HTTP API, Snapshot, model context, Streams, activity, or logs. Refresh well
+before expiration; for a one-hour Lease, 15-minute refreshes are a suitable
+starting policy.
+
+External tool retries belong to Dex. `ToolDefinition` controls attempt timeout,
+maximum attempts, and total duration. A registry performs exactly one call for
+each Dex attempt. One tool call keeps its original Lease snapshot across
+retries; after an explicit Lease-expired result, the model may issue one new
+tool call to read refreshed state.
 
 Commands use Dex transactional RPC semantics. Callers do not create command or
 message IDs. Snapshot exposes Dex Channel message IDs for queued-message edit,

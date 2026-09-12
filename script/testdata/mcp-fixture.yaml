@@ -12,5 +12,5 @@ servers:
       echo:
         read_only: false
         timeout_seconds: 10
-        maximum_attempts: 1
+        maximum_attempts: 2
         retry_total_seconds: 10

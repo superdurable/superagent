@@ -19,6 +19,7 @@ package mcpregistry
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -100,12 +101,12 @@ func TestStreamableHTTPDiscoversEveryPageAndExecutesWithHeaders(t *testing.T) {
 	if result.IsError || result.Outcome != agent.ToolOutcomeSucceeded || !strings.Contains(result.Content, `"echo":"hello"`) {
 		t.Fatalf("tool result = %+v", result)
 	}
-	if len(progress) != 1 || progress[0] != "Calling fixture__echo (attempt 1)." {
+	if len(progress) != 0 {
 		t.Fatalf("progress = %q", progress)
 	}
 }
 
-func TestStreamableHTTPRetriesReadOnlyTransportFailure(t *testing.T) {
+func TestStreamableHTTPReturnsTransportFailureWithoutRetry(t *testing.T) {
 	server := newFixtureServer(1, echoFixtureTool)
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil)
 	var rejectedCalls atomic.Int32
@@ -145,16 +146,16 @@ func TestStreamableHTTPRetriesReadOnlyTransportFailure(t *testing.T) {
 		progressCalls++
 		return nil
 	}
-	result, err := registry.Execute(t.Context(), invocation)
-	if err != nil {
-		t.Fatal(err)
+	_, err := registry.Execute(t.Context(), invocation)
+	if err == nil {
+		t.Fatal("Execute() error = nil")
 	}
-	if rejectedCalls.Load() != 1 || progressCalls != 2 || result.IsError || result.Outcome != agent.ToolOutcomeSucceeded {
-		t.Fatalf("rejected calls = %d, progress calls = %d, result = %+v", rejectedCalls.Load(), progressCalls, result)
+	if rejectedCalls.Load() != 1 || progressCalls != 0 {
+		t.Fatalf("rejected calls = %d, progress calls = %d", rejectedCalls.Load(), progressCalls)
 	}
 }
 
-func TestStreamableHTTPBoundsToolTimeout(t *testing.T) {
+func TestStreamableHTTPUsesCallerAttemptDeadline(t *testing.T) {
 	handler := func(
 		ctx context.Context,
 		_ *mcpsdk.CallToolRequest,
@@ -183,16 +184,15 @@ func TestStreamableHTTPBoundsToolTimeout(t *testing.T) {
 	}
 	t.Cleanup(registry.Close)
 
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
 	started := time.Now()
-	result, err := registry.Execute(t.Context(), fixtureInvocation("call-timeout"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, err := registry.Execute(ctx, fixtureInvocation("call-timeout"))
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("bounded tool call took %s", elapsed)
 	}
-	if !result.IsError || result.Outcome != agent.ToolOutcomeKnownFailure {
-		t.Fatalf("timeout result = %+v", result)
+	if err == nil {
+		t.Fatal("Execute() error = nil")
 	}
 }
 
@@ -280,7 +280,23 @@ func runStdioHelper(directory string) int {
 		return 2
 	}
 	defer func() { _ = os.WriteFile(done, nil, 0o600) }()
-	server := newFixtureServer(1, echoFixtureTool)
+	server := newFixtureServer(1, func(
+		ctx context.Context,
+		request *mcpsdk.CallToolRequest,
+		input fixtureToolInput,
+	) (*mcpsdk.CallToolResult, fixtureToolOutput, error) {
+		if input.Value == "retry once" {
+			progressToken := fmt.Sprint(request.Params.Meta["progressToken"])
+			marker := filepath.Join(directory, fmt.Sprintf("retry-%x", sha256.Sum256([]byte(progressToken))))
+			if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+				if writeErr := os.WriteFile(marker, nil, 0o600); writeErr != nil {
+					return nil, fixtureToolOutput{}, writeErr
+				}
+				os.Exit(4)
+			}
+		}
+		return echoFixtureTool(ctx, request, input)
+	})
 	if err := server.Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
 		return 3
 	}

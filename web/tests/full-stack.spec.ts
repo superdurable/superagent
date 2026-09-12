@@ -1333,6 +1333,34 @@ test("keeps narrow queue actions visible and restores keyboard focus", async ({
   await expect(composer).toBeFocused();
 });
 
+test("retries an external tool through Dex without requesting approval twice", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await startAgent(page);
+  await page
+    .getByRole("textbox", { name: "Message" })
+    .fill('/tool fixture__echo {"value":"retry once"}');
+  await page.getByRole("button", { name: "Send" }).click();
+  const approval = page.locator(".approval-card");
+  await expect(approval.getByText("Approval required")).toBeVisible();
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(approval).toHaveCount(0);
+  await expect(
+    page
+      .locator(".message-bubble.tool")
+      .filter({ hasText: '"echo":"retry once"' }),
+  ).toBeVisible();
+  const activity = page.locator(".activity-entry");
+  await expect(
+    activity.filter({ hasText: "Calling fixture__echo (attempt 1)." }),
+  ).toBeVisible();
+  await expect(
+    activity.filter({ hasText: "Calling fixture__echo (attempt 2)." }),
+  ).toBeVisible();
+  await expect(page.getByText("Approval required")).toHaveCount(0);
+});
+
 async function startAgent(page: Page): Promise<void> {
   await page.goto("/");
   await expect(

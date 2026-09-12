@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/agent"
@@ -56,6 +57,15 @@ func (toolRegistry) Definitions([]string, []agent.ToolName) []agent.ToolDefiniti
 
 func (toolRegistry) Execute(context.Context, agent.ToolInvocation) (agent.ToolExecutionResult, error) {
 	return agent.ToolExecutionResult{}, nil
+}
+
+type leaseRefresher struct{}
+
+func (leaseRefresher) Refresh(
+	context.Context,
+	agent.LeaseRefreshRequest,
+) (agent.LeaseRefreshResult, error) {
+	return agent.LeaseRefreshResult{}, nil
 }
 
 var (
@@ -100,6 +110,21 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	}
 	if agent.MaximumRuntimeMetadataBytes != 16<<10 {
 		t.Fatal("public runtime metadata limit is unavailable")
+	}
+	leaseFlow := agent.NewFlow(
+		modelClient{},
+		toolRegistry{},
+		agent.WithLeaseExtension(leaseRefresher{}, nil),
+	)
+	if _, err := dex.NewRegistry([]dex.Flow{leaseFlow}); err != nil {
+		t.Fatalf("register public Agent Flow with Lease extension: %v", err)
+	}
+	initialLease := agent.LeaseInitialization{
+		State:     agent.MustJSONObject(`{"token":"initial"}`),
+		RefreshAt: time.Now().Add(15 * time.Minute),
+	}
+	if initialLease.State == "" || agent.MaximumLeaseStateBytes != 16<<10 {
+		t.Fatal("public Lease contract is unavailable")
 	}
 }
 

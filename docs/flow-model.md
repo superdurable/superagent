@@ -6,6 +6,8 @@
 - Business identity: one stable Flow ID per durable Agent conversation
 - Start input: typed `AgentConfig`; trusted `RuntimeMetadata` is an optional
   initial Attribute and must be one JSON object no larger than 16 KiB
+- Optional Runtime Lease: `InitialLease` supplies immediately usable opaque
+  state and the first refresh time as initial Attributes
 - ID reuse: Dex `IDReuseDisallow`
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
@@ -22,7 +24,8 @@ transaction.
 
 ```text
 Init
-  -> AwaitUser
+  ├─> AwaitUser
+  └─> WaitForLeaseRefresh -> RefreshLease -> WaitForLeaseRefresh ... (optional)
        -> CheckSteered -> CompactContext? -> CallModel
        -> accepted plan execution ------------^
 
@@ -33,18 +36,25 @@ CallModel
 
 RouteTool
   -> CheckSteered -> AwaitToolApproval         (untrusted write)
-  -> CheckSteered -> ExecuteTool               (approved/read-only MCP)
+  -> CheckSteered -> ExecuteToolWithRetry      (approved/read-only external tool)
   -> CheckSteered -> DurableWait               (timer tool)
   -> AwaitUser                                  (durable input tool)
   -> next tool or CompactContext               (built-in/result)
 
 AwaitToolApproval
-  -> CheckSteered -> ExecuteTool               (approved)
+  -> CheckSteered -> ExecuteToolWithRetry      (approved)
   -> next tool or CompactContext               (rejected)
   -> CompactContext                            (steered)
 
 ExecuteTool
-  -> next tool or CompactContext
+  -> next tool or CompactContext               (legacy open executions only)
+
+ExecuteToolWithRetry
+  -> next tool or CompactContext               (success or known failure)
+  -> RecoverToolExecution                      (Dex retry exhaustion)
+
+RecoverToolExecution
+  -> next tool or CompactContext               (one unknown outcome)
 
 DurableWait
   -> next tool or CompactContext               (timer fired)
@@ -68,7 +78,11 @@ application history, and makes the model replan.
 | `RouteTool`         | none                                                                                | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                                                       |
 | `AwaitToolApproval` | exact call-ID approval or steering                                                  | Persist waiting status beside the wait; consume one decision or replan                                                                                |
 | `ExecuteTool`       | none                                                                                | Perform one external MCP effect with stable Flow/call identity, then persist its result                                                               |
+| `ExecuteToolWithRetry` | none                                                                             | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                             |
+| `RecoverToolExecution` | none                                                                             | Record one unknown result after exhausted Dex retries, then let the Agent continue                                                                    |
 | `DurableWait`       | Timer or steering                                                                   | Persist waiting status beside the wait; record completion or interruption and continue                                                                |
+| `WaitForLeaseRefresh` | refresh Timer                                                                     | Wait durably without blocking the Worker or changing conversation status                                                                               |
+| `RefreshLease`      | none                                                                                | Refresh opaque Lease state and atomically schedule the next generation                                                                                 |
 
 ## Durable resources
 
@@ -76,6 +90,8 @@ application history, and makes the model replan.
 | ------------------------ | --------------- | -------------------------------------------------------------------------------------------- |
 | `AgentConfig`            | Attribute       | Immutable execution configuration                                                            |
 | `AgentRuntimeMetadata`   | Attribute       | Trusted runtime routing metadata; never model or browser context                             |
+| `AgentLeaseState`        | Attribute       | Optional opaque, immediately usable tool state; never model or browser context               |
+| `AgentLeaseSchedule`     | Attribute       | Optional typed generation and next refresh time                                               |
 | `AgentState`             | Attribute       | Sequence range, mode, status, plan revision, pending-call cursor, and Plan no-progress count |
 | `AgentInteractionStatus` | Attribute       | Durable `submitted`/`waiting` browser synchronization boundary                               |
 | `ContextSummary`         | Attribute       | Cumulative summary and explicit covered sequence                                             |
@@ -170,8 +186,18 @@ Dex result and visibility contracts and contains no active Agent description.
   fallback. Mutation controls remain gated until reconciliation succeeds.
 - Model calls have bounded attempts, total duration, method timeout, and a
   heartbeat timeout sized for expected provider silence.
-- Read-only MCP tools may retry within an explicit budget. Write or unknown MCP
-  tools require approval and default to one attempt.
+- Tool execution policy is copied from `ToolDefinition` into Dex StepOptions.
+  The MCP registry executes once per attempt and owns no retry loop or timeout.
+- Known business and Lease failures return a tool result without retry.
+  Transient or ambiguous errors use Dex retry. Exhaustion records one unknown
+  result through `RecoverToolExecution` and the Agent continues.
+- Dex retries reuse the first Execute Attribute snapshot. A refreshed Lease is
+  visible only to a new tool call. The Lease-enabled model instruction permits
+  one new call after an explicit Lease-expired failure and forbids a loop.
+- Runtime Lease state and schedule are committed before `Init`. The first tool
+  call can use the initial state even while the first scheduled refresh is slow.
+  The refresher should schedule well before expiration, such as every 15
+  minutes for a one-hour Lease.
 - Stable Flow and call IDs let a tool integration derive an external-effect
   idempotency key without creating a general Agent command ledger.
 - A timeout after an unprotected write records an unknown outcome; it never

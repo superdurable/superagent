@@ -70,6 +70,9 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, request StartReq
 	if err := validateRuntimeMetadata(request.RuntimeMetadata); err != nil {
 		return "", err
 	}
+	if err := client.flow.validateInitialLease(request.InitialLease, time.Now()); err != nil {
+		return "", err
+	}
 	metadata := request.RuntimeMetadata
 	if metadata == "" {
 		metadata = MustJSONObject(`{}`)
@@ -78,9 +81,24 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, request StartReq
 	if err != nil {
 		return "", fmt.Errorf("encode Agent runtime metadata: %w", err)
 	}
+	initialAttributes := []dex.InitialAttributeDef{initialMetadata}
+	if request.InitialLease != nil {
+		initialLeaseState, leaseErr := dex.InitialAttribute(agentLeaseStateAttribute, request.InitialLease.State)
+		if leaseErr != nil {
+			return "", fmt.Errorf("encode initial Agent Lease state: %w", leaseErr)
+		}
+		initialLeaseSchedule, leaseErr := dex.InitialAttribute(agentLeaseScheduleAttribute, leaseSchedule{
+			Generation: 1,
+			RefreshAt:  request.InitialLease.RefreshAt,
+		})
+		if leaseErr != nil {
+			return "", fmt.Errorf("encode initial Agent Lease schedule: %w", leaseErr)
+		}
+		initialAttributes = append(initialAttributes, initialLeaseState, initialLeaseSchedule)
+	}
 	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), request.Config, dex.StartFlowOptions{
 		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    []dex.InitialAttributeDef{initialMetadata},
+		Attributes:    initialAttributes,
 	})
 	if err != nil {
 		return "", err

@@ -17,9 +17,12 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -31,6 +34,8 @@ import (
 var (
 	agentConfigAttribute            = dex.DefineAttribute[AgentConfig]("AgentConfig")
 	agentRuntimeMetadataAttribute   = dex.DefineAttribute[JSONObject]("AgentRuntimeMetadata")
+	agentLeaseStateAttribute        = dex.DefineAttribute[JSONObject]("AgentLeaseState")
+	agentLeaseScheduleAttribute     = dex.DefineAttribute[leaseSchedule]("AgentLeaseSchedule")
 	agentStateAttribute             = dex.DefineAttribute[AgentState]("AgentState")
 	agentInteractionStatusAttribute = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
 	contextSummaryAttribute         = dex.DefineAttribute[ContextSummary]("ContextSummary")
@@ -53,22 +58,82 @@ var (
 type Flow struct {
 	modelClient ModelClient
 	tools       ToolRegistry
+	lease       *leaseExtension
 }
 
 var _ dex.Flow = (*Flow)(nil)
 
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
-func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
+func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption) *Flow {
 	if modelClient == nil {
 		panic("model client is required")
 	}
 	if tools == nil {
 		panic("tool registry is required")
 	}
-	return &Flow{modelClient: modelClient, tools: tools}
+	flow := &Flow{modelClient: modelClient, tools: tools}
+	for _, option := range options {
+		if option == nil {
+			panic("Flow option is required")
+		}
+		option.applyFlowOption(flow)
+	}
+	return flow
+}
+
+// FlowOption configures one optional Agent capability.
+type FlowOption interface {
+	applyFlowOption(*Flow)
+}
+
+type leaseFlowOption struct {
+	refresher LeaseRefresher
+	config    LeaseExtensionConfig
+}
+
+func (option leaseFlowOption) applyFlowOption(flow *Flow) {
+	if flow.lease != nil {
+		panic("Lease extension is already configured")
+	}
+	flow.lease = &leaseExtension{refresher: option.refresher, config: option.config}
+}
+
+// WithLeaseExtension enables durable maintenance of one opaque runtime Lease.
+func WithLeaseExtension(refresher LeaseRefresher, config *LeaseExtensionConfig) FlowOption {
+	if refresher == nil {
+		panic("Lease refresher is required")
+	}
+	resolved := LeaseExtensionConfig{
+		AttemptTimeout:     2 * time.Minute,
+		RetryTotalDuration: 30 * time.Minute,
+	}
+	if config != nil {
+		if config.AttemptTimeout != 0 {
+			resolved.AttemptTimeout = config.AttemptTimeout
+		}
+		if config.RetryTotalDuration != 0 {
+			resolved.RetryTotalDuration = config.RetryTotalDuration
+		}
+	}
+	if err := resolved.validate(); err != nil {
+		panic(fmt.Sprintf("invalid Lease extension config: %v", err))
+	}
+	return leaseFlowOption{refresher: refresher, config: resolved}
+}
+
+type leaseExtension struct {
+	refresher LeaseRefresher
+	config    LeaseExtensionConfig
+}
+
+type leaseSchedule struct {
+	Generation int64     `json:"generation"`
+	RefreshAt  time.Time `json:"refresh_at"`
 }
 
 const flowTypeAIAgent = "AIAgentFlow"
+
+const leaseRecoveryPrompt = "If a tool reports that its runtime lease, credential, or token expired and a refresh may recover it, issue one new tool call so it can read the latest lease state. Do not automatically retry the same lease failure more than once; report the repeated failure to the user."
 
 // GetFlowType pins the durable Flow identity.
 func (*Flow) GetFlowType() string {
@@ -86,7 +151,11 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(routeToolStep{flow: flow}),
 		dex.DefineStep(awaitToolApprovalStep{flow: flow}),
 		dex.DefineStep(executeToolStep{flow: flow}),
+		dex.DefineStep(executeToolWithRetryStep{flow: flow}),
+		dex.DefineStep(recoverToolExecutionStep{flow: flow}),
 		dex.DefineStep(durableWaitStep{flow: flow}),
+		dex.DefineStep(waitForLeaseRefreshStep{flow: flow}),
+		dex.DefineStep(refreshLeaseStep{flow: flow}),
 	}
 }
 
@@ -96,6 +165,8 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 		Attributes: []dex.AttributeDef{
 			agentConfigAttribute,
 			agentRuntimeMetadataAttribute,
+			agentLeaseStateAttribute,
+			agentLeaseScheduleAttribute,
 			agentStateAttribute,
 			agentInteractionStatusAttribute,
 			contextSummaryAttribute,
@@ -472,6 +543,9 @@ func (flow *Flow) validateConfig(config AgentConfig) error {
 	}
 	availableTools := make([]ToolName, 0)
 	for _, definition := range flow.toolDefinitions(config) {
+		if err := validateToolExecutionPolicy(definition); err != nil {
+			return fmt.Errorf("tool %q: %w", definition.Name, err)
+		}
 		availableTools = append(availableTools, definition.Name)
 	}
 	unknownTools := difference(config.EnabledTools, availableTools)
@@ -479,6 +553,71 @@ func (flow *Flow) validateConfig(config AgentConfig) error {
 		return fmt.Errorf("unknown tools: %v", unknownTools)
 	}
 	return nil
+}
+
+func validateToolExecutionPolicy(definition ToolDefinition) error {
+	switch {
+	case definition.MaximumAttempts <= 0:
+		return errors.New("maximum attempts must be positive")
+	case definition.MaximumAttempts > math.MaxInt32:
+		return errors.New("maximum attempts exceeds the Dex limit")
+	case definition.AttemptTimeout < 0:
+		return errors.New("attempt timeout must not be negative")
+	case definition.RetryTotalDuration < 0:
+		return errors.New("retry total duration must not be negative")
+	default:
+		return nil
+	}
+}
+
+func (flow *Flow) validateInitialLease(initial *LeaseInitialization, now time.Time) error {
+	if flow.lease != nil {
+		return validateLeaseInitialization(initial, now)
+	}
+	if initial != nil {
+		return errors.New("initial Lease requires the Lease extension")
+	}
+	return nil
+}
+
+func (flow *Flow) currentToolStepOptions(ctx dex.Context) (*dex.StepOptions, error) {
+	call, err := flow.currentToolCall(ctx)
+	if err != nil {
+		return nil, err
+	}
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	definition, err := flow.invocationToolDefinition(config, state, call.Name)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateToolExecutionPolicy(definition); err != nil {
+		return nil, fmt.Errorf("tool %q: %w", definition.Name, err)
+	}
+	return flow.toolStepOptions(definition), nil
+}
+
+func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
+	return &dex.StepOptions{
+		ExecuteMethodTimeout:     definition.AttemptTimeout,
+		HeartbeatTimeout:         toolStepOptions.HeartbeatTimeout,
+		ExecuteLoadAttributeMaps: toolStepOptions.ExecuteLoadAttributeMaps,
+		ExecuteRetry: &dex.RetryPolicy{
+			// #nosec G115 -- validateToolExecutionPolicy rejects values outside int32.
+			MaximumAttempts: int32(definition.MaximumAttempts),
+			TotalDuration:   definition.RetryTotalDuration,
+		},
+		ExecuteFailure: dex.ProceedToOnExecuteFailure(
+			recoverToolExecutionStep{flow: flow},
+			messageMutationStepOptions,
+		),
+	}
 }
 
 func (flow *Flow) toolDefinitions(config AgentConfig) []ToolDefinition {
@@ -1217,6 +1356,7 @@ const (
 	continueRouteTool         continuation = "route_tool"
 	continueAwaitToolApproval continuation = "await_tool_approval"
 	continueExecuteTool       continuation = "execute_tool"
+	continueExecuteToolRetry  continuation = "execute_tool_with_retry"
 	continueDurableWait       continuation = "durable_wait"
 
 	stepTypeInit           stepType = "Init"
@@ -1227,7 +1367,11 @@ const (
 	stepTypeRouteTool      stepType = "RouteTool"
 	stepTypeAwaitApproval  stepType = "AwaitToolApproval"
 	stepTypeExecuteTool    stepType = "ExecuteTool"
+	stepTypeExecuteRetry   stepType = "ExecuteToolWithRetry"
+	stepTypeRecoverTool    stepType = "RecoverToolExecution"
 	stepTypeDurableWait    stepType = "DurableWait"
+	stepTypeWaitLease      stepType = "WaitForLeaseRefresh"
+	stepTypeRefreshLease   stepType = "RefreshLease"
 
 	maximumSteeringMessageCount       = 2_147_483_647
 	maximumAutomaticPlanRecoveryCount = 1
@@ -1317,7 +1461,19 @@ func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecis
 	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
-	return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
+	if step.flow.lease == nil {
+		return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
+	}
+	if _, err := agentLeaseStateAttribute.Get(ctx); err != nil {
+		return nil, fmt.Errorf("read initial Agent Lease state: %w", err)
+	}
+	if _, err := agentLeaseScheduleAttribute.Get(ctx); err != nil {
+		return nil, fmt.Errorf("read initial Agent Lease schedule: %w", err)
+	}
+	return dex.GoToMany(
+		dex.MovementOf(awaitUserStep{flow: step.flow}, nil),
+		dex.MovementOf(waitForLeaseRefreshStep{flow: step.flow}, nil),
+	), nil
 }
 
 type awaitUserStep struct {
@@ -1572,7 +1728,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	reply, err := step.flow.modelClient.Complete(ctx, ModelRequest{
-		Config:         config,
+		Config:         step.flow.modelConfig(config),
 		Messages:       messages,
 		Tools:          tools,
 		WriteAssistant: writeAssistant,
@@ -1656,6 +1812,14 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueRouteTool), nil
 }
 
+func (flow *Flow) modelConfig(config AgentConfig) AgentConfig {
+	if flow.lease == nil {
+		return config
+	}
+	config.SystemPrompt += "\n\n" + leaseRecoveryPrompt
+	return config
+}
+
 type checkSteeredStep struct {
 	dex.StepDefaults
 	flow *Flow
@@ -1702,6 +1866,16 @@ func (step checkSteeredStep) Execute(ctx dex.Context, input continuation) (*dex.
 		return dex.GoTo(awaitToolApprovalStep{flow: step.flow}, nil), nil
 	case continueExecuteTool:
 		return dex.GoTo(executeToolStep{flow: step.flow}, nil), nil
+	case continueExecuteToolRetry:
+		options, err := step.flow.currentToolStepOptions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return dex.GoTo(
+			executeToolWithRetryStep{flow: step.flow},
+			nil,
+			dex.WithStepOptions(options),
+		), nil
 	case continueDurableWait:
 		return dex.GoTo(durableWaitStep{flow: step.flow}, nil), nil
 	default:
@@ -1908,7 +2082,7 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueAwaitToolApproval), nil
 	}
-	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteTool), nil
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteToolRetry), nil
 }
 
 type awaitToolApprovalStep struct {
@@ -1968,7 +2142,7 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 		return nil, deleteErr
 	}
 	if approvals[0].Approved {
-		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteTool), nil
+		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteToolRetry), nil
 	}
 	result, encodeErr := encodeToolResult(toolResultPayload{
 		Status: toolResultStatusFailed,
@@ -2025,15 +2199,22 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	} else if metadataErr != nil {
 		return nil, metadataErr
 	}
+	leaseState, leaseErr := step.flow.currentLeaseState(ctx)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
 	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
+		LeaseState:      leaseState,
 		Name:            call.Name,
 		Arguments:       call.Arguments,
 		EnabledServers:  config.EnabledMCPServers,
 		WriteProgress:   progress.write,
 		CallID:          call.ID,
+		Attempt:         ctx.Attempt(),
+		FirstAttemptAt:  ctx.FirstAttemptAt(),
 	})
 	if executeErr != nil {
 		callID := call.ID
@@ -2056,33 +2237,176 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		}
 		result = failureResult
 	}
-	if appendErr := step.flow.appendToolResult(ctx, call, result); appendErr != nil {
-		return nil, appendErr
+	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
+	if finishErr != nil {
+		return nil, finishErr
+	}
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+}
+
+func (flow *Flow) currentLeaseState(ctx dex.Context) (*JSONObject, error) {
+	if flow.lease == nil {
+		return nil, nil
+	}
+	state, err := agentLeaseStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent Lease state: %w", err)
+	}
+	return &state, nil
+}
+
+func (flow *Flow) finishToolExecution(
+	ctx dex.Context,
+	call ToolCall,
+	result ToolExecutionResult,
+) (continuation, error) {
+	if err := flow.appendToolResult(ctx, call, result); err != nil {
+		return "", err
+	}
+	callID := call.ID
+	toolName := call.Name
+	if err := flow.writeActivity(ctx, AgentEvent{
+		Kind:     EventKindToolCompleted,
+		Message:  fmt.Sprintf("Completed %s.", call.Name),
+		CallID:   &callID,
+		ToolName: &toolName,
+	}); err != nil {
+		return "", err
+	}
+	hasNext, nextErr := flow.hasNextToolCall(ctx)
+	if nextErr != nil {
+		return "", nextErr
+	}
+	if hasNext {
+		if advanceErr := flow.advanceTool(ctx); advanceErr != nil {
+			return "", advanceErr
+		}
+		return continueRouteTool, nil
+	}
+	if err := flow.clearPendingToolCalls(ctx); err != nil {
+		return "", err
+	}
+	return continueCompactContext, nil
+}
+
+type executeToolWithRetryStep struct {
+	dex.StepDefaultsNoWaitFor[dex.None]
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = executeToolWithRetryStep{}
+
+func (executeToolWithRetryStep) GetStepType() string { return string(stepTypeExecuteRetry) }
+
+func (step executeToolWithRetryStep) GetStepOptions() *dex.StepOptions {
+	return &dex.StepOptions{
+		ExecuteMethodTimeout:     toolStepOptions.ExecuteMethodTimeout,
+		HeartbeatTimeout:         toolStepOptions.HeartbeatTimeout,
+		ExecuteLoadAttributeMaps: toolStepOptions.ExecuteLoadAttributeMaps,
+		ExecuteRetry:             toolStepOptions.ExecuteRetry,
+		ExecuteFailure: dex.ProceedToOnExecuteFailure(
+			recoverToolExecutionStep{flow: step.flow},
+			messageMutationStepOptions,
+		),
+	}
+}
+
+func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	if err := step.flow.updateStatus(ctx, AgentStatusExecutingTool); err != nil {
+		return nil, err
+	}
+	call, err := step.flow.currentToolCall(ctx)
+	if err != nil {
+		return nil, err
+	}
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	runtimeMetadata, err := agentRuntimeMetadataAttribute.Get(ctx)
+	if isAttributeNotFound(err) {
+		runtimeMetadata = MustJSONObject(`{}`)
+	} else if err != nil {
+		return nil, err
+	}
+	leaseState, err := step.flow.currentLeaseState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
+	if writeErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", call.Name, ctx.Attempt())); writeErr != nil {
+		return nil, writeErr
+	}
+	result, err := step.flow.tools.Execute(ctx, ToolInvocation{
+		FlowID:          FlowID(ctx.FlowID()),
+		RuntimeMetadata: runtimeMetadata,
+		LeaseState:      leaseState,
+		Name:            call.Name,
+		Arguments:       call.Arguments,
+		EnabledServers:  config.EnabledMCPServers,
+		WriteProgress:   progress.write,
+		CallID:          call.ID,
+		Attempt:         ctx.Attempt(),
+		FirstAttemptAt:  ctx.FirstAttemptAt(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("execute tool %q: %w", call.Name, err)
+	}
+	if validationErr := result.Outcome.Validate(); validationErr != nil {
+		return nil, fmt.Errorf("tool %q outcome: %w", call.Name, validationErr)
+	}
+	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
+	if finishErr != nil {
+		return nil, finishErr
+	}
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+}
+
+type recoverToolExecutionStep struct {
+	dex.StepDefaultsNoWaitFor[dex.None]
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = recoverToolExecutionStep{}
+
+func (recoverToolExecutionStep) GetStepType() string { return string(stepTypeRecoverTool) }
+
+func (recoverToolExecutionStep) GetStepOptions() *dex.StepOptions {
+	return messageMutationStepOptions
+}
+
+func (step recoverToolExecutionStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	call, err := step.flow.currentToolCall(ctx)
+	if err != nil {
+		return nil, err
+	}
+	failure := ctx.RecoveryError()
+	if failure == nil {
+		return nil, errors.New("tool recovery is missing the exhausted failure")
+	}
+	result, err := encodeToolResult(toolResultPayload{
+		Status:    toolResultStatusFailed,
+		Outcome:   ToolOutcomeUnknown,
+		ErrorType: failure.ErrorType,
+	}, ToolOutcomeUnknown, true)
+	if err != nil {
+		return nil, err
 	}
 	callID := call.ID
 	toolName := call.Name
 	if activityErr := step.flow.writeActivity(ctx, AgentEvent{
-		Kind:     EventKindToolCompleted,
-		Message:  fmt.Sprintf("Completed %s.", call.Name),
+		Kind:     EventKindToolFailed,
+		Message:  fmt.Sprintf("%s failed after its retry policy was exhausted.", call.Name),
 		CallID:   &callID,
 		ToolName: &toolName,
 	}); activityErr != nil {
 		return nil, activityErr
 	}
-	hasNext, nextErr := step.flow.hasNextToolCall(ctx)
-	if nextErr != nil {
-		return nil, nextErr
+	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
+	if finishErr != nil {
+		return nil, finishErr
 	}
-	if hasNext {
-		if advanceErr := step.flow.advanceTool(ctx); advanceErr != nil {
-			return nil, advanceErr
-		}
-		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueRouteTool), nil
-	}
-	if err := step.flow.clearPendingToolCalls(ctx); err != nil {
-		return nil, err
-	}
-	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
 }
 
 type durableWaitStep struct {
@@ -2166,6 +2490,98 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, err
 	}
 	return step.flow.continueAfterTool(ctx)
+}
+
+type waitForLeaseRefreshStep struct {
+	dex.StepDefaults
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = waitForLeaseRefreshStep{}
+
+func (waitForLeaseRefreshStep) GetStepType() string { return string(stepTypeWaitLease) }
+
+func (step waitForLeaseRefreshStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
+	schedule, err := agentLeaseScheduleAttribute.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent Lease schedule: %w", err)
+	}
+	delay := time.Until(schedule.RefreshAt)
+	if delay < 0 {
+		delay = 0
+	}
+	return dex.Until(dex.Timer(delay)), nil
+}
+
+func (step waitForLeaseRefreshStep) Execute(_ dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	return dex.GoTo(refreshLeaseStep{flow: step.flow}, nil), nil
+}
+
+type refreshLeaseStep struct {
+	dex.StepDefaultsNoWaitFor[dex.None]
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = refreshLeaseStep{}
+
+func (refreshLeaseStep) GetStepType() string { return string(stepTypeRefreshLease) }
+
+func (step refreshLeaseStep) GetStepOptions() *dex.StepOptions {
+	if step.flow.lease == nil {
+		return &dex.StepOptions{ExecuteRetry: &dex.RetryPolicy{MaximumAttempts: 1}}
+	}
+	return &dex.StepOptions{
+		ExecuteMethodTimeout: step.flow.lease.config.AttemptTimeout,
+		ExecuteRetry: &dex.RetryPolicy{
+			TotalDuration: step.flow.lease.config.RetryTotalDuration,
+		},
+	}
+}
+
+func (step refreshLeaseStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	if step.flow.lease == nil {
+		return nil, errors.New("agent Lease extension is not configured")
+	}
+	state, err := agentLeaseStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent Lease state: %w", err)
+	}
+	schedule, err := agentLeaseScheduleAttribute.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent Lease schedule: %w", err)
+	}
+	targetGeneration := schedule.Generation + 1
+	refreshID := stableLeaseRefreshID(FlowID(ctx.FlowID()), targetGeneration)
+	result, err := step.flow.lease.refresher.Refresh(ctx, LeaseRefreshRequest{
+		FlowID:           FlowID(ctx.FlowID()),
+		State:            state,
+		RefreshID:        refreshID,
+		TargetGeneration: targetGeneration,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("refresh Agent Lease: %w", err)
+	}
+	if err := validateLeaseInitialization(&LeaseInitialization{
+		State:     result.State,
+		RefreshAt: result.RefreshAt,
+	}, time.Now()); err != nil {
+		return nil, fmt.Errorf("validate refreshed Agent Lease: %w", err)
+	}
+	if err := agentLeaseStateAttribute.Set(ctx, result.State); err != nil {
+		return nil, err
+	}
+	if err := agentLeaseScheduleAttribute.Set(ctx, leaseSchedule{
+		Generation: targetGeneration,
+		RefreshAt:  result.RefreshAt,
+	}); err != nil {
+		return nil, err
+	}
+	return dex.GoTo(waitForLeaseRefreshStep{flow: step.flow}, nil), nil
+}
+
+func stableLeaseRefreshID(flowID FlowID, generation int64) LeaseRefreshID {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", flowID, generation)))
+	return LeaseRefreshID(hex.EncodeToString(digest[:]))
 }
 
 type modelProgress struct {
