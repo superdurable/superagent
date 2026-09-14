@@ -59,6 +59,20 @@ func TestAgentConfigRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestNextWaitingInputRoundProtectsJavaScriptSafeIntegerRange(t *testing.T) {
+	t.Parallel()
+	next, err := nextWaitingInputRound(0)
+	if err != nil || next != 1 {
+		t.Fatalf("next waiting input round = %d, %v", next, err)
+	}
+	if _, err := nextWaitingInputRound(MaximumWaitingInputRound); err == nil {
+		t.Fatal("maximum waiting input round did not fail")
+	}
+	if _, err := nextWaitingInputRound(-1); err == nil {
+		t.Fatal("negative waiting input round did not fail")
+	}
+}
+
 func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -66,7 +80,6 @@ func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
 		target   json.Unmarshaler
 	}{
 		{name: "Agent status", typeName: "AgentStatus", target: new(AgentStatus)},
-		{name: "Agent interaction status", typeName: "AgentInteractionStatus", target: new(AgentInteractionStatus)},
 		{name: "Flow status", typeName: "FlowStatus", target: new(FlowStatus)},
 		{name: "Flow error type", typeName: "FlowErrorType", target: new(FlowErrorType)},
 	}

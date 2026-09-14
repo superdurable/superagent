@@ -5,7 +5,6 @@
  */
 
 import {
-  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   type TaskStatus,
@@ -118,6 +117,7 @@ interface ReadyConversationBase {
   reasoning: ReasoningEntry[];
   activities: ActivityEntry[];
   planProgress: PlanProgressHint | null;
+  isWaitingForInput: boolean;
   reconciliation: ReconciliationState;
   commandError: string | null;
   error: string | null;
@@ -157,7 +157,6 @@ export type ConversationAction =
   | { type: "stream-update"; update: LiveUpdate }
   | { type: "stream-recovered"; updates: LiveUpdate[] }
   | { type: "stream-failed"; message: string }
-  | { type: "interaction-submitted" }
   | { type: "composer-changed"; value: string }
   | { type: "plan-mode-changed"; value: boolean }
   | { type: "command-started"; id: number; command: Command }
@@ -240,20 +239,6 @@ export function conversationReducer(
         ...state,
         connection: "reconnecting",
         error: action.message,
-      };
-    case "interaction-submitted":
-      if (state.kind !== "ready" || state.lifecycle === "terminal") {
-        return state;
-      }
-      return {
-        ...state,
-        snapshot: {
-          ...state.snapshot,
-          description: {
-            ...state.snapshot.description,
-            interactionStatus: AgentInteractionStatus.SUBMITTED,
-          },
-        },
       };
     case "composer-changed":
       return state.kind === "ready" && state.lifecycle === "active"
@@ -357,6 +342,11 @@ function reconcileSnapshot(
       : (previousRun?.reasoning ?? []),
     activities: previousRun?.activities ?? [],
     planProgress: null,
+    isWaitingForInput:
+      snapshot.description.status === AgentStatus.WAITING_FOR_MESSAGE &&
+      snapshot.description.pendingQueuedMessageCount === 0 &&
+      snapshot.description.pendingSteeredMessageCount === 0 &&
+      !snapshot.description.isPlanExecutionRequested,
     reconciliation: "open",
     commandError: previousRun?.commandError ?? null,
     error: previousRun?.commandError ?? null,
@@ -385,6 +375,7 @@ function terminalState(
     reasoning: completeReasoning(priorReady?.reasoning ?? []),
     activities: priorReady?.activities ?? [],
     planProgress: null,
+    isWaitingForInput: false,
     commandError: null,
     error: snapshot.errorMessage,
   };
@@ -677,6 +668,9 @@ function applyLiveUpdate(
         ),
       };
     case "activity":
+      if (update.value.kind === EventKind.SNAPSHOT_REQUIRED) {
+        return state;
+      }
       if (
         state.activities.some(
           (activity) => activity.resumeToken === update.resumeToken,
@@ -684,21 +678,71 @@ function applyLiveUpdate(
       ) {
         return state;
       }
-      return {
-        ...state,
-        assistant: isModelFinished(update.value.kind)
-          ? state.snapshot.description.status ===
-            AgentStatus.WAITING_FOR_MESSAGE
-            ? null
-            : completeAssistantSource(state.assistant, update.source)
-          : state.assistant,
-        reasoning: isModelFinished(update.value.kind)
-          ? completeReasoningSource(state.reasoning, update.source)
-          : state.reasoning,
-        activities: [...state.activities, update],
-        planProgress: applyPlanTaskUpdate(state, update.value),
-      };
+      return applyInputConsumption(
+        {
+          ...state,
+          assistant: isModelFinished(update.value.kind)
+            ? state.snapshot.description.status ===
+              AgentStatus.WAITING_FOR_MESSAGE
+              ? null
+              : completeAssistantSource(state.assistant, update.source)
+            : state.assistant,
+          reasoning: isModelFinished(update.value.kind)
+            ? completeReasoningSource(state.reasoning, update.source)
+            : state.reasoning,
+          activities: [...state.activities, update],
+          planProgress: applyPlanTaskUpdate(state, update.value),
+        },
+        update.value,
+      );
   }
+}
+
+function applyInputConsumption(
+  state: ActiveConversationState,
+  event: AgentEvent,
+): ActiveConversationState {
+  if (
+    event.kind !== EventKind.INPUT_CONSUMED ||
+    event.inputConsumption === null
+  ) {
+    return state;
+  }
+  const queuedIDs = new Set(event.inputConsumption.queuedMessageIds);
+  const steeredIDs = new Set(event.inputConsumption.steeredMessageIds);
+  const consumedIDs = new Set([...queuedIDs, ...steeredIDs]);
+  const queued = state.snapshot.queued.filter(
+    (message) => !consumedIDs.has(message.messageId),
+  );
+  const steered = state.snapshot.steered.filter(
+    (message) => !consumedIDs.has(message.messageId),
+  );
+  const consumedPlanRevision = event.inputConsumption.planExecutionRevision;
+  const didConsumePlanRequest =
+    consumedPlanRevision !== null &&
+    state.snapshot.description.isPlanExecutionRequested &&
+    state.snapshot.description.plan?.revision === consumedPlanRevision;
+  const didConsumeVisibleInput =
+    queued.length !== state.snapshot.queued.length ||
+    steered.length !== state.snapshot.steered.length ||
+    didConsumePlanRequest;
+  return {
+    ...state,
+    isWaitingForInput: didConsumeVisibleInput ? false : state.isWaitingForInput,
+    snapshot: {
+      ...state.snapshot,
+      queued,
+      steered,
+      description: {
+        ...state.snapshot.description,
+        pendingQueuedMessageCount: queued.length,
+        pendingSteeredMessageCount: steered.length,
+        isPlanExecutionRequested: didConsumePlanRequest
+          ? false
+          : state.snapshot.description.isPlanExecutionRequested,
+      },
+    },
+  };
 }
 
 function applyPlanTaskUpdate(

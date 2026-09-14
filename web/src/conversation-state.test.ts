@@ -7,7 +7,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   FlowErrorType,
@@ -105,25 +104,6 @@ describe("conversationReducer", () => {
     });
   });
 
-  it("marks the durable view busy when the interaction status is submitted", () => {
-    const ready = conversationReducer(initialConversationState(), {
-      type: "snapshot-loaded",
-      snapshot: snapshot("run-1", "queued-1", "hello"),
-    });
-    const submitted = conversationReducer(ready, {
-      type: "interaction-submitted",
-    });
-
-    expect(submitted).toMatchObject({
-      kind: "ready",
-      snapshot: {
-        description: {
-          interactionStatus: AgentInteractionStatus.SUBMITTED,
-        },
-      },
-    });
-  });
-
   it("renders a terminal Snapshot without inventing active Agent state", () => {
     const state = conversationReducer(initialConversationState(), {
       type: "snapshot-loaded",
@@ -184,6 +164,7 @@ describe("conversationReducer", () => {
           callId: null,
           toolName: null,
           messageSequence: null,
+          inputConsumption: null,
         },
       },
     });
@@ -214,6 +195,7 @@ describe("conversationReducer", () => {
         callId: "call-1",
         toolName: "lookup",
         messageSequence: null,
+        inputConsumption: null,
       },
     };
     state = conversationReducer(state, {
@@ -234,6 +216,72 @@ describe("conversationReducer", () => {
       activities: [
         { resumeToken: "activity-1" },
         { resumeToken: "activity-2" },
+      ],
+    });
+  });
+
+  it("removes only exact consumed queue IDs and replays idempotently", () => {
+    const initial = snapshot("run-1", "queued-1", "first");
+    if (initial.description === null) throw new Error("expected description");
+    initial.queued.push({
+      messageId: "queued-moved",
+      value: { content: "moved before consumption", planMode: false },
+    });
+    initial.queued.push({
+      messageId: "queued-later",
+      value: { content: "later", planMode: false },
+    });
+    initial.steered.push({
+      messageId: "steered-1",
+      value: { content: "priority", planMode: false },
+    });
+    initial.description.pendingQueuedMessageCount = 3;
+    initial.description.pendingSteeredMessageCount = 1;
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: initial,
+    });
+    const consumed = {
+      kind: "activity" as const,
+      resumeToken: "input-consumed-1",
+      source: "await-user",
+      createdAt: "2026-09-03T00:00:01Z",
+      value: {
+        kind: EventKind.INPUT_CONSUMED,
+        message: "Consumed queued and steered input.",
+        callId: null,
+        toolName: null,
+        messageSequence: null,
+        inputConsumption: {
+          queuedMessageIds: ["queued-1"],
+          steeredMessageIds: ["steered-1", "queued-moved"],
+          planExecutionRevision: null,
+        },
+      },
+    };
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: consumed,
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: { ...consumed, resumeToken: "input-consumed-replay" },
+    });
+
+    expect(state).toMatchObject({
+      kind: "ready",
+      isWaitingForInput: false,
+      snapshot: {
+        queued: [{ messageId: "queued-later" }],
+        steered: [],
+        description: {
+          pendingQueuedMessageCount: 1,
+          pendingSteeredMessageCount: 0,
+        },
+      },
+      activities: [
+        { resumeToken: "input-consumed-1" },
+        { resumeToken: "input-consumed-replay" },
       ],
     });
   });
@@ -265,6 +313,7 @@ describe("conversationReducer", () => {
           planRevision: 5,
           planTaskIndex: 0,
           planTaskStatus: TaskStatus.IN_PROGRESS,
+          inputConsumption: null,
         },
       },
     });
@@ -290,6 +339,7 @@ describe("conversationReducer", () => {
           planRevision: 4,
           planTaskIndex: 0,
           planTaskStatus: TaskStatus.COMPLETED,
+          inputConsumption: null,
         },
       },
     });
@@ -327,6 +377,7 @@ describe("conversationReducer", () => {
           callId: null,
           toolName: null,
           messageSequence: 2,
+          inputConsumption: null,
         },
       },
     });
@@ -369,6 +420,7 @@ describe("conversationReducer", () => {
           callId: null,
           toolName: null,
           messageSequence: null,
+          inputConsumption: null,
         },
       },
     });
@@ -713,7 +765,7 @@ function snapshot(
     },
     description: {
       status: AgentStatus.WAITING_FOR_MESSAGE,
-      interactionStatus: AgentInteractionStatus.WAITING,
+      waitingInputRound: 1,
       model: "mock/reliable",
       systemPrompt: "Be helpful.",
       firstRetainedSequence: 1,

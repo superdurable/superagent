@@ -20,7 +20,6 @@ import (
 	"context"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/agent"
@@ -59,32 +58,26 @@ func (toolRegistry) Execute(context.Context, agent.ToolInvocation) (agent.ToolEx
 	return agent.ToolExecutionResult{}, nil
 }
 
-type leaseRefresher struct{}
-
-func (leaseRefresher) Refresh(
-	context.Context,
-	agent.LeaseRefreshRequest,
-) (agent.LeaseRefreshResult, error) {
-	return agent.LeaseRefreshResult{}, nil
-}
-
 var (
-	_ agent.ModelClient                                                                                       = modelClient{}
-	_ agent.ToolRegistry                                                                                      = toolRegistry{}
-	_ dex.Flow                                                                                                = (*agent.Flow)(nil)
-	_ func(*dex.Client, *agent.Flow) *agent.Client                                                            = agent.NewClient
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)             = (*agent.Client).Start
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.UserMessage) error                             = (*agent.Client).SendMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error                  = (*agent.Client).AnswerQuestions
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) error                     = (*agent.Client).SteerMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.MessageID) error                               = (*agent.Client).DeleteQueuedMessage
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error                     = (*agent.Client).ApproveTool
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error                    = (*agent.Client).ExecutePlan
-	_ func(*agent.Client, context.Context, agent.FlowID) (agent.AgentSnapshot, error)                         = (*agent.Client).GetSnapshot
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)           = (*agent.Client).GetArchivedMessages
-	_ func(*agent.Client, context.Context, agent.FlowID, agent.EventStream, int) ([]agent.StreamEvent, error) = (*agent.Client).ListRecentEvents
-	_ agent.EventKind                                                                                         = agent.EventKindPlanTaskUpdated
-	_ agent.PlanTaskIndex                                                                                     = 0
+	_ agent.ModelClient                                                                                            = modelClient{}
+	_ agent.ToolRegistry                                                                                           = toolRegistry{}
+	_ dex.Flow                                                                                                     = (*agent.Flow)(nil)
+	_ func(*dex.Client, *agent.Flow) *agent.Client                                                                 = agent.NewClient
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)                  = (*agent.Client).Start
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.UserMessage) error                                  = (*agent.Client).SendMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error                       = (*agent.Client).AnswerQuestions
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.SteerMessageRequest) error                          = (*agent.Client).SteerMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.MessageID) error                                    = (*agent.Client).DeleteQueuedMessage
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.ToolApprovalRequest) error                          = (*agent.Client).ApproveTool
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.PlanExecutionRequest) error                         = (*agent.Client).ExecutePlan
+	_ func(*agent.Client, context.Context, agent.FlowID) (agent.AgentSnapshot, error)                              = (*agent.Client).GetSnapshot
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.WaitingInputRound) (agent.WaitingInputRound, error) = (*agent.Client).WaitForWaitingInputRound
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)                = (*agent.Client).GetArchivedMessages
+	_ func(*agent.Client, context.Context, agent.FlowID, agent.EventStream, int) ([]agent.StreamEvent, error)      = (*agent.Client).ListRecentEvents
+	_ agent.EventKind                                                                                              = agent.EventKindPlanTaskUpdated
+	_ agent.EventKind                                                                                              = agent.EventKindInputConsumed
+	_ agent.EventKind                                                                                              = agent.EventKindSnapshotRequired
+	_ agent.PlanTaskIndex                                                                                          = 0
 )
 
 func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
@@ -110,21 +103,6 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	}
 	if agent.MaximumRuntimeMetadataBytes != 16<<10 {
 		t.Fatal("public runtime metadata limit is unavailable")
-	}
-	leaseFlow := agent.NewFlow(
-		modelClient{},
-		toolRegistry{},
-		agent.WithLeaseExtension(leaseRefresher{}, nil),
-	)
-	if _, err := dex.NewRegistry([]dex.Flow{leaseFlow}); err != nil {
-		t.Fatalf("register public Agent Flow with Lease extension: %v", err)
-	}
-	initialLease := agent.LeaseInitialization{
-		State:     agent.MustJSONObject(`{"token":"initial"}`),
-		RefreshAt: time.Now().Add(15 * time.Minute),
-	}
-	if initialLease.State == "" || agent.MaximumLeaseStateBytes != 16<<10 {
-		t.Fatal("public Lease contract is unavailable")
 	}
 }
 

@@ -21,14 +21,8 @@ records one unknown outcome and continues the Agent.
 Approval and CallID remain stable across attempts. External effects promise
 recoverable at-least-once execution, not exactly-once execution.
 
-Dex retries reuse the first Attribute snapshot. They cannot observe a Lease
-generation committed while the tool Step is running. An explicit Lease-expired
-result is therefore a known failure. The model may issue one new tool call,
-which creates a new Step execution and reads current Lease state.
-
 ## Consequences
 
 Timeouts, attempts, and retry exhaustion are visible in the Flow definition.
-The MCP registry contains no hidden retry loop. Lease refresh remains proactive;
-the model retry path handles rare credential-expiration races without creating
-a specialized recovery protocol.
+The MCP registry contains no hidden retry loop. Runtime metadata and stable
+Flow and call IDs remain unchanged across retries.

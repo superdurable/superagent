@@ -23,7 +23,6 @@ import {
 } from "@superdurable/superagent-ui";
 
 import {
-  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   MessageRole,
@@ -681,7 +680,7 @@ function planActionPresentation(
     };
   }
   if (
-    description.interactionStatus !== AgentInteractionStatus.WAITING ||
+    !state.isWaitingForInput ||
     description.status !== AgentStatus.WAITING_FOR_MESSAGE
   ) {
     const isDraft = plan.status === PlanStatus.DRAFT;
@@ -891,6 +890,10 @@ function activityIcon(kind: AgentEvent["kind"]): string {
     case EventKind.PLAN_UPDATED:
     case EventKind.PLAN_TASK_UPDATED:
       return "☷";
+    case EventKind.INPUT_CONSUMED:
+      return "⇥";
+    case EventKind.SNAPSHOT_REQUIRED:
+      return "↻";
     case EventKind.STEERING_APPLIED:
       return "↪";
     case EventKind.COMPACTION_FAILED:

@@ -1275,9 +1275,9 @@ func encodeSteerQueuedMessageResponse(response SteerQueuedMessageRes, w http.Res
 	}
 }
 
-func encodeWaitForAgentInteractionStatusResponse(response WaitForAgentInteractionStatusRes, w http.ResponseWriter) error {
+func encodeWaitForWaitingInputRoundResponse(response WaitForWaitingInputRoundRes, w http.ResponseWriter) error {
 	switch response := response.(type) {
-	case *AgentInteractionState:
+	case *WaitingInputRoundState:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err
@@ -1297,7 +1297,7 @@ func encodeWaitForAgentInteractionStatusResponse(response WaitForAgentInteractio
 
 		return nil
 
-	case *WaitForAgentInteractionStatusBadRequest:
+	case *WaitForWaitingInputRoundBadRequest:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err
@@ -1317,7 +1317,7 @@ func encodeWaitForAgentInteractionStatusResponse(response WaitForAgentInteractio
 
 		return nil
 
-	case *WaitForAgentInteractionStatusNotFound:
+	case *WaitForWaitingInputRoundNotFound:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err
@@ -1337,7 +1337,7 @@ func encodeWaitForAgentInteractionStatusResponse(response WaitForAgentInteractio
 
 		return nil
 
-	case *WaitForAgentInteractionStatusConflict:
+	case *WaitForWaitingInputRoundConflict:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err
@@ -1357,7 +1357,7 @@ func encodeWaitForAgentInteractionStatusResponse(response WaitForAgentInteractio
 
 		return nil
 
-	case *WaitForAgentInteractionStatusServiceUnavailable:
+	case *WaitForWaitingInputRoundServiceUnavailable:
 		if err := func() error {
 			if err := response.Validate(); err != nil {
 				return err
@@ -1368,26 +1368,6 @@ func encodeWaitForAgentInteractionStatusResponse(response WaitForAgentInteractio
 		}
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(503)
-
-		e := new(jx.Encoder)
-		response.Encode(e)
-		if _, err := e.WriteTo(w); err != nil {
-			return errors.Wrap(err, "write")
-		}
-
-		return nil
-
-	case *PollTimeout:
-		if err := func() error {
-			if err := response.Validate(); err != nil {
-				return err
-			}
-			return nil
-		}(); err != nil {
-			return errors.Wrap(err, "validate")
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(504)
 
 		e := new(jx.Encoder)
 		response.Encode(e)

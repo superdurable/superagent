@@ -6,8 +6,7 @@
 
 import type { AgentSnapshot } from "./api/generated";
 import type { ActiveConnectionState } from "./conversation-state";
-
-export const snapshotFreshnessMilliseconds = 10_000;
+import { defaultSnapshotRefreshIntervalMilliseconds } from "./runtime-config";
 
 export interface SnapshotTrigger {
   blocking: boolean;
@@ -38,6 +37,7 @@ const browserClock: SnapshotClock = {
 export class SnapshotCoordinator {
   private readonly callbacks: SnapshotCallbacks;
   private readonly clock: SnapshotClock;
+  private readonly refreshIntervalMilliseconds: number;
   private controller: AbortController | null = null;
   private timeout: number | null = null;
   private trailing: Required<SnapshotTrigger> | null = null;
@@ -48,9 +48,11 @@ export class SnapshotCoordinator {
 
   public constructor(
     callbacks: SnapshotCallbacks,
+    refreshIntervalMilliseconds = defaultSnapshotRefreshIntervalMilliseconds,
     clock: SnapshotClock = browserClock,
   ) {
     this.callbacks = callbacks;
+    this.refreshIntervalMilliseconds = refreshIntervalMilliseconds;
     this.clock = clock;
   }
 
@@ -125,7 +127,7 @@ export class SnapshotCoordinator {
       void this.read(this.requiredEpoch);
       return;
     }
-    this.dueAt = this.clock.now() + snapshotFreshnessMilliseconds;
+    this.dueAt = this.clock.now() + this.refreshIntervalMilliseconds;
     if (this.isVisible) this.scheduleAt(this.dueAt);
   }
 

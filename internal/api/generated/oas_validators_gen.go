@@ -136,13 +136,13 @@ func (s *AgentDescription) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.InteractionStatus.Validate(); err != nil {
+		if err := s.WaitingInputRound.Validate(); err != nil {
 			return err
 		}
 		return nil
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
-			Name:  "interactionStatus",
+			Name:  "waitingInputRound",
 			Error: err,
 		})
 	}
@@ -570,26 +570,21 @@ func (s *AgentEvent) Validate() error {
 			Error: err,
 		})
 	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
-func (s *AgentInteractionState) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
 	if err := func() error {
-		if err := s.Status.Validate(); err != nil {
-			return err
+		if value, ok := s.InputConsumption.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
-			Name:  "status",
+			Name:  "inputConsumption",
 			Error: err,
 		})
 	}
@@ -597,17 +592,6 @@ func (s *AgentInteractionState) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
-}
-
-func (s AgentInteractionStatus) Validate() error {
-	switch s {
-	case "submitted":
-		return nil
-	case "waiting":
-		return nil
-	default:
-		return errors.Errorf("invalid value: %v", s)
-	}
 }
 
 func (s *AgentMessage) Validate() error {
@@ -1225,6 +1209,10 @@ func (s EventKind) Validate() error {
 		return nil
 	case "plan_task_updated":
 		return nil
+	case "input_consumed":
+		return nil
+	case "snapshot_required":
+		return nil
 	case "steering_applied":
 		return nil
 	case "compaction_failed":
@@ -1588,6 +1576,102 @@ func (s *HistoryPageHeaders) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "Response",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *InputConsumption) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.QueuedMessageIds == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.QueuedMessageIds {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "queuedMessageIds",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if s.SteeredMessageIds == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.SteeredMessageIds {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "steeredMessageIds",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.PlanExecutionRevision.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           1,
+					MaxSet:        true,
+					Max:           9007199254740991,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "planExecutionRevision",
 			Error: err,
 		})
 	}
@@ -3429,7 +3513,7 @@ func (s *UserMessage) Validate() error {
 	return nil
 }
 
-func (s *WaitForAgentInteractionStatusBadRequest) Validate() error {
+func (s *WaitForWaitingInputRoundBadRequest) Validate() error {
 	alias := (*Problem)(s)
 	if err := alias.Validate(); err != nil {
 		return err
@@ -3437,7 +3521,7 @@ func (s *WaitForAgentInteractionStatusBadRequest) Validate() error {
 	return nil
 }
 
-func (s *WaitForAgentInteractionStatusConflict) Validate() error {
+func (s *WaitForWaitingInputRoundConflict) Validate() error {
 	alias := (*Problem)(s)
 	if err := alias.Validate(); err != nil {
 		return err
@@ -3445,7 +3529,7 @@ func (s *WaitForAgentInteractionStatusConflict) Validate() error {
 	return nil
 }
 
-func (s *WaitForAgentInteractionStatusNotFound) Validate() error {
+func (s *WaitForWaitingInputRoundNotFound) Validate() error {
 	alias := (*Problem)(s)
 	if err := alias.Validate(); err != nil {
 		return err
@@ -3453,10 +3537,51 @@ func (s *WaitForAgentInteractionStatusNotFound) Validate() error {
 	return nil
 }
 
-func (s *WaitForAgentInteractionStatusServiceUnavailable) Validate() error {
+func (s *WaitForWaitingInputRoundServiceUnavailable) Validate() error {
 	alias := (*Problem)(s)
 	if err := alias.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s WaitingInputRound) Validate() error {
+	alias := (int64)(s)
+	if err := (validate.Int{
+		MinSet:        true,
+		Min:           0,
+		MaxSet:        true,
+		Max:           9007199254740991,
+		MinExclusive:  false,
+		MaxExclusive:  false,
+		MultipleOfSet: false,
+		MultipleOf:    0,
+		Pattern:       nil,
+	}).Validate(int64(alias)); err != nil {
+		return errors.Wrap(err, "int")
+	}
+	return nil
+}
+
+func (s *WaitingInputRoundState) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.WaitingInputRound.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "waitingInputRound",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
 	}
 	return nil
 }

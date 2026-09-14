@@ -137,22 +137,22 @@ func (s *ActivityStreamEventKind) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/AgentDescription
 type AgentDescription struct {
-	Status                     AgentStatus            `json:"status"`
-	InteractionStatus          AgentInteractionStatus `json:"interactionStatus"`
-	Model                      string                 `json:"model"`
-	SystemPrompt               string                 `json:"systemPrompt"`
-	FirstRetainedSequence      int64                  `json:"firstRetainedSequence"`
-	LastSequence               int64                  `json:"lastSequence"`
-	SummarizedThroughSequence  int64                  `json:"summarizedThroughSequence"`
-	PendingApproval            NilPendingApproval     `json:"pendingApproval"`
-	PendingTimer               NilPendingTimer        `json:"pendingTimer"`
-	PendingUserInput           NilPendingUserInput    `json:"pendingUserInput"`
-	Plan                       NilAgentPlan           `json:"plan"`
-	IsPlanExecutionRequested   bool                   `json:"isPlanExecutionRequested"`
-	PendingQueuedMessageCount  int                    `json:"pendingQueuedMessageCount"`
-	PendingSteeredMessageCount int                    `json:"pendingSteeredMessageCount"`
-	AvailableMcpServers        []string               `json:"availableMcpServers"`
-	AvailableTools             []ToolName             `json:"availableTools"`
+	Status                     AgentStatus         `json:"status"`
+	WaitingInputRound          WaitingInputRound   `json:"waitingInputRound"`
+	Model                      string              `json:"model"`
+	SystemPrompt               string              `json:"systemPrompt"`
+	FirstRetainedSequence      int64               `json:"firstRetainedSequence"`
+	LastSequence               int64               `json:"lastSequence"`
+	SummarizedThroughSequence  int64               `json:"summarizedThroughSequence"`
+	PendingApproval            NilPendingApproval  `json:"pendingApproval"`
+	PendingTimer               NilPendingTimer     `json:"pendingTimer"`
+	PendingUserInput           NilPendingUserInput `json:"pendingUserInput"`
+	Plan                       NilAgentPlan        `json:"plan"`
+	IsPlanExecutionRequested   bool                `json:"isPlanExecutionRequested"`
+	PendingQueuedMessageCount  int                 `json:"pendingQueuedMessageCount"`
+	PendingSteeredMessageCount int                 `json:"pendingSteeredMessageCount"`
+	AvailableMcpServers        []string            `json:"availableMcpServers"`
+	AvailableTools             []ToolName          `json:"availableTools"`
 }
 
 // GetStatus returns the value of Status.
@@ -160,9 +160,9 @@ func (s *AgentDescription) GetStatus() AgentStatus {
 	return s.Status
 }
 
-// GetInteractionStatus returns the value of InteractionStatus.
-func (s *AgentDescription) GetInteractionStatus() AgentInteractionStatus {
-	return s.InteractionStatus
+// GetWaitingInputRound returns the value of WaitingInputRound.
+func (s *AgentDescription) GetWaitingInputRound() WaitingInputRound {
+	return s.WaitingInputRound
 }
 
 // GetModel returns the value of Model.
@@ -240,9 +240,9 @@ func (s *AgentDescription) SetStatus(val AgentStatus) {
 	s.Status = val
 }
 
-// SetInteractionStatus sets the value of InteractionStatus.
-func (s *AgentDescription) SetInteractionStatus(val AgentInteractionStatus) {
-	s.InteractionStatus = val
+// SetWaitingInputRound sets the value of WaitingInputRound.
+func (s *AgentDescription) SetWaitingInputRound(val WaitingInputRound) {
+	s.WaitingInputRound = val
 }
 
 // SetModel sets the value of Model.
@@ -331,6 +331,8 @@ type AgentEvent struct {
 	PlanTaskIndex OptNilInt `json:"planTaskIndex"`
 	// Updated status of the indexed Plan task, or null.
 	PlanTaskStatus OptNilTaskStatus `json:"planTaskStatus"`
+	// Exact durable inputs consumed at this boundary, or null for unrelated activity.
+	InputConsumption NilInputConsumption `json:"inputConsumption"`
 }
 
 // GetKind returns the value of Kind.
@@ -378,6 +380,11 @@ func (s *AgentEvent) GetPlanTaskStatus() OptNilTaskStatus {
 	return s.PlanTaskStatus
 }
 
+// GetInputConsumption returns the value of InputConsumption.
+func (s *AgentEvent) GetInputConsumption() NilInputConsumption {
+	return s.InputConsumption
+}
+
 // SetKind sets the value of Kind.
 func (s *AgentEvent) SetKind(val EventKind) {
 	s.Kind = val
@@ -423,63 +430,9 @@ func (s *AgentEvent) SetPlanTaskStatus(val OptNilTaskStatus) {
 	s.PlanTaskStatus = val
 }
 
-// Ref: #/components/schemas/AgentInteractionState
-type AgentInteractionState struct {
-	Status AgentInteractionStatus `json:"status"`
-}
-
-// GetStatus returns the value of Status.
-func (s *AgentInteractionState) GetStatus() AgentInteractionStatus {
-	return s.Status
-}
-
-// SetStatus sets the value of Status.
-func (s *AgentInteractionState) SetStatus(val AgentInteractionStatus) {
-	s.Status = val
-}
-
-func (*AgentInteractionState) waitForAgentInteractionStatusRes() {}
-
-// Ref: #/components/schemas/AgentInteractionStatus
-type AgentInteractionStatus string
-
-const (
-	AgentInteractionStatusSubmitted AgentInteractionStatus = "submitted"
-	AgentInteractionStatusWaiting   AgentInteractionStatus = "waiting"
-)
-
-// AllValues returns all AgentInteractionStatus values.
-func (AgentInteractionStatus) AllValues() []AgentInteractionStatus {
-	return []AgentInteractionStatus{
-		AgentInteractionStatusSubmitted,
-		AgentInteractionStatusWaiting,
-	}
-}
-
-// MarshalText implements encoding.TextMarshaler.
-func (s AgentInteractionStatus) MarshalText() ([]byte, error) {
-	switch s {
-	case AgentInteractionStatusSubmitted:
-		return []byte(s), nil
-	case AgentInteractionStatusWaiting:
-		return []byte(s), nil
-	default:
-		return nil, errors.Errorf("invalid value: %q", s)
-	}
-}
-
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (s *AgentInteractionStatus) UnmarshalText(data []byte) error {
-	switch AgentInteractionStatus(data) {
-	case AgentInteractionStatusSubmitted:
-		*s = AgentInteractionStatusSubmitted
-		return nil
-	case AgentInteractionStatusWaiting:
-		*s = AgentInteractionStatusWaiting
-		return nil
-	default:
-		return errors.Errorf("invalid value: %q", data)
-	}
+// SetInputConsumption sets the value of InputConsumption.
+func (s *AgentEvent) SetInputConsumption(val NilInputConsumption) {
+	s.InputConsumption = val
 }
 
 // Ref: #/components/schemas/AgentMessage
@@ -988,6 +941,8 @@ const (
 	EventKindPlanStarted        EventKind = "plan_started"
 	EventKindPlanUpdated        EventKind = "plan_updated"
 	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
+	EventKindInputConsumed      EventKind = "input_consumed"
+	EventKindSnapshotRequired   EventKind = "snapshot_required"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
 	EventKindCompacted          EventKind = "compacted"
@@ -1007,6 +962,8 @@ func (EventKind) AllValues() []EventKind {
 		EventKindPlanStarted,
 		EventKindPlanUpdated,
 		EventKindPlanTaskUpdated,
+		EventKindInputConsumed,
+		EventKindSnapshotRequired,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
 		EventKindCompacted,
@@ -1029,6 +986,10 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindPlanUpdated:
 		return []byte(s), nil
 	case EventKindPlanTaskUpdated:
+		return []byte(s), nil
+	case EventKindInputConsumed:
+		return []byte(s), nil
+	case EventKindSnapshotRequired:
 		return []byte(s), nil
 	case EventKindSteeringApplied:
 		return []byte(s), nil
@@ -1068,6 +1029,12 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindPlanTaskUpdated:
 		*s = EventKindPlanTaskUpdated
+		return nil
+	case EventKindInputConsumed:
+		*s = EventKindInputConsumed
+		return nil
+	case EventKindSnapshotRequired:
+		*s = EventKindSnapshotRequired
 		return nil
 	case EventKindSteeringApplied:
 		*s = EventKindSteeringApplied
@@ -1538,6 +1505,43 @@ func (s *HistoryPageHeaders) SetResponse(val HistoryPage) {
 
 func (*HistoryPageHeaders) getArchivedMessagesRes() {}
 
+// Ref: #/components/schemas/InputConsumption
+type InputConsumption struct {
+	QueuedMessageIds      []MessageID `json:"queuedMessageIds"`
+	SteeredMessageIds     []MessageID `json:"steeredMessageIds"`
+	PlanExecutionRevision NilInt64    `json:"planExecutionRevision"`
+}
+
+// GetQueuedMessageIds returns the value of QueuedMessageIds.
+func (s *InputConsumption) GetQueuedMessageIds() []MessageID {
+	return s.QueuedMessageIds
+}
+
+// GetSteeredMessageIds returns the value of SteeredMessageIds.
+func (s *InputConsumption) GetSteeredMessageIds() []MessageID {
+	return s.SteeredMessageIds
+}
+
+// GetPlanExecutionRevision returns the value of PlanExecutionRevision.
+func (s *InputConsumption) GetPlanExecutionRevision() NilInt64 {
+	return s.PlanExecutionRevision
+}
+
+// SetQueuedMessageIds sets the value of QueuedMessageIds.
+func (s *InputConsumption) SetQueuedMessageIds(val []MessageID) {
+	s.QueuedMessageIds = val
+}
+
+// SetSteeredMessageIds sets the value of SteeredMessageIds.
+func (s *InputConsumption) SetSteeredMessageIds(val []MessageID) {
+	s.SteeredMessageIds = val
+}
+
+// SetPlanExecutionRevision sets the value of PlanExecutionRevision.
+func (s *InputConsumption) SetPlanExecutionRevision(val NilInt64) {
+	s.PlanExecutionRevision = val
+}
+
 type ListRecentEventsBadRequest Problem
 
 func (*ListRecentEventsBadRequest) listRecentEventsRes() {}
@@ -1782,6 +1786,96 @@ func (o NilFlowErrorType) Get() (v FlowErrorType, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o NilFlowErrorType) Or(d FlowErrorType) FlowErrorType {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilInputConsumption returns new NilInputConsumption with value set to v.
+func NewNilInputConsumption(v InputConsumption) NilInputConsumption {
+	return NilInputConsumption{
+		Value: v,
+	}
+}
+
+// NilInputConsumption is nullable InputConsumption.
+type NilInputConsumption struct {
+	Value InputConsumption
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilInputConsumption) SetTo(v InputConsumption) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilInputConsumption) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilInputConsumption) SetToNull() {
+	o.Null = true
+	var v InputConsumption
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilInputConsumption) Get() (v InputConsumption, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilInputConsumption) Or(d InputConsumption) InputConsumption {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilInt64 returns new NilInt64 with value set to v.
+func NewNilInt64(v int64) NilInt64 {
+	return NilInt64{
+		Value: v,
+	}
+}
+
+// NilInt64 is nullable int64.
+type NilInt64 struct {
+	Value int64
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilInt64) SetTo(v int64) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilInt64) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilInt64) SetToNull() {
+	o.Null = true
+	var v int64
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilInt64) Get() (v int64, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilInt64) Or(d int64) int64 {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2684,8 +2778,7 @@ func (s *PollTimeout) SetReason(val PollTimeoutReason) {
 	s.Reason = val
 }
 
-func (*PollTimeout) readEventRes()                     {}
-func (*PollTimeout) waitForAgentInteractionStatusRes() {}
+func (*PollTimeout) readEventRes() {}
 
 // Ref: #/components/schemas/PollTimeoutReason
 type PollTimeoutReason string
@@ -3850,18 +3943,37 @@ func (s *UserMessage) SetPlanMode(val bool) {
 	s.PlanMode = val
 }
 
-type WaitForAgentInteractionStatusBadRequest Problem
+type WaitForWaitingInputRoundBadRequest Problem
 
-func (*WaitForAgentInteractionStatusBadRequest) waitForAgentInteractionStatusRes() {}
+func (*WaitForWaitingInputRoundBadRequest) waitForWaitingInputRoundRes() {}
 
-type WaitForAgentInteractionStatusConflict Problem
+type WaitForWaitingInputRoundConflict Problem
 
-func (*WaitForAgentInteractionStatusConflict) waitForAgentInteractionStatusRes() {}
+func (*WaitForWaitingInputRoundConflict) waitForWaitingInputRoundRes() {}
 
-type WaitForAgentInteractionStatusNotFound Problem
+type WaitForWaitingInputRoundNotFound Problem
 
-func (*WaitForAgentInteractionStatusNotFound) waitForAgentInteractionStatusRes() {}
+func (*WaitForWaitingInputRoundNotFound) waitForWaitingInputRoundRes() {}
 
-type WaitForAgentInteractionStatusServiceUnavailable Problem
+type WaitForWaitingInputRoundServiceUnavailable Problem
 
-func (*WaitForAgentInteractionStatusServiceUnavailable) waitForAgentInteractionStatusRes() {}
+func (*WaitForWaitingInputRoundServiceUnavailable) waitForWaitingInputRoundRes() {}
+
+type WaitingInputRound int64
+
+// Ref: #/components/schemas/WaitingInputRoundState
+type WaitingInputRoundState struct {
+	WaitingInputRound WaitingInputRound `json:"waitingInputRound"`
+}
+
+// GetWaitingInputRound returns the value of WaitingInputRound.
+func (s *WaitingInputRoundState) GetWaitingInputRound() WaitingInputRound {
+	return s.WaitingInputRound
+}
+
+// SetWaitingInputRound sets the value of WaitingInputRound.
+func (s *WaitingInputRoundState) SetWaitingInputRound(val WaitingInputRound) {
+	s.WaitingInputRound = val
+}
+
+func (*WaitingInputRoundState) waitForWaitingInputRoundRes() {}

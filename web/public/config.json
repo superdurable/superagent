@@ -1,3 +1,4 @@
 {
-  "apiOrigin": "http://127.0.0.1:8080"
+  "apiOrigin": "http://127.0.0.1:8080",
+  "snapshotRefreshIntervalMilliseconds": 60000
 }

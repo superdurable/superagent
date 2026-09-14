@@ -37,8 +37,8 @@ const (
 	MaximumUserMessageContentBytes = agentinternal.MaximumUserMessageContentBytes
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
 	MaximumRuntimeMetadataBytes = agentinternal.MaximumRuntimeMetadataBytes
-	// MaximumLeaseStateBytes bounds one opaque runtime Lease state.
-	MaximumLeaseStateBytes = agentinternal.MaximumLeaseStateBytes
+	// MaximumWaitingInputRound is the largest round exactly representable by JavaScript.
+	MaximumWaitingInputRound = agentinternal.MaximumWaitingInputRound
 	// MaximumRecentEventLimit bounds one best-effort Stream recovery read.
 	MaximumRecentEventLimit = agentinternal.MaximumRecentEventLimit
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
@@ -72,9 +72,6 @@ const (
 	AgentStatusExecutingTool          = agentinternal.AgentStatusExecutingTool
 	AgentStatusWaitingForTimer        = agentinternal.AgentStatusWaitingForTimer
 	AgentStatusApplyingSteering       = agentinternal.AgentStatusApplyingSteering
-
-	AgentInteractionStatusSubmitted = agentinternal.AgentInteractionStatusSubmitted
-	AgentInteractionStatusWaiting   = agentinternal.AgentInteractionStatusWaiting
 )
 
 const (
@@ -128,6 +125,8 @@ const (
 	EventKindPlanStarted        = agentinternal.EventKindPlanStarted
 	EventKindPlanUpdated        = agentinternal.EventKindPlanUpdated
 	EventKindPlanTaskUpdated    = agentinternal.EventKindPlanTaskUpdated
+	EventKindInputConsumed      = agentinternal.EventKindInputConsumed
+	EventKindSnapshotRequired   = agentinternal.EventKindSnapshotRequired
 	EventKindSteeringApplied    = agentinternal.EventKindSteeringApplied
 	EventKindCompactionFailed   = agentinternal.EventKindCompactionFailed
 	EventKindCompacted          = agentinternal.EventKindCompacted
@@ -168,18 +167,18 @@ type (
 	Model           = agentinternal.Model
 	ToolName        = agentinternal.ToolName
 
-	AgentStatus            = agentinternal.AgentStatus
-	AgentInteractionStatus = agentinternal.AgentInteractionStatus
-	FlowStatus             = agentinternal.FlowStatus
-	FlowErrorType          = agentinternal.FlowErrorType
-	InteractionMode        = agentinternal.InteractionMode
-	PlanStatus             = agentinternal.PlanStatus
-	TaskStatus             = agentinternal.TaskStatus
-	MessageRole            = agentinternal.MessageRole
-	EventKind              = agentinternal.EventKind
-	Provider               = agentinternal.Provider
-	ToolOutcome            = agentinternal.ToolOutcome
-	Command                = agentinternal.Command
+	AgentStatus       = agentinternal.AgentStatus
+	WaitingInputRound = agentinternal.WaitingInputRound
+	FlowStatus        = agentinternal.FlowStatus
+	FlowErrorType     = agentinternal.FlowErrorType
+	InteractionMode   = agentinternal.InteractionMode
+	PlanStatus        = agentinternal.PlanStatus
+	TaskStatus        = agentinternal.TaskStatus
+	MessageRole       = agentinternal.MessageRole
+	EventKind         = agentinternal.EventKind
+	Provider          = agentinternal.Provider
+	ToolOutcome       = agentinternal.ToolOutcome
+	Command           = agentinternal.Command
 
 	EnumValidationError           = agentinternal.EnumValidationError
 	CommandRejectedError          = agentinternal.CommandRejectedError
@@ -212,6 +211,7 @@ type (
 	UserInputQuestionID           = agentinternal.UserInputQuestionID
 	UserInputOption               = agentinternal.UserInputOption
 	AgentEvent                    = agentinternal.AgentEvent
+	InputConsumption              = agentinternal.InputConsumption
 	StreamEvent                   = agentinternal.StreamEvent
 	ModelReply                    = agentinternal.ModelReply
 	ToolDefinition                = agentinternal.ToolDefinition
@@ -224,23 +224,11 @@ type (
 	ToolInvocation                = agentinternal.ToolInvocation
 	ToolRegistry                  = agentinternal.ToolRegistry
 	RegisteredTool                = agentinternal.RegisteredTool
-	FlowOption                    = agentinternal.FlowOption
-	LeaseInitialization           = agentinternal.LeaseInitialization
-	LeaseRefreshID                = agentinternal.LeaseRefreshID
-	LeaseRefreshRequest           = agentinternal.LeaseRefreshRequest
-	LeaseRefreshResult            = agentinternal.LeaseRefreshResult
-	LeaseRefresher                = agentinternal.LeaseRefresher
-	LeaseExtensionConfig          = agentinternal.LeaseExtensionConfig
 )
 
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
-func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption) *Flow {
-	return agentinternal.NewFlow(modelClient, tools, options...)
-}
-
-// WithLeaseExtension enables durable maintenance of one opaque runtime Lease.
-func WithLeaseExtension(refresher LeaseRefresher, config *LeaseExtensionConfig) FlowOption {
-	return agentinternal.WithLeaseExtension(refresher, config)
+func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
+	return agentinternal.NewFlow(modelClient, tools)
 }
 
 // NewClient constructs an Agent application client over one Dex client and Flow definition.

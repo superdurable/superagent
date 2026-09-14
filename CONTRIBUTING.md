@@ -11,9 +11,10 @@ https://docs.superdurable.io/build-with-ai/dex-developer-skill. Confirm APIs
 against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
-Snapshot and Stream code target Dex Go SDK `v0.6.1`. Recheck the installed SDK source and
-the installed skill before changing its resource projection or errors. Never
-infer an API from a design screenshot or unreleased branch.
+Snapshot, Stream, Channel size snapshot, and Attribute wait code target Dex Go
+SDK and Server `v0.7.0`. Recheck the installed SDK source and the installed
+skill before changing resource projection or errors. Never infer an API from a
+design screenshot or unreleased branch.
 
 ## Deployment boundary
 
@@ -21,6 +22,8 @@ The Go backend and `web/dist` frontend are separate artifacts. Do not add static
 assets, filesystem serving, or frontend fallback routes to the backend. Browser
 API origins come from `web/public/config.json` at runtime. Cross-origin access
 must use the backend's exact origin allowlist.
+The same file may configure `snapshotRefreshIntervalMilliseconds`; omission
+selects the 60-second default.
 
 ## Generated contracts
 

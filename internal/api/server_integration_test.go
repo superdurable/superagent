@@ -94,31 +94,16 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	}
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/start", startBody, http.StatusCreated, nil)
 
-	waitURL := fmt.Sprintf(
-		"%s/products/ai-agent/interaction-status?flowId=%s&expectedStatus=waiting",
-		baseURL, flowID,
-	)
-	var waiting transportapi.AgentInteractionState
-	requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
-	if waiting.Status != transportapi.AgentInteractionStatusWaiting {
-		t.Fatalf("initial interaction status = %q", waiting.Status)
+	var waiting transportapi.WaitingInputRoundState
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, flowID, 0), nil, http.StatusOK, &waiting)
+	if waiting.WaitingInputRound != 1 {
+		t.Fatalf("initial waiting input round = %d", waiting.WaitingInputRound)
 	}
 
-	submitted := make(chan error, 1)
-	go func() {
-		url := fmt.Sprintf(
-			"%s/products/ai-agent/interaction-status?flowId=%s&expectedStatus=submitted",
-			baseURL, flowID,
-		)
-		submitted <- requestJSONError(http.MethodGet, url, nil, http.StatusOK, nil)
-	}()
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
 		FlowId: transportapi.FlowID(flowID), Content: "through HTTP", PlanMode: false,
 	}, http.StatusAccepted, nil)
-	if err := <-submitted; err != nil {
-		t.Fatal(err)
-	}
-	requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, flowID, waiting.WaitingInputRound), nil, http.StatusOK, &waiting)
 
 	var snapshot transportapi.AgentSnapshot
 	snapshotURL := fmt.Sprintf("%s/products/ai-agent/snapshot?flowId=%s", baseURL, flowID)
@@ -136,7 +121,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 		requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
 			FlowId: transportapi.FlowID(flowID), Content: content, PlanMode: false,
 		}, http.StatusAccepted, nil)
-		requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
+		requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, flowID, waiting.WaitingInputRound), nil, http.StatusOK, &waiting)
 	}
 	requestJSON(t, http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot)
 	if len(snapshot.History.Messages) != 10 || snapshot.History.Messages[0].Sequence != 11 ||
@@ -156,7 +141,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
 		FlowId: transportapi.FlowID(flowID), Content: "Plan through HTTP", PlanMode: true,
 	}, http.StatusAccepted, nil)
-	requestJSON(t, http.MethodGet, waitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, flowID, waiting.WaitingInputRound), nil, http.StatusOK, &waiting)
 	requestJSON(t, http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot)
 	description, ok := snapshot.Description.Get()
 	if !ok || description.Plan.IsNull() {
@@ -184,16 +169,12 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	busyPlanStart := *startBody
 	busyPlanStart.FlowId = transportapi.FlowID(busyPlanFlowID)
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/start", &busyPlanStart, http.StatusCreated, nil)
-	busyPlanWaitURL := fmt.Sprintf(
-		"%s/products/ai-agent/interaction-status?flowId=%s&expectedStatus=waiting",
-		baseURL,
-		busyPlanFlowID,
-	)
-	requestJSON(t, http.MethodGet, busyPlanWaitURL, nil, http.StatusOK, &waiting)
+	var busyPlanWaiting transportapi.WaitingInputRoundState
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, busyPlanFlowID, 0), nil, http.StatusOK, &busyPlanWaiting)
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
 		FlowId: transportapi.FlowID(busyPlanFlowID), Content: "/plan-slow-stop HTTP boundary", PlanMode: true,
 	}, http.StatusAccepted, nil)
-	requestJSON(t, http.MethodGet, busyPlanWaitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, busyPlanFlowID, busyPlanWaiting.WaitingInputRound), nil, http.StatusOK, &busyPlanWaiting)
 	busyPlanSnapshotURL := fmt.Sprintf(
 		"%s/products/ai-agent/snapshot?flowId=%s",
 		baseURL,
@@ -217,21 +198,19 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	if conflict.Detail != "the Agent is not at an executable wait or the Plan revision changed" {
 		t.Fatalf("busy Plan conflict detail = %q", conflict.Detail)
 	}
-	requestJSON(t, http.MethodGet, busyPlanWaitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, busyPlanFlowID, busyPlanWaiting.WaitingInputRound), nil, http.StatusOK, &busyPlanWaiting)
 
 	questionFlowID := "http-question-" + randomID(t)
 	questionStart := *startBody
 	questionStart.FlowId = transportapi.FlowID(questionFlowID)
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/start", &questionStart, http.StatusCreated, nil)
-	questionWaitURL := fmt.Sprintf(
-		"%s/products/ai-agent/interaction-status?flowId=%s&expectedStatus=waiting",
-		baseURL, questionFlowID,
-	)
 	questionSnapshotURL := fmt.Sprintf("%s/products/ai-agent/snapshot?flowId=%s", baseURL, questionFlowID)
+	var questionWaiting transportapi.WaitingInputRoundState
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, questionFlowID, 0), nil, http.StatusOK, &questionWaiting)
 	requestJSON(t, http.MethodPost, baseURL+"/products/ai-agent/messages", &transportapi.SendMessageRequest{
 		FlowId: transportapi.FlowID(questionFlowID), Content: "/choose Region? | us-west | eu-central", PlanMode: false,
 	}, http.StatusAccepted, nil)
-	requestJSON(t, http.MethodGet, questionWaitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, questionFlowID, questionWaiting.WaitingInputRound), nil, http.StatusOK, &questionWaiting)
 	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
 	description, ok = snapshot.Description.Get()
 	if !ok || description.PendingUserInput.IsNull() {
@@ -259,7 +238,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 		t.Fatalf("question remained after accepted answer: %#v", snapshot)
 	}
 	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusConflict, nil)
-	requestJSON(t, http.MethodGet, questionWaitURL, nil, http.StatusOK, &waiting)
+	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, questionFlowID, questionWaiting.WaitingInputRound), nil, http.StatusOK, &questionWaiting)
 	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
 	if !transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleUser, "**Details**: us-west: depart 2026-07-01, return 2026-07-18") ||
 		!transportHistoryHasMessage(snapshot.History.Messages, transportapi.MessageRoleAssistant, "Local demo response: **Details**: us-west: depart 2026-07-01, return 2026-07-18") {
@@ -341,6 +320,15 @@ func waitForReady(t *testing.T, baseURL string) {
 		}
 	}
 	t.Fatal("HTTP server did not become ready")
+}
+
+func waitingInputRoundURL(baseURL, flowID string, after transportapi.WaitingInputRound) string {
+	return fmt.Sprintf(
+		"%s/products/ai-agent/waiting-input-round?flowId=%s&afterWaitingInputRound=%d",
+		baseURL,
+		flowID,
+		after,
+	)
 }
 
 func requestJSON(

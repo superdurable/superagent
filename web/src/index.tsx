@@ -28,7 +28,11 @@ async function bootstrap(): Promise<void> {
     client.setConfig({ baseUrl: config.apiOrigin.value });
     root.render(
       <React.StrictMode>
-        <App />
+        <App
+          snapshotRefreshIntervalMilliseconds={
+            config.snapshotRefreshIntervalMilliseconds
+          }
+        />
       </React.StrictMode>,
     );
   } catch (reason: unknown) {

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AnswerQuestionsData, AnswerQuestionsErrors, AnswerQuestionsResponses, ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetArchivedMessagesData, GetArchivedMessagesErrors, GetArchivedMessagesResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ListRecentEventsData, ListRecentEventsErrors, ListRecentEventsResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses, WaitForAgentInteractionStatusData, WaitForAgentInteractionStatusErrors, WaitForAgentInteractionStatusResponses } from './types.gen';
+import type { AnswerQuestionsData, AnswerQuestionsErrors, AnswerQuestionsResponses, ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetArchivedMessagesData, GetArchivedMessagesErrors, GetArchivedMessagesResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ListRecentEventsData, ListRecentEventsErrors, ListRecentEventsResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses, WaitForWaitingInputRoundData, WaitForWaitingInputRoundErrors, WaitForWaitingInputRoundResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -103,11 +103,13 @@ export const getArchivedMessages = <ThrowOnError extends boolean = true>(options
 });
 
 /**
- * Wait for one durable Agent interaction status
+ * Wait for the durable Agent input watermark to advance
+ *
+ * Waits until WaitingInputRound is greater than the supplied watermark, the caller cancels, the Flow closes, or an error occurs. The response contains the actual matched round. This operation does not use the bounded Stream poll timeout response.
  */
-export const waitForAgentInteractionStatus = <ThrowOnError extends boolean = true>(options: Options<WaitForAgentInteractionStatusData, ThrowOnError>): RequestResult<WaitForAgentInteractionStatusResponses, WaitForAgentInteractionStatusErrors, ThrowOnError, 'data'> => (options.client ?? client).get<WaitForAgentInteractionStatusResponses, WaitForAgentInteractionStatusErrors, ThrowOnError, 'data'>({
+export const waitForWaitingInputRound = <ThrowOnError extends boolean = true>(options: Options<WaitForWaitingInputRoundData, ThrowOnError>): RequestResult<WaitForWaitingInputRoundResponses, WaitForWaitingInputRoundErrors, ThrowOnError, 'data'> => (options.client ?? client).get<WaitForWaitingInputRoundResponses, WaitForWaitingInputRoundErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',
-    url: '/products/ai-agent/interaction-status',
+    url: '/products/ai-agent/waiting-input-round',
     ...options
 });
 

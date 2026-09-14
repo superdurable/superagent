@@ -168,6 +168,7 @@ function activity(
       callId: null,
       toolName: null,
       messageSequence,
+      inputConsumption: null,
     },
   };
 }

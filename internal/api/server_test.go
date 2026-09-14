@@ -94,7 +94,7 @@ func TestSnapshotResponseCannotBeCached(t *testing.T) {
 		},
 		Description: &agent.AgentDescription{
 			Status:              agent.AgentStatusInitializing,
-			InteractionStatus:   agent.AgentInteractionStatusSubmitted,
+			WaitingInputRound:   0,
 			Model:               "mock/reliable",
 			AvailableMCPServers: []string{},
 			AvailableTools:      []agent.ToolName{},
