@@ -117,9 +117,17 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toBeVisible();
   expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
-  await expect(
-    history.getByText("Checked the constraints", { exact: true }),
-  ).toBeVisible();
+  const reasoningCard = history.locator("details.reasoning-card").filter({
+    hasText: "Checked the constraints",
+  });
+  const reasoningText = reasoningCard.getByText("Checked the constraints", {
+    exact: true,
+  });
+  await expect(reasoningCard).toBeVisible();
+  if (!(await reasoningText.isVisible())) {
+    await reasoningCard.locator("summary").click();
+  }
+  await expect(reasoningText).toBeVisible();
   await expect(
     history
       .locator(".message-bubble.assistant")
