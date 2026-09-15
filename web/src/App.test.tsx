@@ -21,6 +21,7 @@ import {
   EventKind,
   EventStream,
   FlowStatus,
+  MessageRole,
   PlanStatus,
   Provider,
   TaskStatus,
@@ -1009,7 +1010,7 @@ describe("App", () => {
   });
 
   it("hides an answered input immediately after server acceptance", async () => {
-    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+    const pendingSnapshot: AgentSnapshot = {
       ...snapshot,
       description: {
         ...activeDescription,
@@ -1029,7 +1030,34 @@ describe("App", () => {
           ],
         },
       },
-    });
+    };
+    const answeredSnapshot: AgentSnapshot = {
+      ...snapshot,
+      history: {
+        messages: [
+          {
+            sequence: 1,
+            message: {
+              role: MessageRole.USER,
+              content: "**Pace**: Relaxed",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-03T00:00:01Z",
+            },
+          },
+        ],
+        nextBeforeSequence: null,
+      },
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        lastSequence: 1,
+      },
+    };
+    vi.mocked(getAgentSnapshot)
+      .mockResolvedValueOnce(pendingSnapshot)
+      .mockResolvedValueOnce(answeredSnapshot);
     window.history.replaceState({}, "", "/?flowId=flow-existing");
     render(<App />);
 
@@ -1056,9 +1084,13 @@ describe("App", () => {
     await waitFor(() => {
       expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
     });
-    const queueToggle = screen.getByRole("button", { name: /Message queue/ });
-    expect(queueToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(/Pace.*Relaxed/)).toBeInTheDocument();
+    const history = screen.getByRole("region", {
+      name: "Conversation history",
+    });
+    expect(within(history).getByText(/Pace.*Relaxed/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Message queue" }),
+    ).not.toBeInTheDocument();
   });
 
   it("navigates, revises, and atomically submits three question answers", async () => {

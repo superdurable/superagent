@@ -729,6 +729,100 @@ func TestAgentUserInputIntegration(t *testing.T) {
 	waitForAgentPlan(t, environment, flowID, PlanStatusCompleted)
 }
 
+func TestAgentQuestionAnswerPriorityIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-answer-priority-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	initial := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForPendingTimer(t, environment, flowID)
+	for _, content := range []string{
+		"/ask Which deployment target?",
+		"steered after question",
+		"ordinary queued request",
+	} {
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued := waitForQueuedMessages(t, environment, flowID, 3)
+	if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+		MessageID: queued[0].Value.MessageID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pendingSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil &&
+			snapshot.Description.WaitingInputRound > initial.Description.WaitingInputRound
+	})
+	if len(pendingSnapshot.Queued) != 2 {
+		t.Fatalf("queue while awaiting answer = %#v", pendingSnapshot.Queued)
+	}
+	var steeringID MessageID
+	for _, message := range pendingSnapshot.Queued {
+		if message.Value.Content == "steered after question" {
+			steeringID = message.MessageID
+		}
+	}
+	if steeringID == "" {
+		t.Fatalf("steering target missing from queue: %#v", pendingSnapshot.Queued)
+	}
+	if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: steeringID}); err != nil {
+		t.Fatal(err)
+	}
+	pendingSnapshot = waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil &&
+			len(snapshot.Steered) == 1 && len(snapshot.Queued) == 1
+	})
+	environment.replaceWorker(t, flowID)
+	if err := environment.agent.AnswerQuestions(
+		t.Context(),
+		flowID,
+		answerRequest(*pendingSnapshot.Description.PendingUserInput, "priority answer"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			len(snapshot.Queued) == 0 && len(snapshot.Steered) == 0 &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: priority answer") &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: steered after question") &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: ordinary queued request")
+	})
+	answerSequence := Sequence(0)
+	steeredSequence := Sequence(0)
+	queuedSequence := Sequence(0)
+	for _, item := range completed.History.Messages {
+		if item.Message.Role != MessageRoleUser {
+			continue
+		}
+		switch item.Message.Content {
+		case "**Details**: priority answer":
+			answerSequence = item.Sequence
+		case "steered after question":
+			steeredSequence = item.Sequence
+		case "ordinary queued request":
+			queuedSequence = item.Sequence
+		}
+	}
+	if answerSequence == 0 || steeredSequence == 0 || queuedSequence == 0 ||
+		answerSequence >= steeredSequence || steeredSequence >= queuedSequence {
+		t.Fatalf(
+			"user input order answer=%d steered=%d queued=%d; history=%#v",
+			answerSequence,
+			steeredSequence,
+			queuedSequence,
+			completed.History.Messages,
+		)
+	}
+}
+
 func assertAnswerRejected(t *testing.T, err error) {
 	t.Helper()
 	var rejected *CommandRejectedError

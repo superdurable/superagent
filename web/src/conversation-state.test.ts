@@ -722,7 +722,7 @@ describe("conversationReducer", () => {
       pendingCommand: null,
       answeredUserInputCallID: "input-call-1",
       snapshot: { description: { pendingUserInput: null } },
-      optimisticSubmissions: [{ phase: "queued" }],
+      optimisticSubmissions: [],
     });
 
     state = conversationReducer(state, {

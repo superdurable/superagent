@@ -825,9 +825,8 @@ type PendingUserInput struct {
 
 // AnswerQuestionsRequest identifies and answers one pending batch.
 type AnswerQuestionsRequest struct {
-	MessageID MessageID         `json:"message_id,omitempty"`
-	CallID    CallID            `json:"call_id"`
-	Answers   []UserInputAnswer `json:"answers"`
+	CallID  CallID            `json:"call_id"`
+	Answers []UserInputAnswer `json:"answers"`
 }
 
 // UserInputAnswer answers one question in a pending input batch.

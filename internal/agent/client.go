@@ -124,11 +124,14 @@ func (client *Client) AnswerQuestions(
 	if err := validateAnswerQuestionsRequest(request); err != nil {
 		return err
 	}
-	request.MessageID = MessageID(uuid.NewString())
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
 		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
-			Timeout:        client.commandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+			Timeout:           client.commandTimeout,
+			LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
+			LockAttributes: []dex.AttributeLock{
+				dex.LockAttribute(pendingUserInputAttribute),
+				dex.LockAttribute(pendingApprovalAttribute),
+			},
 		})
 	})
 	if err != nil {

@@ -81,6 +81,7 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 	return []dex.StepDef{
 		dex.DefineStartStep(initStep{flow: flow}),
 		dex.DefineStep(awaitUserStep{flow: flow}),
+		dex.DefineStep(answeredInputStep{flow: flow}),
 		dex.DefineStep(compactContextStep{flow: flow}),
 		dex.DefineStep(callModelStep{flow: flow}),
 		dex.DefineStep(checkSteeredStep{flow: flow}),
@@ -145,12 +146,9 @@ func (*Flow) SendMessage(ctx dex.Context, input PendingUserMessage) (*dex.RPCRes
 }
 
 // AnswerQuestions closes and answers one exact pending input batch atomically.
-func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
+func (flow *Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(string(input.CallID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
-	}
-	if err := validateMessageID(input.MessageID); err != nil {
-		return nil, err
 	}
 	pending, err := getPendingUserInput(ctx)
 	if err != nil {
@@ -163,16 +161,16 @@ func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*de
 	if !isValid {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
+	if err := flow.beginUserTurn(ctx, message); err != nil {
+		return nil, err
+	}
 	if err := pendingUserInputAttribute.Delete(ctx); err != nil {
 		return nil, err
 	}
-	if err := queuedUserMessagesChannel.Publish(ctx, PendingUserMessage{
-		MessageID: input.MessageID,
-		Value:     message,
-	}); err != nil {
-		return nil, err
-	}
-	return &dex.RPCResult[bool]{Output: true}, nil
+	return (&dex.RPCResult[bool]{
+		Output:    true,
+		NextSteps: []dex.StepMovement{dex.MovementOf(answeredInputStep{flow: flow}, nil)},
+	}).CancelSteps(awaitUserStep{flow: flow}), nil
 }
 
 // SteerMessage atomically moves a queued message into the Steer queue.
@@ -1370,6 +1368,7 @@ const (
 
 	stepTypeInit           stepType = "Init"
 	stepTypeAwaitUser      stepType = "AwaitUser"
+	stepTypeAnsweredInput  stepType = "AnsweredInput"
 	stepTypeCompactContext stepType = "CompactContext"
 	stepTypeCallModel      stepType = "CallModel"
 	stepTypeCheckSteered   stepType = "CheckSteered"
@@ -1503,7 +1502,13 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err != nil {
 		return nil, err
 	}
-	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
+	if pendingInput != nil {
+		if err := incrementWaitingInputRound(ctx); err != nil {
+			return nil, err
+		}
+		return dex.SkipWaitImmediately(), nil
+	}
+	if plan != nil && plan.Status != PlanStatusCompleted {
 		planKey := planRevisionKey(plan.Revision)
 		if steeredUserMessagesChannel.Size(ctx) == 0 &&
 			queuedUserMessagesChannel.Size(ctx) == 0 &&
@@ -1530,6 +1535,13 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 }
 
 func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	pendingInput, err := getPendingUserInput(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pendingInput != nil {
+		return dex.DeadEnd(), nil
+	}
 	steered, err := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if err != nil {
 		return nil, err
@@ -1604,6 +1616,28 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
+}
+
+type answeredInputStep struct {
+	dex.StepDefaultsNoWaitFor[dex.None]
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = answeredInputStep{}
+
+func (answeredInputStep) GetStepType() string { return string(stepTypeAnsweredInput) }
+
+func (answeredInputStep) GetStepOptions() *dex.StepOptions { return messageContextStepOptions }
+
+func (step answeredInputStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	cutoff, err := step.flow.pendingCompactionCutoff(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cutoff != nil {
+		return dex.GoTo(compactContextStep{flow: step.flow}, *cutoff), nil
+	}
+	return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
 }
 
 type compactContextStep struct {

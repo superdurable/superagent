@@ -441,11 +441,11 @@ function beginCommand(
   id: number,
   command: Command,
 ): ActiveConversationState {
-  if (isSubmissionCommand(command)) {
+  if (command.kind === "send") {
     return {
       ...state,
-      composer: command.kind === "send" ? "" : state.composer,
-      isPlanMode: command.kind === "send" ? false : state.isPlanMode,
+      composer: "",
+      isPlanMode: false,
       optimisticSubmissions: [
         ...state.optimisticSubmissions,
         {
@@ -508,7 +508,7 @@ function completeCommand(
 ): ActiveConversationState {
   if (state.pendingCommand?.id !== id) return state;
   const command = state.pendingCommand.command;
-  if (isSubmissionCommand(command)) {
+  if (command.kind === "send" || command.kind === "answer") {
     const isAnswer = command.kind === "answer";
     return {
       ...state,
@@ -525,11 +525,14 @@ function completeCommand(
             : state.snapshot.description.pendingUserInput,
         },
       },
-      optimisticSubmissions: state.optimisticSubmissions.map((submission) =>
-        submission.localID === `submitting-${String(id)}`
-          ? { ...submission, phase: "queued" }
-          : submission,
-      ),
+      optimisticSubmissions:
+        command.kind === "send"
+          ? state.optimisticSubmissions.map((submission) =>
+              submission.localID === `submitting-${String(id)}`
+                ? { ...submission, phase: "queued" }
+                : submission,
+            )
+          : state.optimisticSubmissions,
       error: null,
     };
   }
@@ -613,21 +616,16 @@ function failCommand(
     composer: command.kind === "send" ? command.value.content : state.composer,
     isPlanMode:
       command.kind === "send" ? command.value.planMode : state.isPlanMode,
-    optimisticSubmissions: isSubmissionCommand(command)
-      ? state.optimisticSubmissions.filter(
-          (submission) => submission.localID !== `submitting-${String(id)}`,
-        )
-      : state.optimisticSubmissions,
+    optimisticSubmissions:
+      command.kind === "send"
+        ? state.optimisticSubmissions.filter(
+            (submission) => submission.localID !== `submitting-${String(id)}`,
+          )
+        : state.optimisticSubmissions,
     pendingCommand: null,
     commandError: message,
     error: message,
   };
-}
-
-function isSubmissionCommand(
-  command: Command,
-): command is SendCommand | AnswerCommand {
-  return command.kind === "send" || command.kind === "answer";
 }
 
 function reconcileOptimisticSubmissions(

@@ -27,7 +27,9 @@ lifecycle has a different identity and operational lifetime from a conversation.
 JavaScript's safe integer maximum. `AwaitUser.WaitFor` reads Channel size
 metadata for steered messages, queued messages, and the current Plan execution
 instance without loading payloads. It increments the round only when all
-relevant inputs are empty and the Step will truly suspend. Other waits never
+relevant inputs are empty and the Step will truly suspend. While a question is
+pending, the Step increments the round and enters an RPC-resumable dead-end, so
+unrelated queued input does not create a false completion. Other waits never
 change it.
 
 The browser reads the initial round from Snapshot, waits for a strictly greater
@@ -37,8 +39,8 @@ The Snapshot backend checks indexed Flow lifecycle before invoking its durable
 read RPC so a terminal Flow cannot return the last running projection. The
 visible-page fallback is configurable at runtime and defaults to 60 seconds.
 
-Send and Answer payloads receive one stable application message ID before RPC
-retry. Steering preserves it. Snapshot exposes the application ID while Dex
+Send payloads receive one stable application message ID before RPC retry.
+Steering preserves it. Snapshot exposes the application ID while Dex
 Channel envelope IDs remain private.
 
 An Execute that consumes queued or steered messages, or a Plan execution

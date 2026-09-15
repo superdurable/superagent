@@ -350,6 +350,72 @@ test("removes a consumed queued message before the next Snapshot completes", asy
   await expect(consumedMessage).toHaveCount(1);
 });
 
+test("submits a question answer before steering and queued messages", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  const send = page.getByRole("button", { name: "Send" });
+  const queue = page.getByRole("region", { name: "Message queue" });
+  const history = page.getByRole("region", { name: "Conversation history" });
+
+  await composer.fill("/wait 90 answer priority");
+  await send.click();
+  await expect(page.getByText("90s")).toBeVisible();
+  await composer.fill("/questions");
+  await send.click();
+  await composer.fill("steered after question");
+  await send.click();
+  await composer.fill("ordinary queued request");
+  await send.click();
+  await expectMessageQueueExpanded(queue);
+  const questionRequest = queue
+    .locator(".queue-message")
+    .filter({ hasText: "/questions" });
+  await expect(questionRequest).toBeVisible();
+  await questionRequest.getByRole("button", { name: "Steer now" }).click();
+
+  const questions = page.getByRole("region", { name: "Agent questions" });
+  await expect(questions).toBeVisible();
+  const steeringRequest = queue
+    .locator(".queue-message")
+    .filter({ hasText: "steered after question" });
+  await steeringRequest.getByRole("button", { name: "Steer now" }).click();
+  await expect(queue.getByText("steered after question")).toBeVisible();
+  await expect(queue.getByText("ordinary queued request")).toBeVisible();
+  await fillQuestionBatch(questions);
+  await questions.getByRole("button", { name: "Submit all" }).click();
+
+  await expect(questions).toHaveCount(0);
+  await expect(
+    history.locator(".message-bubble.user").filter({ hasText: "Region" }),
+  ).toContainText("US West");
+  await expect(
+    history.locator(".message-bubble.user").filter({
+      hasText: "steered after question",
+    }),
+  ).toHaveCount(1);
+  await expect(
+    history.locator(".message-bubble.user").filter({
+      hasText: "ordinary queued request",
+    }),
+  ).toHaveCount(1);
+  const timeline = await directTimelineText(history);
+  const answerIndex = timeline.findIndex(
+    (text) => text.includes("Region") && text.includes("US West"),
+  );
+  const queuedIndex = timeline.findIndex((text) =>
+    text.includes("ordinary queued request"),
+  );
+  const steeredIndex = timeline.findIndex((text) =>
+    text.includes("steered after question"),
+  );
+  expect(answerIndex).toBeGreaterThanOrEqual(0);
+  expect(steeredIndex).toBeGreaterThan(answerIndex);
+  expect(queuedIndex).toBeGreaterThan(steeredIndex);
+});
+
 test("accepts the first message after Start and retains it across refresh", async ({
   page,
 }) => {

@@ -91,12 +91,15 @@ and steer target the exact payload while the Flow resolves the private Dex
 Channel envelope. `SteerMessage` preserves the application ID when moving the
 payload to `SteeredUserMessages`; a repeated or stale ID is not accepted.
 
-Queued messages and validated question answers use `QueuedUserMessages`.
-Steering is consumed only at explicit safe Step boundaries, so it cannot claim
-to cancel an in-flight model or MCP side effect. `AnswerQuestions` verifies the
-exact pending call ID and every question ID. One RPC commit deletes
-`PendingUserInput` and publishes the ordered answer message with one stable
-application ID. `ApproveTool` accepts only the current
+Queued messages use `QueuedUserMessages`. Validated question answers bypass
+both message queues. `AnswerQuestions` verifies the exact pending call ID and
+every question ID. One RPC commit appends the answer to `CurrentMessages`,
+deletes `PendingUserInput`, cancels any unfinished `AwaitUser`, and schedules
+`AnsweredInput`. A pending question leaves `AwaitUser` at an RPC-resumable
+dead-end. `AnsweredInput` starts the answer model turn without checking either
+message queue. Steering is otherwise consumed only at explicit safe Step
+boundaries, so it cannot claim to cancel an in-flight model or MCP side effect.
+`ApproveTool` accepts only the current
 `PendingApproval.CallID`; it deletes the pending value and publishes the
 decision in the same commit. Repeated and stale commands are rejected.
 
@@ -146,9 +149,10 @@ activity carries the target durable message sequence. The browser places each
 reasoning summary before that assistant message when timestamps tie or are
 unavailable. Unanchored reasoning retains its own chronological position.
 `WaitingInputRound` is a monotonic `int64` Attribute bounded by JavaScript's
-safe integer maximum. `AwaitUser.WaitFor` increments it only when steered,
-queued, and current-Plan execution Channels are empty and the Flow will truly
-wait. The browser takes the first Snapshot round as a watermark, then long-polls
+safe integer maximum. With no pending question, `AwaitUser.WaitFor` increments
+it only when steered, queued, and current-Plan execution Channels are empty. A
+pending question increments it before entering its RPC-resumable dead-end. The
+browser takes the first Snapshot round as a watermark, then long-polls
 for `round > watermark`. Each response returns the actual matched round, which
 becomes the next watermark before requesting Snapshot. The ongoing round wait
 also discovers Flow closure; Snapshot's lifecycle guard remains the terminal
@@ -156,7 +160,8 @@ recovery path.
 
 Every consumed queued message, steered message, or Plan execution request emits
 one `input_consumed` Activity event with exact application IDs or revision and
-no user content. The reducer removes only matching visible inputs and closes
+no user content. The reducer removes only
+matching visible inputs and closes
 the transient `isWaitingForInput` gate. It projects payloads already known from
 Snapshot into temporary user bubbles without adding content to the Stream.
 Consumed IDs suppress stale queue data until durable history replaces those
@@ -211,8 +216,9 @@ later mutations. Pending input uses the dedicated
 collects every answer locally, permits review, and submits the complete batch.
 Preset answers may include a compact supplemental detail that is composed into
 the answer string; `Other` requires free text.
-HTTP acceptance means the server has durably removed that exact batch and
-queued one normal answer message. Queue edit, delete, and steer optimistically
+HTTP acceptance means the server has durably removed that exact batch, appended
+the answer to chat history, and scheduled its model turn ahead of both queues.
+Answers never appear as optimistic queue items. Queue edit, delete, and steer optimistically
 remove one stable message ID.
 The backend resolves a steer value from the loaded
 Channel snapshot; the browser cannot replace the queued content during that
