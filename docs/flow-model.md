@@ -14,9 +14,10 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK and Server `v0.7.0`. Each `WaitFor`,
-`Execute`, and RPC invocation is an independent Dex atomic commit. Provider and
-MCP calls are external effects and are not part of a Dex transaction.
+The implementation requires Dex Go SDK `v0.7.1` and Server `v0.7.0`. Each
+`WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
+Provider and MCP calls are external effects and are not part of a Dex
+transaction.
 
 Renewable sandbox credentials are not an Agent Flow resource. A future,
 separately designed `SandboxLifecycleFlow` will own that lifecycle.
@@ -70,7 +71,7 @@ history, and makes the model replan.
 | Step                   | `WaitFor`                                                                           | `Execute` and transition                                                                                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Init`                 | none                                                                                | Validate and persist config/state, initialize round zero, then enter `AwaitUser`                                                                           |
-| `AwaitUser`            | steering, one queued message, or current plan execution when no question is pending | Persist waiting status; increment the round only when all relevant pending Channel snapshots are empty; prioritize steering and consume one selected input |
+| `AwaitUser`            | steering, one queued message, or current plan execution when no question is pending | Persist waiting status; increment the round only when all relevant Channel sizes are zero; prioritize steering and consume one selected input |
 | `CompactContext`       | none                                                                                | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages                                               |
 | `CallModel`            | none                                                                                | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress      |
 | `CheckSteered`         | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                       |
@@ -81,14 +82,14 @@ history, and makes the model replan.
 | `RecoverToolExecution` | none                                                                                | Record one unknown result after exhausted Dex retries, then let the Agent continue                                                                         |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
 
-Dex `v0.7.0` supplies Channel size metadata to the Worker, but its Go SDK
-incorrectly restricts `Size` reads to RPC handlers. Until the verified SDK fix
-is released, `AwaitUser.WaitFor` explicitly loads pending snapshots for
-`SteeredUserMessages`, `QueuedUserMessages`, and `PlanExecutions`, then counts
-them. It increments `WaitingInputRound` only when the selected Channel set is
-empty and the Step will actually suspend. Approval and timer waits never change
-the round. The next value must remain within JavaScript's safe integer range or
-the WaitFor fails explicitly.
+Dex Server `v0.7.0` supplies Channel size metadata to the Worker, and Dex Go SDK
+`v0.7.1` exposes it in `WaitFor` and `Execute`. `AwaitUser.WaitFor` reads the
+sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
+`PlanExecutions` instance without loading message payloads. It increments
+`WaitingInputRound` only when the selected Channel set is empty and the Step
+will actually suspend. Approval and timer waits never change the round. The
+next value must remain within JavaScript's safe integer range or the WaitFor
+fails explicitly.
 
 ## Durable resources
 

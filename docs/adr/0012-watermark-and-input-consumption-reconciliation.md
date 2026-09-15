@@ -13,9 +13,10 @@ additional Temporal synchronization updates and made frequent Snapshot reads
 expensive. The status also mixed two concerns: discovering a new durable input
 boundary and removing inputs that an Execute had already consumed.
 
-Dex `v0.7.0` supplies Channel and ChannelMap size metadata to the Worker and
-supports reconnecting one logical Attribute match through explicit options.
-Its Go SDK mistakenly restricts the public size accessor to RPC handlers.
+Dex Server `v0.7.0` supplies Channel and ChannelMap size metadata to the Worker
+and supports reconnecting one logical Attribute match through explicit
+options. Dex Go SDK `v0.7.0` mistakenly restricted the public size accessor to
+RPC handlers. SDK `v0.7.1` exposes it in `WaitFor` and `Execute`.
 
 The Coding Agent Flow also maintained renewable sandbox credentials. That
 lifecycle has a different identity and operational lifetime from a conversation.
@@ -23,11 +24,11 @@ lifecycle has a different identity and operational lifetime from a conversation.
 ## Decision
 
 `WaitingInputRound` is an `int64` Attribute initialized to zero and bounded by
-JavaScript's safe integer maximum. Until the SDK fix is released,
-`AwaitUser.WaitFor` explicitly loads the pending snapshots for steered messages,
-queued messages, and Plan executions and checks their lengths. It increments
-the round only when all relevant inputs are empty and the Step will truly
-suspend. Other waits never change it.
+JavaScript's safe integer maximum. `AwaitUser.WaitFor` reads Channel size
+metadata for steered messages, queued messages, and the current Plan execution
+instance without loading payloads. It increments the round only when all
+relevant inputs are empty and the Step will truly suspend. Other waits never
+change it.
 
 The browser reads the initial round from Snapshot, waits for a strictly greater
 value, adopts the actual matched value as its next watermark, and requests a
@@ -61,6 +62,7 @@ Inputs already waiting at `AwaitUser` do not create false browser boundaries.
 Queue removal is immediate when the Activity Stream is available, while
 Snapshot remains the only authoritative durable reconciliation model.
 
-Deployments must upgrade Dex Server, Worker, and browser to `v0.7.0` behavior
-together. They must stop or clear Agent Flows created with the removed schema
-before rollout; there is no old-Attribute or Runtime Lease compatibility shim.
+Deployments must use Dex Server `v0.7.0`, Dex Go SDK `v0.7.1`, and the matching
+Worker and browser behavior together. They must stop or clear Agent Flows
+created with the removed schema before rollout; there is no old-Attribute or
+Runtime Lease compatibility shim.

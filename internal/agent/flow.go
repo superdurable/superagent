@@ -1421,8 +1421,6 @@ var (
 		},
 	}
 	awaitUserStepOptions = &dex.StepOptions{
-		WaitForLoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel, steeredUserMessagesChannel},
-		WaitForLoadChannelMaps: []dex.ChannelDef{planExecutionsChannel},
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{
 			currentMessagesAttribute,
 		},
@@ -1497,14 +1495,6 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForMessage); err != nil {
 		return nil, err
 	}
-	steered, err := steeredUserMessagesChannel.PendingMessages(ctx)
-	if err != nil {
-		return nil, err
-	}
-	queued, err := queuedUserMessagesChannel.PendingMessages(ctx)
-	if err != nil {
-		return nil, err
-	}
 	plan, err := step.flow.getPlan(ctx)
 	if err != nil {
 		return nil, err
@@ -1515,11 +1505,9 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	}
 	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
 		planKey := planRevisionKey(plan.Revision)
-		planExecutions, loadErr := planExecutionsChannel.PendingMessages(ctx, planKey)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		if len(steered) == 0 && len(queued) == 0 && len(planExecutions) == 0 {
+		if steeredUserMessagesChannel.Size(ctx) == 0 &&
+			queuedUserMessagesChannel.Size(ctx) == 0 &&
+			planExecutionsChannel.Size(ctx, planKey) == 0 {
 			if err := incrementWaitingInputRound(ctx); err != nil {
 				return nil, err
 			}
@@ -1530,7 +1518,7 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 			planExecutionsChannel.ForOne(planKey),
 		), nil
 	}
-	if len(steered) == 0 && len(queued) == 0 {
+	if steeredUserMessagesChannel.Size(ctx) == 0 && queuedUserMessagesChannel.Size(ctx) == 0 {
 		if err := incrementWaitingInputRound(ctx); err != nil {
 			return nil, err
 		}
