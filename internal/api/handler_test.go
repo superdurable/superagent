@@ -189,6 +189,14 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	}
 }
 
+func TestTransportEventKindMapsAnsweredUserInput(t *testing.T) {
+	t.Parallel()
+	kind, err := transportEventKind(agent.EventKindUserInputAnswered)
+	if err != nil || kind != transportapi.EventKindUserInputAnswered {
+		t.Fatalf("answered user input kind = %q, %v", kind, err)
+	}
+}
+
 func TestReadEventMapsPollTimeoutToTypedResponse(t *testing.T) {
 	t.Parallel()
 	service := &fakeAgentService{eventErr: context.DeadlineExceeded}

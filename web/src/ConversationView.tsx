@@ -909,6 +909,8 @@ function activityIcon(kind: AgentEvent["kind"]): string {
       return "☷";
     case EventKind.INPUT_CONSUMED:
       return "⇥";
+    case EventKind.USER_INPUT_ANSWERED:
+      return "✓";
     case EventKind.SNAPSHOT_REQUIRED:
       return "↻";
     case EventKind.STEERING_APPLIED:

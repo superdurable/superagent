@@ -66,6 +66,8 @@ function compareTimelineEntries(
   explicitSequences: ReadonlyMap<string, Sequence>,
   modelWindows: ReadonlyMap<string, ModelWindow>,
 ): number {
+  const inputOrder = compareConsumedInputToDurableHistory(left, right);
+  if (inputOrder !== null) return inputOrder;
   const leftTimestamp = parseTimestamp(entryCreatedAt(left));
   const rightTimestamp = parseTimestamp(entryCreatedAt(right));
   if (leftTimestamp !== null && rightTimestamp !== null) {
@@ -88,6 +90,22 @@ function compareTimelineEntries(
   return typeDifference !== 0
     ? typeDifference
     : entryIdentity(left).localeCompare(entryIdentity(right));
+}
+
+function compareConsumedInputToDurableHistory(
+  left: ConversationTimelineEntry,
+  right: ConversationTimelineEntry,
+): number | null {
+  if (left.kind === "message" && right.kind === "consumed-user") {
+    return left.value.sequence <= right.value.consumedAfterSequence ? -1 : 1;
+  }
+  if (left.kind === "consumed-user" && right.kind === "message") {
+    return right.value.sequence <= left.value.consumedAfterSequence ? 1 : -1;
+  }
+  if (left.kind === "consumed-user" && right.kind === "consumed-user") {
+    return left.value.consumedAfterSequence - right.value.consumedAfterSequence;
+  }
+  return null;
 }
 
 function compareReasoningToAssistant(

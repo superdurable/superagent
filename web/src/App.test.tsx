@@ -21,6 +21,7 @@ import {
   EventKind,
   EventStream,
   FlowStatus,
+  MessageRole,
   PlanStatus,
   Provider,
   TaskStatus,
@@ -1009,7 +1010,7 @@ describe("App", () => {
   });
 
   it("hides an answered input immediately after server acceptance", async () => {
-    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+    const pendingSnapshot: AgentSnapshot = {
       ...snapshot,
       description: {
         ...activeDescription,
@@ -1029,7 +1030,34 @@ describe("App", () => {
           ],
         },
       },
-    });
+    };
+    const answeredSnapshot: AgentSnapshot = {
+      ...snapshot,
+      history: {
+        messages: [
+          {
+            sequence: 1,
+            message: {
+              role: MessageRole.USER,
+              content: "**Pace**: Relaxed",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-03T00:00:01Z",
+            },
+          },
+        ],
+        nextBeforeSequence: null,
+      },
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        lastSequence: 1,
+      },
+    };
+    vi.mocked(getAgentSnapshot)
+      .mockResolvedValueOnce(pendingSnapshot)
+      .mockResolvedValueOnce(answeredSnapshot);
     window.history.replaceState({}, "", "/?flowId=flow-existing");
     render(<App />);
 
@@ -1056,9 +1084,121 @@ describe("App", () => {
     await waitFor(() => {
       expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
     });
-    const queueToggle = screen.getByRole("button", { name: /Message queue/ });
-    expect(queueToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(/Pace.*Relaxed/)).toBeInTheDocument();
+    const history = screen.getByRole("region", {
+      name: "Conversation history",
+    });
+    expect(within(history).getByText(/Pace.*Relaxed/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Message queue" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an answered input when its Activity arrives before Snapshot", async () => {
+    const pendingSnapshot: AgentSnapshot = {
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        pendingUserInput: {
+          callId: "call-1",
+          questions: [
+            {
+              id: "pace",
+              header: "Pace",
+              question: "Choose a pace",
+              options: [
+                { label: "Relaxed", description: "Take more time." },
+                { label: "Fast", description: "Finish quickly." },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const acceptedSnapshot: AgentSnapshot = {
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.WAITING_FOR_MESSAGE,
+        pendingUserInput: null,
+      },
+    };
+    const durableSnapshot: AgentSnapshot = {
+      ...snapshot,
+      history: {
+        messages: [
+          message(
+            1,
+            MessageRole.USER,
+            "**Pace**: Relaxed",
+            "2026-09-03T00:00:02Z",
+          ),
+        ],
+        nextBeforeSequence: null,
+      },
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        lastSequence: 1,
+      },
+    };
+    const answered = deferred<StreamEvent>();
+    const reconciled = deferred<AgentSnapshot>();
+    let activityReads = 0;
+    vi.mocked(getAgentSnapshot)
+      .mockResolvedValueOnce(pendingSnapshot)
+      .mockResolvedValueOnce(acceptedSnapshot)
+      .mockReturnValueOnce(reconciled.promise);
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY) {
+        activityReads += 1;
+        if (activityReads === 2) return answered.promise;
+      }
+      return pendingStream(signal);
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Relaxed/u }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
+    await waitFor(() => {
+      expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    act(() => {
+      answered.resolve({
+        ...activityEvent(
+          "answered-1",
+          EventKind.USER_INPUT_ANSWERED,
+          "Answered 1 question.",
+          "2026-09-03T00:00:02Z",
+        ),
+        source: "await-user-1",
+        value: {
+          kind: EventKind.USER_INPUT_ANSWERED,
+          message: "Answered 1 question.",
+          callId: "call-1",
+          toolName: null,
+          messageSequence: 1,
+          inputConsumption: null,
+        },
+      });
+    });
+
+    const history = screen.getByRole("region", {
+      name: "Conversation history",
+    });
+    expect(
+      await within(history).findByText(/Pace.*Relaxed/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Answered 1 question.")).toBeInTheDocument();
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(3);
+
+    act(() => {
+      reconciled.resolve(durableSnapshot);
+    });
+    await waitFor(() => {
+      expect(within(history).getAllByText(/Pace.*Relaxed/)).toHaveLength(1);
+    });
   });
 
   it("navigates, revises, and atomically submits three question answers", async () => {

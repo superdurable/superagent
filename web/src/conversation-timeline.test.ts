@@ -83,6 +83,35 @@ describe("buildConversationTimeline", () => {
     ]);
   });
 
+  it("places consumed input after the durable history watermark", () => {
+    const timeline = buildConversationTimeline(
+      [message(1, MessageRole.USER, "2026-09-03T00:02:00Z")],
+      [
+        {
+          messageId: "steered-after-answer",
+          value: { content: "steered after answer", planMode: false },
+          createdAt: "2026-09-03T00:03:00Z",
+          consumedAfterSequence: 1,
+        },
+        {
+          messageId: "queued-after-steering",
+          value: { content: "queued after steering", planMode: false },
+          createdAt: "2026-09-03T00:01:00Z",
+          consumedAfterSequence: 1,
+        },
+      ],
+      [],
+      [],
+      null,
+    );
+
+    expect(timeline.map(timelineIdentity)).toEqual([
+      "message:1",
+      "consumed-user:steered-after-answer",
+      "consumed-user:queued-after-steering",
+    ]);
+  });
+
   it("uses an explicit sequence when invalid timestamps need a tie-break", () => {
     const timeline = buildConversationTimeline(
       [

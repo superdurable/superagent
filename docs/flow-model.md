@@ -28,6 +28,9 @@ separately designed `SandboxLifecycleFlow` will own that lifecycle.
 Init -> AwaitUser
          -> CheckSteered -> CompactContext? -> CallModel
          -> accepted plan execution ------------^
+         -> AnsweredInput -> CompactContext? -> CallModel
+              ^
+AnswerQuestions RPC -> AnsweredUserInputs Channel
 
 CallModel
   -> CheckSteered -> CallModel                 (first active-plan no-progress response)
@@ -71,7 +74,8 @@ history, and makes the model replan.
 | Step                   | `WaitFor`                                                                           | `Execute` and transition                                                                                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Init`                 | none                                                                                | Validate and persist config/state, initialize round zero, then enter `AwaitUser`                                                                           |
-| `AwaitUser`            | steering, one queued message, or current plan execution when no question is pending | Persist waiting status; increment the round only when all relevant Channel sizes are zero; prioritize steering and consume one selected input |
+| `AwaitUser`            | answer only while a question is pending; otherwise steering, one queued message, or current plan execution | Persist waiting status; increment the round only at a real input boundary; consume the selected answer, steering, queued, or Plan input |
+| `AnsweredInput`        | none                                                                                | Route an accepted answer through compaction directly to the model before checking steering                                                                 |
 | `CompactContext`       | none                                                                                | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages                                               |
 | `CallModel`            | none                                                                                | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress      |
 | `CheckSteered`         | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                       |
@@ -87,7 +91,11 @@ Dex Server `v0.7.0` supplies Channel size metadata to the Worker, and Dex Go SDK
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
 `WaitingInputRound` only when the selected Channel set is empty and the Step
-will actually suspend. Approval and timer waits never change the round. The
+will actually suspend. It checks `AnsweredUserInputs` before
+`PendingUserInput`, so an answer published before WaitFor is consumed
+immediately. While a question remains pending, it waits only on that answer
+Channel; other messages remain queued for later turns.
+Approval and timer waits never change the round. The
 next value must remain within JavaScript's safe integer range or the WaitFor
 fails explicitly.
 
@@ -106,6 +114,7 @@ fails explicitly.
 | `PendingApproval`      | Attribute    | Current exact approval boundary                                                              |
 | `PendingTimer`         | Attribute    | Current durable wait presentation                                                            |
 | `PendingUserInput`     | Attribute    | Current structured question batch                                                            |
+| `AnsweredUserInputs`   | Channel      | Validated answers awaiting immediate consumption                                             |
 | `QueuedUserMessages`   | Channel      | FIFO `PendingUserMessage` payloads with stable application IDs                               |
 | `SteeredUserMessages`  | Channel      | Safe-boundary steering payloads preserving the same application IDs                          |
 | `ToolApprovals`        | ChannelMap   | Approval decisions keyed by tool call ID                                                     |
@@ -119,10 +128,10 @@ message enters `CurrentMessages` only when an Execute consumes it.
 
 ## Commands and stable message identity
 
-The Agent Client generates one application `MessageID` before invoking Send or
-Answer. The same ID survives Dex RPC retries and remains in the payload when a
-message moves from the queued Channel to the steered Channel. Dex Channel
-envelope IDs remain private implementation details.
+The Agent Client generates one application `MessageID` before invoking Send.
+The same ID survives Dex RPC retries and remains in the payload when a message
+moves from the queued Channel to the steered Channel. Dex Channel envelope IDs
+remain private implementation details.
 
 Snapshot exposes application message IDs. `DeleteQueuedMessage` and
 `SteerMessage` accept only IDs present in Snapshot, scan loaded pending payloads
@@ -130,12 +139,15 @@ for the match, then delete the corresponding Dex envelope. A stale or repeated
 ID is rejected without changing either Channel.
 
 `AnswerQuestions` validates the exact pending call and complete question set,
-deletes the pending batch, and publishes one answer payload atomically.
+deletes the pending batch, and publishes one typed `AnsweredUserInput`
+atomically. `AwaitUser.Execute` consumes it, appends the answer to
+`CurrentMessages`, emits `user_input_answered`, and enters `AnsweredInput`.
+That Step reaches the model before steering or queued input can continue.
 `ExecutePlan` accepts only the current revision at an executable durable wait.
 
 ## Input-consumption activity
 
-Every Execute that consumes queued or steered messages emits one
+Every Execute that consumes a queued or steered message emits one
 `input_consumed` event in the same Dex commit. `AwaitUser` also emits the event
 for a consumed Plan request, including a request that became stale in a race.
 The payload contains only `queuedMessageIds`, `steeredMessageIds`, and nullable
@@ -150,6 +162,12 @@ replaces the temporary projection on the next current Snapshot. The event also
 closes the transient Plan-action gate until a later Snapshot confirms a real
 waiting boundary. Snapshot remains the only durable current-interaction read
 model and corrects missed Stream events.
+
+Answer consumption emits `user_input_answered` after the answer enters
+`CurrentMessages`. The event carries the answered call ID and durable message
+sequence, but not the answer text. The browser correlates it with the locally
+submitted answer for immediate display and requests Snapshot for authoritative
+reconciliation.
 
 Approval and Timer setup write a `snapshot_required` control event after their
 durable payload is committed. The browser hides this event and requests one

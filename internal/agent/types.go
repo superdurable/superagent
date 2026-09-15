@@ -337,6 +337,7 @@ const (
 	EventKindPlanUpdated        EventKind = "plan_updated"
 	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
 	EventKindInputConsumed      EventKind = "input_consumed"
+	EventKindUserInputAnswered  EventKind = "user_input_answered"
 	EventKindSnapshotRequired   EventKind = "snapshot_required"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
@@ -358,6 +359,7 @@ func (kind EventKind) Validate() error {
 		EventKindPlanUpdated,
 		EventKindPlanTaskUpdated,
 		EventKindInputConsumed,
+		EventKindUserInputAnswered,
 		EventKindSnapshotRequired,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
@@ -825,9 +827,15 @@ type PendingUserInput struct {
 
 // AnswerQuestionsRequest identifies and answers one pending batch.
 type AnswerQuestionsRequest struct {
-	MessageID MessageID         `json:"message_id,omitempty"`
-	CallID    CallID            `json:"call_id"`
-	Answers   []UserInputAnswer `json:"answers"`
+	CallID  CallID            `json:"call_id"`
+	Answers []UserInputAnswer `json:"answers"`
+}
+
+// AnsweredUserInput is one validated answer awaiting Agent consumption.
+type AnsweredUserInput struct {
+	CallID        CallID      `json:"call_id"`
+	Message       UserMessage `json:"message"`
+	QuestionCount int         `json:"question_count"`
 }
 
 // UserInputAnswer answers one question in a pending input batch.

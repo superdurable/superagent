@@ -27,8 +27,11 @@ lifecycle has a different identity and operational lifetime from a conversation.
 JavaScript's safe integer maximum. `AwaitUser.WaitFor` reads Channel size
 metadata for steered messages, queued messages, and the current Plan execution
 instance without loading payloads. It increments the round only when all
-relevant inputs are empty and the Step will truly suspend. Other waits never
-change it.
+relevant inputs are empty and the Step will truly suspend. While a question is
+pending, the Step increments the round only when the answer Channel is empty,
+then waits exclusively for that Channel. An answer already published before
+WaitFor completes immediately. Unrelated queued input does not create a false
+completion. Other waits never change the round.
 
 The browser reads the initial round from Snapshot, waits for a strictly greater
 value, adopts the actual matched value as its next watermark, and requests a
@@ -37,8 +40,8 @@ The Snapshot backend checks indexed Flow lifecycle before invoking its durable
 read RPC so a terminal Flow cannot return the last running projection. The
 visible-page fallback is configurable at runtime and defaults to 60 seconds.
 
-Send and Answer payloads receive one stable application message ID before RPC
-retry. Steering preserves it. Snapshot exposes the application ID while Dex
+Send payloads receive one stable application message ID before RPC retry.
+Steering preserves it. Snapshot exposes the application ID while Dex
 Channel envelope IDs remain private.
 
 An Execute that consumes queued or steered messages, or a Plan execution
@@ -50,6 +53,12 @@ Approval and Timer setup write a hidden `snapshot_required` Activity control
 after their durable payload is committed. The browser uses it for one
 non-blocking Snapshot because those waits intentionally do not advance the
 watermark.
+
+`AnswerQuestions` durably publishes a validated answer to its dedicated
+Channel. `AwaitUser.Execute` appends it to application history and writes a
+`user_input_answered` Activity carrying the call ID and durable message
+sequence. The browser displays its locally known answer immediately and uses
+Snapshot to reconcile authoritative history.
 
 Runtime Lease Attributes, Steps, public options, and tool injection are removed
 from `AIAgentFlow`. Renewable sandbox credentials will belong to a separately

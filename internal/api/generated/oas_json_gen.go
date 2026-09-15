@@ -2390,6 +2390,8 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindPlanTaskUpdated
 	case EventKindInputConsumed:
 		*s = EventKindInputConsumed
+	case EventKindUserInputAnswered:
+		*s = EventKindUserInputAnswered
 	case EventKindSnapshotRequired:
 		*s = EventKindSnapshotRequired
 	case EventKindSteeringApplied:

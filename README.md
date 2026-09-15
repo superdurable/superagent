@@ -61,8 +61,8 @@ maximum attempts, and total duration. A registry performs exactly one call for
 each Dex attempt.
 
 Commands use Dex transactional RPC semantics. The Agent Client creates one
-stable application message ID before each Send or Answer RPC and preserves it
-across transport retries and steering. Snapshot exposes those IDs for exact
+stable application message ID before each Send RPC and preserves it across
+transport retries and steering. Snapshot exposes those IDs for exact
 queued-message edit, delete, and steering. After an ambiguous network result,
 clients read Snapshot to reconcile current durable state instead of consulting
 stored command receipts. `Client.GetArchivedMessages` reads one immutable

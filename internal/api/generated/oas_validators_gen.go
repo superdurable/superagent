@@ -1211,6 +1211,8 @@ func (s EventKind) Validate() error {
 		return nil
 	case "input_consumed":
 		return nil
+	case "user_input_answered":
+		return nil
 	case "snapshot_required":
 		return nil
 	case "steering_applied":

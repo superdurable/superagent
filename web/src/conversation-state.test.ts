@@ -678,7 +678,7 @@ describe("conversationReducer", () => {
     expect(state).toMatchObject({ optimisticSubmissions: [] });
   });
 
-  it("keeps an accepted answer hidden across a stale Snapshot", () => {
+  it("projects an accepted answer when its Activity arrives", () => {
     const pending = snapshot("run-1", "queued-1", "existing");
     if (pending.description === null)
       throw new Error("expected active Snapshot");
@@ -720,9 +720,12 @@ describe("conversationReducer", () => {
     state = conversationReducer(state, { type: "command-succeeded", id: 12 });
     expect(state).toMatchObject({
       pendingCommand: null,
-      answeredUserInputCallID: "input-call-1",
+      pendingAnsweredUserInput: {
+        callID: "input-call-1",
+        value: { content: "Relaxed", planMode: false },
+      },
       snapshot: { description: { pendingUserInput: null } },
-      optimisticSubmissions: [{ phase: "queued" }],
+      optimisticSubmissions: [],
     });
 
     state = conversationReducer(state, {
@@ -730,19 +733,63 @@ describe("conversationReducer", () => {
       snapshot: pending,
     });
     expect(state).toMatchObject({
-      answeredUserInputCallID: "input-call-1",
+      pendingAnsweredUserInput: { callID: "input-call-1" },
       snapshot: { description: { pendingUserInput: null } },
     });
 
-    const closed = structuredClone(pending);
-    if (closed.description === null)
-      throw new Error("expected active Snapshot");
-    closed.description.pendingUserInput = null;
     state = conversationReducer(state, {
-      type: "snapshot-loaded",
-      snapshot: closed,
+      type: "stream-update",
+      update: {
+        kind: "activity",
+        resumeToken: "answered-1",
+        source: "await-user-1",
+        createdAt: "2026-09-03T00:00:02Z",
+        value: {
+          kind: EventKind.USER_INPUT_ANSWERED,
+          message: "Answered 1 question.",
+          callId: "input-call-1",
+          toolName: null,
+          messageSequence: 2,
+          inputConsumption: null,
+        },
+      },
     });
-    expect(state).toMatchObject({ answeredUserInputCallID: null });
+    expect(state).toMatchObject({
+      pendingAnsweredUserInput: null,
+      snapshot: {
+        history: {
+          messages: [
+            {},
+            {
+              sequence: 2,
+              message: { role: MessageRole.USER, content: "Relaxed" },
+            },
+          ],
+        },
+      },
+      activities: [{ value: { kind: EventKind.USER_INPUT_ANSWERED } }],
+    });
+
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "activity",
+        resumeToken: "answered-retry",
+        source: "await-user-retry",
+        createdAt: "2026-09-03T00:00:03Z",
+        value: {
+          kind: EventKind.USER_INPUT_ANSWERED,
+          message: "Answered 1 question.",
+          callId: "input-call-1",
+          toolName: null,
+          messageSequence: 2,
+          inputConsumption: null,
+        },
+      },
+    });
+    if (state.kind !== "ready") throw new Error("expected ready state");
+    expect(state.activities).toHaveLength(1);
+    expect(state.snapshot.history.messages).toHaveLength(2);
   });
 
   it("preserves loaded archive chunks across Snapshot reconciliation", () => {
