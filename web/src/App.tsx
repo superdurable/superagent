@@ -23,6 +23,7 @@ import {
   type ToolName,
 } from "./api/generated";
 import { Conversation } from "./Conversation";
+import { defaultSnapshotRefreshIntervalMilliseconds } from "./runtime-config";
 
 const defaultSystemPrompt =
   "You are a helpful durable AI agent. Use tools when they help and report tool outcomes accurately.";
@@ -116,7 +117,13 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-function App() {
+interface AppProps {
+  snapshotRefreshIntervalMilliseconds?: number;
+}
+
+function App({
+  snapshotRefreshIntervalMilliseconds = defaultSnapshotRefreshIntervalMilliseconds,
+}: AppProps) {
   const resumedFlowId = useMemo<FlowId | null>(() => {
     const value = new URLSearchParams(window.location.search).get("flowId");
     return value === null || value.trim() === "" ? null : value;
@@ -162,6 +169,9 @@ function App() {
         <Conversation
           flowId={state.flowId}
           builtInTools={state.portal.builtInTools}
+          snapshotRefreshIntervalMilliseconds={
+            snapshotRefreshIntervalMilliseconds
+          }
           onStartAnother={() => {
             window.history.replaceState({}, "", window.location.pathname);
             dispatch({

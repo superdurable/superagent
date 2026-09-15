@@ -5,6 +5,8 @@
  */
 
 const runtimeConfigFilename = "config.json";
+export const defaultSnapshotRefreshIntervalMilliseconds = 60_000;
+const maximumSnapshotRefreshIntervalMilliseconds = 2_147_483_647;
 
 export class APIOrigin {
   readonly value: string;
@@ -46,16 +48,43 @@ export class APIOrigin {
 
 export interface RuntimeConfig {
   apiOrigin: APIOrigin;
+  snapshotRefreshIntervalMilliseconds: number;
 }
 
 export function parseRuntimeConfig(value: unknown): RuntimeConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Runtime configuration must be a JSON object.");
   }
-  if (Object.keys(value).length !== 1 || !("apiOrigin" in value)) {
-    throw new Error("Runtime configuration must contain only apiOrigin.");
+  const keys = Object.keys(value);
+  if (
+    !("apiOrigin" in value) ||
+    keys.some(
+      (key) =>
+        key !== "apiOrigin" && key !== "snapshotRefreshIntervalMilliseconds",
+    )
+  ) {
+    throw new Error(
+      "Runtime configuration must contain apiOrigin and may contain snapshotRefreshIntervalMilliseconds.",
+    );
   }
-  return { apiOrigin: APIOrigin.parse(value.apiOrigin) };
+  const interval =
+    "snapshotRefreshIntervalMilliseconds" in value
+      ? value.snapshotRefreshIntervalMilliseconds
+      : defaultSnapshotRefreshIntervalMilliseconds;
+  if (
+    typeof interval !== "number" ||
+    !Number.isSafeInteger(interval) ||
+    interval <= 0 ||
+    interval > maximumSnapshotRefreshIntervalMilliseconds
+  ) {
+    throw new Error(
+      `snapshotRefreshIntervalMilliseconds must be an integer between 1 and ${String(maximumSnapshotRefreshIntervalMilliseconds)}.`,
+    );
+  }
+  return {
+    apiOrigin: APIOrigin.parse(value.apiOrigin),
+    snapshotRefreshIntervalMilliseconds: interval,
+  };
 }
 
 export async function loadRuntimeConfig(

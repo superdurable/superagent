@@ -37,8 +37,10 @@ include content hashes so a deployment cannot reuse stale browser assets.
 
 The build copies `public/config.json` into the artifact. The browser loads it
 before rendering. The file configures the generated Fetch client from
-`apiOrigin`. Deployments can replace that JSON file without rebuilding the
-bundle.
+`apiOrigin`. The optional positive integer
+`snapshotRefreshIntervalMilliseconds` configures the visible-page Snapshot
+fallback and defaults to `60000`. Deployments can replace that JSON file
+without rebuilding the bundle.
 
 For local development, start SuperAgent with the frontend origin allowlisted:
 
@@ -58,9 +60,15 @@ One reducer action atomically replaces application history, Agent description,
 queued messages, steered messages, and Run identity from `/snapshot`. Three
 cancellable `/events/recent` reads recover a bounded Stream tail before
 `/events` polls add assistant text, reasoning summaries, and structured
-activity. Disconnects and command completion reconcile with another Snapshot.
-Every command cancels and joins live polls before issuing its mutation request
-so browser connection limits cannot delay durable acceptance.
+activity. The first Snapshot supplies a waiting-input watermark. The browser
+then waits for a strictly greater round and uses each actual response as the
+next watermark. Disconnects and command completion reconcile with another
+Snapshot. Every command cancels and joins live polls before issuing its
+mutation request so browser connection limits cannot delay durable acceptance.
+`input_consumed` activity removes only exact stable message IDs or the matching
+Plan revision and closes the Plan gate until a later waiting Snapshot. Replayed
+events are idempotent. Hidden `snapshot_required` activity reconciles committed
+approval and Timer payloads without advancing the waiting-input watermark.
 Queue mutations optimistically update by stable message ID and then reconcile.
 The timeline follows the latest content until the user scrolls upward. The
 queue starts expanded as a height-bounded list of truncated one-line messages

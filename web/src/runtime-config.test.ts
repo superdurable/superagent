@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   APIOrigin,
+  defaultSnapshotRefreshIntervalMilliseconds,
   loadRuntimeConfig,
   parseRuntimeConfig,
 } from "./runtime-config";
@@ -45,6 +46,34 @@ describe("runtime configuration", () => {
     ).toThrow();
   });
 
+  it("defaults Snapshot refreshes to one minute", () => {
+    expect(
+      parseRuntimeConfig({ apiOrigin: "https://api.example.com" })
+        .snapshotRefreshIntervalMilliseconds,
+    ).toBe(defaultSnapshotRefreshIntervalMilliseconds);
+  });
+
+  it("accepts a custom positive Snapshot refresh interval", () => {
+    expect(
+      parseRuntimeConfig({
+        apiOrigin: "https://api.example.com",
+        snapshotRefreshIntervalMilliseconds: 15_000,
+      }).snapshotRefreshIntervalMilliseconds,
+    ).toBe(15_000);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, "60000"])(
+    "rejects invalid Snapshot refresh interval %s",
+    (value) => {
+      expect(() =>
+        parseRuntimeConfig({
+          apiOrigin: "https://api.example.com",
+          snapshotRefreshIntervalMilliseconds: value,
+        }),
+      ).toThrow("snapshotRefreshIntervalMilliseconds");
+    },
+  );
+
   it("loads uncached configuration without browser credentials", async () => {
     const response = new Response(
       JSON.stringify({ apiOrigin: "https://api.example.com" }),
@@ -57,6 +86,7 @@ describe("runtime configuration", () => {
     const config = await loadRuntimeConfig(controller.signal);
 
     expect(config.apiOrigin.value).toBe("https://api.example.com");
+    expect(config.snapshotRefreshIntervalMilliseconds).toBe(60_000);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledWith(
       new URL("config.json", document.baseURI),

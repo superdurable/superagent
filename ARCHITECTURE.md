@@ -30,7 +30,7 @@ Agent state. Streams reduce latency but never become recovery state.
 | `internal/app`               | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
 | `internal/config`            | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
 | `internal/model`             | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
-| `internal/mcp`               | Trusted server config, discovery, policy, single-attempt sessions, brokers     | Agent state transitions, retry loops, or exported Dex resources     |
+| `internal/mcp`               | Trusted server config, discovery, policy, single-attempt sessions, brokers     | Agent state transitions, retry loops, or exported Dex resources    |
 | `web`                        | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
 | `web/packages/superagent-ui` | Transport-free React conversation components and local interaction behavior    | Dex/API clients, routing, durable state, or product workflows      |
 
@@ -63,20 +63,9 @@ immutable `AgentConfig` and optional `RuntimeMetadata`, then starts Dex with
 tool implementations receive it with the Flow and call IDs. Models, browser
 Snapshots, Streams, and logs do not receive it. It must not contain secrets.
 
-An embedding application may configure one generic Runtime Lease extension.
-`Client.Start` then requires an immediately usable `InitialLease` containing
-opaque JSON state and the first `RefreshAt`. Both `AgentLeaseState` and its
-typed generation schedule are initial Dex Attributes, so the first tool call
-never waits for an initialization refresh. The state may retain private
-provider configuration needed by later refreshes and is capped at 16 KiB.
-
-The `Init` Step starts the conversation branch beside a maintenance branch.
-The maintenance branch waits on a durable Timer, calls the injected
-`LeaseRefresher`, then atomically replaces the state and schedule. A refresh ID
-derived from Flow ID and target generation makes the external refresh
-idempotent. The refresher chooses a time well before expiration; a one-hour
-credential should normally refresh about every 15 minutes. Lease state never
-enters model input, Snapshot, history, Streams, activity, logs, or HTTP models.
+Renewable sandbox credentials are outside `AIAgentFlow`. A separately designed
+`SandboxLifecycleFlow` will own that lifecycle. This repository currently
+defines no placeholder API or compatibility path for it.
 
 `CurrentMessages` and `ArchivedMessages` are the typed application history;
 they are not Dex execution history. `AgentState` owns the retained sequence
@@ -95,25 +84,27 @@ historical acceptance ledger. A response reports only whether current durable
 state accepted the command. After an ambiguous transport result, the caller
 reads Snapshot and reconciles current state.
 
-`SendMessage` publishes a validated message directly to
-`QueuedUserMessages`. Dex assigns the Channel message ID. Snapshot returns that
-ID so edit, delete, and steer target the exact pending entry. `SteerMessage`
-loads the queued Channel and atomically deletes that ID before publishing its
-value to `SteeredUserMessages`; a repeated or stale ID is not accepted.
+`SendMessage` publishes a validated `PendingUserMessage` directly to
+`QueuedUserMessages`. The Agent Client creates its stable application message
+ID once before the RPC retry loop. Snapshot returns that ID so edit, delete,
+and steer target the exact payload while the Flow resolves the private Dex
+Channel envelope. `SteerMessage` preserves the application ID when moving the
+payload to `SteeredUserMessages`; a repeated or stale ID is not accepted.
 
 Queued messages and validated question answers use `QueuedUserMessages`.
 Steering is consumed only at explicit safe Step boundaries, so it cannot claim
 to cancel an in-flight model or MCP side effect. `AnswerQuestions` verifies the
 exact pending call ID and every question ID. One RPC commit deletes
-`PendingUserInput`, publishes the ordered answer message, and writes
-`submitted`. `ApproveTool` accepts only the current
+`PendingUserInput` and publishes the ordered answer message with one stable
+application ID. `ApproveTool` accepts only the current
 `PendingApproval.CallID`; it deletes the pending value and publishes the
 decision in the same commit. Repeated and stale commands are rejected.
 
 Plan execution is available only at a durable `waiting_for_message` boundary
 for the latest revision with no pending input, approval, timer, queued message,
-or steering. The browser derives the button state from Snapshot plus the
-interaction-status long poll, so `submitted` closes the boundary immediately.
+or steering. The browser derives the button state from Snapshot and transient
+input-consumption events. Consumption closes the boundary immediately; only a
+later Snapshot taken at a new waiting-input round can reopen it.
 An executing active Plan that produces no tool call receives one automatic
 corrective model turn. A second consecutive no-progress response returns to the
 durable wait and exposes `Continue plan`.
@@ -127,8 +118,7 @@ History-reading Steps declare bounded AttributeMap loads explicitly. Integration
 tests use verb-first `ForTestOnly` RPCs rather than generic Dex Client resource
 operations. Tool invocations receive the stable Flow ID, model call ID, and
 runtime metadata as one durable routing identity, including after Worker
-replacement. They also receive Dex attempt metadata and, when enabled, the
-Runtime Lease snapshot loaded for that logical Step execution.
+replacement. They also receive Dex attempt metadata.
 
 ## Durable and live reconciliation
 
@@ -143,9 +133,11 @@ Runtime Lease snapshot loaded for that logical Step execution.
 
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
-and Run identity through one reducer action. It then lists the configured recent
-tail of each Stream, applies those events chronologically, and long-polls from
-the newest returned resume token. The browser orders every
+and Run identity through one reducer action. Before invoking the Snapshot RPC,
+the backend checks the indexed Flow lifecycle so a terminated Flow cannot return
+its last running projection. It then lists the configured recent tail of each
+Stream, applies those events chronologically, and long-polls from the newest
+returned resume token. The browser orders every
 observed activity event, reasoning summary, live assistant response, and durable
 message in one timeline by creation time. Reasoning entries are keyed by the
 producing model invocation source. Completion activity marks later text from
@@ -153,15 +145,38 @@ the same source as finalizing instead of starting a second live response. Model
 activity carries the target durable message sequence. The browser places each
 reasoning summary before that assistant message when timestamps tie or are
 unavailable. Unanchored reasoning retains its own chronological position.
-`AgentInteractionStatus` alternates between `submitted` and `waiting`. The
-browser long-polls those durable values and reads Snapshot after a real durable
-wait. Every mutation result immediately requests another Snapshot. Mutation
-controls remain disabled from a waiting boundary or mutation result until that
-Snapshot succeeds. Server errors and explicit reconcile also close this gate.
-Ordinary Stream events do not request Snapshot. A visible-page ten-second
-single-shot freshness timer starts only after the prior Snapshot finishes, so
-an intervening read resets the complete delay. Terminal reconciliation stops
-Streams, Attribute waits, Snapshot work, and the timer.
+`WaitingInputRound` is a monotonic `int64` Attribute bounded by JavaScript's
+safe integer maximum. `AwaitUser.WaitFor` increments it only when steered,
+queued, and current-Plan execution Channels are empty and the Flow will truly
+wait. The browser takes the first Snapshot round as a watermark, then long-polls
+for `round > watermark`. Each response returns the actual matched round, which
+becomes the next watermark before requesting Snapshot. The ongoing round wait
+also discovers Flow closure; Snapshot's lifecycle guard remains the terminal
+recovery path.
+
+Every consumed queued message, steered message, or Plan execution request emits
+one `input_consumed` Activity event with exact application IDs or revision and
+no user content. The reducer removes only matching visible inputs and closes
+the transient `isWaitingForInput` gate. It projects payloads already known from
+Snapshot into temporary user bubbles without adding content to the Stream.
+Consumed IDs suppress stale queue data until durable history replaces those
+bubbles. Replays are idempotent and cannot remove messages that arrived later.
+A later authoritative Snapshot at a real waiting boundary reopens the gate.
+Stream loss is corrected by Snapshot.
+
+Approval and Timer setup emit a hidden `snapshot_required` Activity control
+event after their durable payload is committed. It requests one non-blocking
+Snapshot so waits that intentionally do not advance `WaitingInputRound` remain
+visible without polling.
+
+Every mutation result immediately requests another Snapshot. Mutation controls
+remain disabled until that Snapshot succeeds. Server errors and explicit
+reconcile also close this gate. Ordinary Stream events other than explicit
+Snapshot controls do not request Snapshot. A visible-page configurable
+single-shot freshness timer defaults to 60 seconds and starts only after the
+prior Snapshot finishes, so an intervening read resets the complete delay.
+Terminal reconciliation stops Streams, Attribute waits, Snapshot work, and the
+timer.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Activity events are independent timeline rows keyed by resume token. A page
@@ -188,8 +203,8 @@ cancels its Stream and Attribute waits before sending a mutation, so durable
 commands are not queued behind browser HTTP connection limits. Mutation
 dispatch waits until those canceled requests have settled in the browser.
 Message send displays one local, non-actionable `Submitting` item. Snapshot
-reconciliation replaces it with the queued entry and its Dex-generated message
-ID. Failure restores its composer text and plan mode. The composer retains
+reconciliation replaces it with the queued entry and its stable application
+message ID. Failure restores its composer text and plan mode. The composer retains
 focus and remains editable while submission and Snapshot reconciliation gate
 later mutations. Pending input uses the dedicated
 `answerQuestions` operation. The browser
@@ -211,7 +226,7 @@ models, and enums. Explicit mappers keep generated transport types out of the
 domain package.
 
 The API serves portal metadata, Flow start, command RPCs, one Snapshot read,
-one exact archive-chunk read, one bounded recent-event read, interaction-status
+one exact archive-chunk read, one bounded recent-event read, waiting-input-round
 long polling, queue deletion and steering, typed event polling, health, and readiness. Mutation responses
 report acceptance without durable command receipts. The API process does not
 serve React files. Long-poll expiry has a generated typed body,
@@ -222,8 +237,10 @@ contain typed Flow status and optional failure metadata with a null description.
 
 The frontend build produces an independent `web/dist` artifact. It reads a
 strict `config.json` at page load. The file configures the generated Fetch
-client with one API origin. Changing that file does not rebuild the bundle. The
-static host owns browser caching and Content Security Policy headers.
+client with one API origin and an optional positive
+`snapshotRefreshIntervalMilliseconds`, which defaults to `60000`. Changing that
+file does not rebuild the bundle. The static host owns browser caching and
+Content Security Policy headers.
 
 Continuous integration uploads the Go binary and `web/dist` as separate release
 artifacts. Backend rollout never replaces frontend files, and frontend rollout
@@ -265,10 +282,8 @@ routes to `RecoverToolExecution`, which records one unknown outcome and lets the
 Agent continue. Every session is closed, stdio subprocesses are reaped, and
 idle HTTP connections are closed by the registry owner.
 
-Every retry of one logical tool Step reuses its first Attribute snapshot. A
-background Lease refresh therefore cannot change an in-flight tool call. A
-Lease-expired tool result is a known failure; the Lease-enabled system prompt
-permits one new tool call, whose new Step execution reads the latest state.
+Every retry of one logical tool Step reuses its first Attribute snapshot.
+Runtime metadata therefore remains stable for the logical call.
 
 ## Process lifecycle
 

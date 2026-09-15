@@ -38,7 +38,7 @@ type AgentService interface {
 	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
 	GetSnapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
 	GetArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
-	WaitForInteractionStatus(context.Context, agent.FlowID, agent.AgentInteractionStatus) error
+	WaitForWaitingInputRound(context.Context, agent.FlowID, agent.WaitingInputRound) (agent.WaitingInputRound, error)
 	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
 	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
 	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error
@@ -267,21 +267,21 @@ func (handler *Handler) GetArchivedMessages(
 	}, nil
 }
 
-// WaitForAgentInteractionStatus waits for one exact durable status value.
-func (handler *Handler) WaitForAgentInteractionStatus(
+// WaitForWaitingInputRound waits for the durable input watermark to advance.
+func (handler *Handler) WaitForWaitingInputRound(
 	ctx context.Context,
-	params transportapi.WaitForAgentInteractionStatusParams,
-) (transportapi.WaitForAgentInteractionStatusRes, error) {
-	expected, err := domainAgentInteractionStatus(params.ExpectedStatus)
-	if err != nil {
-		problem := problemBadRequest(err)
-		return (*transportapi.WaitForAgentInteractionStatusBadRequest)(&problem), nil
-	}
+	params transportapi.WaitForWaitingInputRoundParams,
+) (transportapi.WaitForWaitingInputRoundRes, error) {
 	flowID := agent.FlowID(params.FlowId)
-	if err := handler.agent.WaitForInteractionStatus(ctx, flowID, expected); err != nil {
-		return handler.waitForInteractionStatusError(ctx, flowID, err)
+	round, err := handler.agent.WaitForWaitingInputRound(
+		ctx,
+		flowID,
+		agent.WaitingInputRound(params.AfterWaitingInputRound),
+	)
+	if err != nil {
+		return handler.waitForWaitingInputRoundError(ctx, flowID, err)
 	}
-	return &transportapi.AgentInteractionState{Status: params.ExpectedStatus}, nil
+	return &transportapi.WaitingInputRoundState{WaitingInputRound: transportapi.WaitingInputRound(round)}, nil
 }
 
 // DeleteQueuedMessage removes one exact pending queued user message.
@@ -452,17 +452,6 @@ func domainEventStream(stream transportapi.EventStream) (agent.EventStream, erro
 		return agent.EventStreamActivity, nil
 	default:
 		return "", &agent.EnumValidationError{Type: "EventStream", Value: string(stream)}
-	}
-}
-
-func domainAgentInteractionStatus(status transportapi.AgentInteractionStatus) (agent.AgentInteractionStatus, error) {
-	switch status {
-	case transportapi.AgentInteractionStatusSubmitted:
-		return agent.AgentInteractionStatusSubmitted, nil
-	case transportapi.AgentInteractionStatusWaiting:
-		return agent.AgentInteractionStatusWaiting, nil
-	default:
-		return "", &agent.EnumValidationError{Type: "AgentInteractionStatus", Value: string(status)}
 	}
 }
 
@@ -640,10 +629,6 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 	if err != nil {
 		return transportapi.AgentDescription{}, err
 	}
-	interactionStatus, err := transportAgentInteractionStatus(description.InteractionStatus)
-	if err != nil {
-		return transportapi.AgentDescription{}, err
-	}
 	plan, err := transportOptionalAgentPlan(description.Plan)
 	if err != nil {
 		return transportapi.AgentDescription{}, err
@@ -656,7 +641,7 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 	copy(availableMCPServers, description.AvailableMCPServers)
 	return transportapi.AgentDescription{
 		Status:                     status,
-		InteractionStatus:          interactionStatus,
+		WaitingInputRound:          transportapi.WaitingInputRound(description.WaitingInputRound),
 		Model:                      string(description.Model),
 		SystemPrompt:               description.SystemPrompt,
 		FirstRetainedSequence:      int64(description.FirstRetainedSequence),
@@ -672,17 +657,6 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 		AvailableMcpServers:        availableMCPServers,
 		AvailableTools:             availableTools,
 	}, nil
-}
-
-func transportAgentInteractionStatus(status agent.AgentInteractionStatus) (transportapi.AgentInteractionStatus, error) {
-	switch status {
-	case agent.AgentInteractionStatusSubmitted:
-		return transportapi.AgentInteractionStatusSubmitted, nil
-	case agent.AgentInteractionStatusWaiting:
-		return transportapi.AgentInteractionStatusWaiting, nil
-	default:
-		return "", &agent.EnumValidationError{Type: "AgentInteractionStatus", Value: string(status)}
-	}
 }
 
 func transportPendingUserMessages(messages []agent.PendingUserMessage) []transportapi.PendingUserMessage {
@@ -956,6 +930,30 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 		}
 		planTaskStatus.SetTo(status)
 	}
+	inputConsumption := transportapi.NilInputConsumption{}
+	if event.InputConsumption == nil {
+		inputConsumption.SetToNull()
+	} else {
+		queuedMessageIDs := make([]transportapi.MessageID, len(event.InputConsumption.QueuedMessageIDs))
+		for index, messageID := range event.InputConsumption.QueuedMessageIDs {
+			queuedMessageIDs[index] = transportapi.MessageID(messageID)
+		}
+		steeredMessageIDs := make([]transportapi.MessageID, len(event.InputConsumption.SteeredMessageIDs))
+		for index, messageID := range event.InputConsumption.SteeredMessageIDs {
+			steeredMessageIDs[index] = transportapi.MessageID(messageID)
+		}
+		planExecutionRevision := transportapi.NilInt64{}
+		if event.InputConsumption.PlanExecutionRevision == nil {
+			planExecutionRevision.SetToNull()
+		} else {
+			planExecutionRevision.SetTo(int64(*event.InputConsumption.PlanExecutionRevision))
+		}
+		inputConsumption.SetTo(transportapi.InputConsumption{
+			QueuedMessageIds:      queuedMessageIDs,
+			SteeredMessageIds:     steeredMessageIDs,
+			PlanExecutionRevision: planExecutionRevision,
+		})
+	}
 	return transportapi.AgentEvent{
 		Kind:             kind,
 		Message:          event.Message,
@@ -966,6 +964,7 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 		PlanRevision:     planRevision,
 		PlanTaskIndex:    planTaskIndex,
 		PlanTaskStatus:   planTaskStatus,
+		InputConsumption: inputConsumption,
 	}, nil
 }
 
@@ -977,6 +976,10 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindPlanUpdated, nil
 	case agent.EventKindPlanTaskUpdated:
 		return transportapi.EventKindPlanTaskUpdated, nil
+	case agent.EventKindInputConsumed:
+		return transportapi.EventKindInputConsumed, nil
+	case agent.EventKindSnapshotRequired:
+		return transportapi.EventKindSnapshotRequired, nil
 	case agent.EventKindSteeringApplied:
 		return transportapi.EventKindSteeringApplied, nil
 	case agent.EventKindCompactionFailed:
@@ -1215,7 +1218,7 @@ func commandProblem(err error) (transportapi.Problem, failureKind) {
 }
 
 func (handler *Handler) readEventError(ctx context.Context, flowID agent.FlowID, err error) (transportapi.ReadEventRes, error) {
-	if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 		return nil, ctx.Err()
 	}
 	var pollTimeout *dex.LongPollTimeoutError
@@ -1255,29 +1258,25 @@ func (handler *Handler) listRecentEventsError(
 	}
 }
 
-func (handler *Handler) waitForInteractionStatusError(
+func (handler *Handler) waitForWaitingInputRoundError(
 	ctx context.Context,
 	flowID agent.FlowID,
 	err error,
-) (transportapi.WaitForAgentInteractionStatusRes, error) {
-	if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+) (transportapi.WaitForWaitingInputRoundRes, error) {
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 		return nil, ctx.Err()
-	}
-	var pollTimeout *dex.LongPollTimeoutError
-	if errors.As(err, &pollTimeout) || errors.Is(err, context.DeadlineExceeded) {
-		return &transportapi.PollTimeout{Reason: transportapi.PollTimeoutReasonTimeout}, nil
 	}
 	handler.logFailure(ctx, flowID, err)
 	switch classifyFailure(err) {
 	case failureNotFound:
 		problem := newProblem(404, "Not Found", "the Agent Flow does not exist")
-		return (*transportapi.WaitForAgentInteractionStatusNotFound)(&problem), nil
+		return (*transportapi.WaitForWaitingInputRoundNotFound)(&problem), nil
 	case failureConflict:
 		problem := newProblem(409, "Conflict", "the Agent Flow is no longer active")
-		return (*transportapi.WaitForAgentInteractionStatusConflict)(&problem), nil
+		return (*transportapi.WaitForWaitingInputRoundConflict)(&problem), nil
 	default:
-		problem := newProblem(503, "Service Unavailable", "the interaction status is unavailable")
-		return (*transportapi.WaitForAgentInteractionStatusServiceUnavailable)(&problem), nil
+		problem := newProblem(503, "Service Unavailable", "the waiting input round is unavailable")
+		return (*transportapi.WaitForWaitingInputRoundServiceUnavailable)(&problem), nil
 	}
 }
 

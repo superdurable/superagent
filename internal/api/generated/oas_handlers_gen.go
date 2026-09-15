@@ -1168,12 +1168,14 @@ func (s *Server) handleSteerQueuedMessageRequest(args [0]string, argsEscaped boo
 	}
 }
 
-// handleWaitForAgentInteractionStatusRequest handles waitForAgentInteractionStatus operation.
+// handleWaitForWaitingInputRoundRequest handles waitForWaitingInputRound operation.
 //
-// Wait for one durable Agent interaction status.
+// Waits until WaitingInputRound is greater than the supplied watermark, the caller cancels, the Flow
+// closes, or an error occurs. The response contains the actual matched round. This operation does not
+// use the bounded Stream poll timeout response.
 //
-// GET /products/ai-agent/interaction-status
-func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+// GET /products/ai-agent/waiting-input-round
+func (s *Server) handleWaitForWaitingInputRoundRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
 	statusWriter := &codeRecorder{ResponseWriter: w}
 	w = statusWriter
 	ctx := r.Context()
@@ -1181,11 +1183,11 @@ func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, args
 	var (
 		err          error
 		opErrContext = ogenerrors.OperationContext{
-			Name: WaitForAgentInteractionStatusOperation,
-			ID:   "waitForAgentInteractionStatus",
+			Name: WaitForWaitingInputRoundOperation,
+			ID:   "waitForWaitingInputRound",
 		}
 	)
-	params, err := decodeWaitForAgentInteractionStatusParams(args, argsEscaped, r)
+	params, err := decodeWaitForWaitingInputRoundParams(args, argsEscaped, r)
 	if err != nil {
 		err = &ogenerrors.DecodeParamsError{
 			OperationContext: opErrContext,
@@ -1198,13 +1200,13 @@ func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, args
 
 	var rawBody []byte
 
-	var response WaitForAgentInteractionStatusRes
+	var response WaitForWaitingInputRoundRes
 	if m := s.cfg.Middleware; m != nil {
 		mreq := middleware.Request{
 			Context:          ctx,
-			OperationName:    WaitForAgentInteractionStatusOperation,
-			OperationSummary: "Wait for one durable Agent interaction status",
-			OperationID:      "waitForAgentInteractionStatus",
+			OperationName:    WaitForWaitingInputRoundOperation,
+			OperationSummary: "Wait for the durable Agent input watermark to advance",
+			OperationID:      "waitForWaitingInputRound",
 			Body:             nil,
 			RawBody:          rawBody,
 			Params: middleware.Parameters{
@@ -1213,17 +1215,17 @@ func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, args
 					In:   "query",
 				}: params.FlowId,
 				{
-					Name: "expectedStatus",
+					Name: "afterWaitingInputRound",
 					In:   "query",
-				}: params.ExpectedStatus,
+				}: params.AfterWaitingInputRound,
 			},
 			Raw: r,
 		}
 
 		type (
 			Request  = struct{}
-			Params   = WaitForAgentInteractionStatusParams
-			Response = WaitForAgentInteractionStatusRes
+			Params   = WaitForWaitingInputRoundParams
+			Response = WaitForWaitingInputRoundRes
 		)
 		response, err = middleware.HookMiddleware[
 			Request,
@@ -1232,14 +1234,14 @@ func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, args
 		](
 			m,
 			mreq,
-			unpackWaitForAgentInteractionStatusParams,
+			unpackWaitForWaitingInputRoundParams,
 			func(ctx context.Context, request Request, params Params) (response Response, err error) {
-				response, err = s.h.WaitForAgentInteractionStatus(ctx, params)
+				response, err = s.h.WaitForWaitingInputRound(ctx, params)
 				return response, err
 			},
 		)
 	} else {
-		response, err = s.h.WaitForAgentInteractionStatus(ctx, params)
+		response, err = s.h.WaitForWaitingInputRound(ctx, params)
 	}
 	if err != nil {
 		defer recordError("Internal", err)
@@ -1247,7 +1249,7 @@ func (s *Server) handleWaitForAgentInteractionStatusRequest(args [0]string, args
 		return
 	}
 
-	if err := encodeWaitForAgentInteractionStatusResponse(response, w); err != nil {
+	if err := encodeWaitForWaitingInputRoundResponse(response, w); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted on 2026-09-10.
+Accepted on 2026-09-10. Its browser synchronization policy was superseded by
+ADR 0012 on 2026-09-14.
 
 ## Context
 
@@ -19,12 +20,12 @@ is at `waiting_for_message`. Pending input, approval, timer, queued messages,
 steering, or a prior execution request closes this boundary. A rejection commits
 neither state nor a `PlanExecutions` message.
 
-The browser combines the latest Snapshot with `AgentInteractionStatus`.
-`submitted` immediately disables the Plan action without requesting Snapshot.
-The next durable `waiting` boundary triggers blocking Snapshot reconciliation;
-only that result may expose Execute or Continue. The UI identifies preparation,
-running, request, and blocker states instead of presenting a clickable stale
-revision.
+The browser combines the latest Snapshot with its transient input-wait gate.
+An exact `input_consumed` event immediately disables the Plan action without
+requesting Snapshot. The next greater waiting-input round triggers blocking
+Snapshot reconciliation; only that result may expose Execute or Continue. The
+UI identifies preparation, running, request, and blocker states instead of
+presenting a clickable stale revision.
 
 `AgentState` counts consecutive no-progress responses while an active Plan is
 executing. The first response with no tool call and unfinished tasks is

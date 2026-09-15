@@ -348,8 +348,8 @@ func (s *AgentDescription) encodeFields(e *jx.Encoder) {
 		s.Status.Encode(e)
 	}
 	{
-		e.FieldStart("interactionStatus")
-		s.InteractionStatus.Encode(e)
+		e.FieldStart("waitingInputRound")
+		s.WaitingInputRound.Encode(e)
 	}
 	{
 		e.FieldStart("model")
@@ -419,7 +419,7 @@ func (s *AgentDescription) encodeFields(e *jx.Encoder) {
 
 var jsonFieldsNameOfAgentDescription = [16]string{
 	0:  "status",
-	1:  "interactionStatus",
+	1:  "waitingInputRound",
 	2:  "model",
 	3:  "systemPrompt",
 	4:  "firstRetainedSequence",
@@ -455,15 +455,15 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"status\"")
 			}
-		case "interactionStatus":
+		case "waitingInputRound":
 			requiredBitSet[0] |= 1 << 1
 			if err := func() error {
-				if err := s.InteractionStatus.Decode(d); err != nil {
+				if err := s.WaitingInputRound.Decode(d); err != nil {
 					return err
 				}
 				return nil
 			}(); err != nil {
-				return errors.Wrap(err, "decode field \"interactionStatus\"")
+				return errors.Wrap(err, "decode field \"waitingInputRound\"")
 			}
 		case "model":
 			requiredBitSet[0] |= 1 << 2
@@ -749,9 +749,13 @@ func (s *AgentEvent) encodeFields(e *jx.Encoder) {
 			s.PlanTaskStatus.Encode(e)
 		}
 	}
+	{
+		e.FieldStart("inputConsumption")
+		s.InputConsumption.Encode(e)
+	}
 }
 
-var jsonFieldsNameOfAgentEvent = [9]string{
+var jsonFieldsNameOfAgentEvent = [10]string{
 	0: "kind",
 	1: "message",
 	2: "callId",
@@ -761,6 +765,7 @@ var jsonFieldsNameOfAgentEvent = [9]string{
 	6: "planRevision",
 	7: "planTaskIndex",
 	8: "planTaskStatus",
+	9: "inputConsumption",
 }
 
 // Decode decodes AgentEvent from json.
@@ -864,6 +869,16 @@ func (s *AgentEvent) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"planTaskStatus\"")
 			}
+		case "inputConsumption":
+			requiredBitSet[1] |= 1 << 1
+			if err := func() error {
+				if err := s.InputConsumption.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"inputConsumption\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -875,7 +890,7 @@ func (s *AgentEvent) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b00011111,
-		0b00000000,
+		0b00000010,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -917,140 +932,6 @@ func (s *AgentEvent) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *AgentEvent) UnmarshalJSON(data []byte) error {
-	d := jx.DecodeBytes(data)
-	return s.Decode(d)
-}
-
-// Encode implements json.Marshaler.
-func (s *AgentInteractionState) Encode(e *jx.Encoder) {
-	e.ObjStart()
-	s.encodeFields(e)
-	e.ObjEnd()
-}
-
-// encodeFields encodes fields.
-func (s *AgentInteractionState) encodeFields(e *jx.Encoder) {
-	{
-		e.FieldStart("status")
-		s.Status.Encode(e)
-	}
-}
-
-var jsonFieldsNameOfAgentInteractionState = [1]string{
-	0: "status",
-}
-
-// Decode decodes AgentInteractionState from json.
-func (s *AgentInteractionState) Decode(d *jx.Decoder) error {
-	if s == nil {
-		return errors.New("invalid: unable to decode AgentInteractionState to nil")
-	}
-	var requiredBitSet [1]uint8
-
-	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
-		switch string(k) {
-		case "status":
-			requiredBitSet[0] |= 1 << 0
-			if err := func() error {
-				if err := s.Status.Decode(d); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return errors.Wrap(err, "decode field \"status\"")
-			}
-		default:
-			return errors.Errorf("unexpected field %q", k)
-		}
-		return nil
-	}); err != nil {
-		return errors.Wrap(err, "decode AgentInteractionState")
-	}
-	// Validate required fields.
-	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
-		0b00000001,
-	} {
-		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
-			// Mask only required fields and check equality to mask using XOR.
-			//
-			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
-			// Bits of fields which would be set are actually bits of missed fields.
-			missed := bits.OnesCount8(result)
-			for bitN := 0; bitN < missed; bitN++ {
-				bitIdx := bits.TrailingZeros8(result)
-				fieldIdx := i*8 + bitIdx
-				var name string
-				if fieldIdx < len(jsonFieldsNameOfAgentInteractionState) {
-					name = jsonFieldsNameOfAgentInteractionState[fieldIdx]
-				} else {
-					name = strconv.Itoa(fieldIdx)
-				}
-				failures = append(failures, validate.FieldError{
-					Name:  name,
-					Error: validate.ErrFieldRequired,
-				})
-				// Reset bit.
-				result &^= 1 << bitIdx
-			}
-		}
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-
-	return nil
-}
-
-// MarshalJSON implements stdjson.Marshaler.
-func (s *AgentInteractionState) MarshalJSON() ([]byte, error) {
-	e := jx.Encoder{}
-	s.Encode(&e)
-	return e.Bytes(), nil
-}
-
-// UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *AgentInteractionState) UnmarshalJSON(data []byte) error {
-	d := jx.DecodeBytes(data)
-	return s.Decode(d)
-}
-
-// Encode encodes AgentInteractionStatus as json.
-func (s AgentInteractionStatus) Encode(e *jx.Encoder) {
-	e.Str(string(s))
-}
-
-// Decode decodes AgentInteractionStatus from json.
-func (s *AgentInteractionStatus) Decode(d *jx.Decoder) error {
-	if s == nil {
-		return errors.New("invalid: unable to decode AgentInteractionStatus to nil")
-	}
-	v, err := d.StrBytes()
-	if err != nil {
-		return err
-	}
-	// Try to use constant string.
-	switch AgentInteractionStatus(v) {
-	case AgentInteractionStatusSubmitted:
-		*s = AgentInteractionStatusSubmitted
-	case AgentInteractionStatusWaiting:
-		*s = AgentInteractionStatusWaiting
-	default:
-		*s = AgentInteractionStatus(v)
-	}
-
-	return nil
-}
-
-// MarshalJSON implements stdjson.Marshaler.
-func (s AgentInteractionStatus) MarshalJSON() ([]byte, error) {
-	e := jx.Encoder{}
-	s.Encode(&e)
-	return e.Bytes(), nil
-}
-
-// UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *AgentInteractionStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -2507,6 +2388,10 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindPlanUpdated
 	case EventKindPlanTaskUpdated:
 		*s = EventKindPlanTaskUpdated
+	case EventKindInputConsumed:
+		*s = EventKindInputConsumed
+	case EventKindSnapshotRequired:
+		*s = EventKindSnapshotRequired
 	case EventKindSteeringApplied:
 		*s = EventKindSteeringApplied
 	case EventKindCompactionFailed:
@@ -3429,6 +3314,154 @@ func (s *HistoryPage) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode implements json.Marshaler.
+func (s *InputConsumption) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *InputConsumption) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("queuedMessageIds")
+		e.ArrStart()
+		for _, elem := range s.QueuedMessageIds {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("steeredMessageIds")
+		e.ArrStart()
+		for _, elem := range s.SteeredMessageIds {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("planExecutionRevision")
+		s.PlanExecutionRevision.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfInputConsumption = [3]string{
+	0: "queuedMessageIds",
+	1: "steeredMessageIds",
+	2: "planExecutionRevision",
+}
+
+// Decode decodes InputConsumption from json.
+func (s *InputConsumption) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode InputConsumption to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "queuedMessageIds":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				s.QueuedMessageIds = make([]MessageID, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MessageID
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.QueuedMessageIds = append(s.QueuedMessageIds, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"queuedMessageIds\"")
+			}
+		case "steeredMessageIds":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.SteeredMessageIds = make([]MessageID, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MessageID
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.SteeredMessageIds = append(s.SteeredMessageIds, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"steeredMessageIds\"")
+			}
+		case "planExecutionRevision":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.PlanExecutionRevision.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"planExecutionRevision\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode InputConsumption")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfInputConsumption) {
+					name = jsonFieldsNameOfInputConsumption[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *InputConsumption) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *InputConsumption) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ListRecentEventsBadRequest as json.
 func (s *ListRecentEventsBadRequest) Encode(e *jx.Encoder) {
 	unwrapped := (*Problem)(s)
@@ -3799,6 +3832,96 @@ func (s NilFlowErrorType) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *NilFlowErrorType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes InputConsumption as json.
+func (o NilInputConsumption) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes InputConsumption from json.
+func (o *NilInputConsumption) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilInputConsumption to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v InputConsumption
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilInputConsumption) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilInputConsumption) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int64 as json.
+func (o NilInt64) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Int64(int64(o.Value))
+}
+
+// Decode decodes int64 from json.
+func (o *NilInt64) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilInt64 to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v int64
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	v, err := d.Int64()
+	if err != nil {
+		return err
+	}
+	o.Value = int64(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilInt64) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilInt64) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -8700,17 +8823,17 @@ func (s *UserMessage) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-// Encode encodes WaitForAgentInteractionStatusBadRequest as json.
-func (s *WaitForAgentInteractionStatusBadRequest) Encode(e *jx.Encoder) {
+// Encode encodes WaitForWaitingInputRoundBadRequest as json.
+func (s *WaitForWaitingInputRoundBadRequest) Encode(e *jx.Encoder) {
 	unwrapped := (*Problem)(s)
 
 	unwrapped.Encode(e)
 }
 
-// Decode decodes WaitForAgentInteractionStatusBadRequest from json.
-func (s *WaitForAgentInteractionStatusBadRequest) Decode(d *jx.Decoder) error {
+// Decode decodes WaitForWaitingInputRoundBadRequest from json.
+func (s *WaitForWaitingInputRoundBadRequest) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode WaitForAgentInteractionStatusBadRequest to nil")
+		return errors.New("invalid: unable to decode WaitForWaitingInputRoundBadRequest to nil")
 	}
 	var unwrapped Problem
 	if err := func() error {
@@ -8721,34 +8844,34 @@ func (s *WaitForAgentInteractionStatusBadRequest) Decode(d *jx.Decoder) error {
 	}(); err != nil {
 		return errors.Wrap(err, "alias")
 	}
-	*s = WaitForAgentInteractionStatusBadRequest(unwrapped)
+	*s = WaitForWaitingInputRoundBadRequest(unwrapped)
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s *WaitForAgentInteractionStatusBadRequest) MarshalJSON() ([]byte, error) {
+func (s *WaitForWaitingInputRoundBadRequest) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *WaitForAgentInteractionStatusBadRequest) UnmarshalJSON(data []byte) error {
+func (s *WaitForWaitingInputRoundBadRequest) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
 
-// Encode encodes WaitForAgentInteractionStatusConflict as json.
-func (s *WaitForAgentInteractionStatusConflict) Encode(e *jx.Encoder) {
+// Encode encodes WaitForWaitingInputRoundConflict as json.
+func (s *WaitForWaitingInputRoundConflict) Encode(e *jx.Encoder) {
 	unwrapped := (*Problem)(s)
 
 	unwrapped.Encode(e)
 }
 
-// Decode decodes WaitForAgentInteractionStatusConflict from json.
-func (s *WaitForAgentInteractionStatusConflict) Decode(d *jx.Decoder) error {
+// Decode decodes WaitForWaitingInputRoundConflict from json.
+func (s *WaitForWaitingInputRoundConflict) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode WaitForAgentInteractionStatusConflict to nil")
+		return errors.New("invalid: unable to decode WaitForWaitingInputRoundConflict to nil")
 	}
 	var unwrapped Problem
 	if err := func() error {
@@ -8759,34 +8882,34 @@ func (s *WaitForAgentInteractionStatusConflict) Decode(d *jx.Decoder) error {
 	}(); err != nil {
 		return errors.Wrap(err, "alias")
 	}
-	*s = WaitForAgentInteractionStatusConflict(unwrapped)
+	*s = WaitForWaitingInputRoundConflict(unwrapped)
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s *WaitForAgentInteractionStatusConflict) MarshalJSON() ([]byte, error) {
+func (s *WaitForWaitingInputRoundConflict) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *WaitForAgentInteractionStatusConflict) UnmarshalJSON(data []byte) error {
+func (s *WaitForWaitingInputRoundConflict) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
 
-// Encode encodes WaitForAgentInteractionStatusNotFound as json.
-func (s *WaitForAgentInteractionStatusNotFound) Encode(e *jx.Encoder) {
+// Encode encodes WaitForWaitingInputRoundNotFound as json.
+func (s *WaitForWaitingInputRoundNotFound) Encode(e *jx.Encoder) {
 	unwrapped := (*Problem)(s)
 
 	unwrapped.Encode(e)
 }
 
-// Decode decodes WaitForAgentInteractionStatusNotFound from json.
-func (s *WaitForAgentInteractionStatusNotFound) Decode(d *jx.Decoder) error {
+// Decode decodes WaitForWaitingInputRoundNotFound from json.
+func (s *WaitForWaitingInputRoundNotFound) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode WaitForAgentInteractionStatusNotFound to nil")
+		return errors.New("invalid: unable to decode WaitForWaitingInputRoundNotFound to nil")
 	}
 	var unwrapped Problem
 	if err := func() error {
@@ -8797,34 +8920,34 @@ func (s *WaitForAgentInteractionStatusNotFound) Decode(d *jx.Decoder) error {
 	}(); err != nil {
 		return errors.Wrap(err, "alias")
 	}
-	*s = WaitForAgentInteractionStatusNotFound(unwrapped)
+	*s = WaitForWaitingInputRoundNotFound(unwrapped)
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s *WaitForAgentInteractionStatusNotFound) MarshalJSON() ([]byte, error) {
+func (s *WaitForWaitingInputRoundNotFound) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *WaitForAgentInteractionStatusNotFound) UnmarshalJSON(data []byte) error {
+func (s *WaitForWaitingInputRoundNotFound) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
 
-// Encode encodes WaitForAgentInteractionStatusServiceUnavailable as json.
-func (s *WaitForAgentInteractionStatusServiceUnavailable) Encode(e *jx.Encoder) {
+// Encode encodes WaitForWaitingInputRoundServiceUnavailable as json.
+func (s *WaitForWaitingInputRoundServiceUnavailable) Encode(e *jx.Encoder) {
 	unwrapped := (*Problem)(s)
 
 	unwrapped.Encode(e)
 }
 
-// Decode decodes WaitForAgentInteractionStatusServiceUnavailable from json.
-func (s *WaitForAgentInteractionStatusServiceUnavailable) Decode(d *jx.Decoder) error {
+// Decode decodes WaitForWaitingInputRoundServiceUnavailable from json.
+func (s *WaitForWaitingInputRoundServiceUnavailable) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode WaitForAgentInteractionStatusServiceUnavailable to nil")
+		return errors.New("invalid: unable to decode WaitForWaitingInputRoundServiceUnavailable to nil")
 	}
 	var unwrapped Problem
 	if err := func() error {
@@ -8835,19 +8958,153 @@ func (s *WaitForAgentInteractionStatusServiceUnavailable) Decode(d *jx.Decoder) 
 	}(); err != nil {
 		return errors.Wrap(err, "alias")
 	}
-	*s = WaitForAgentInteractionStatusServiceUnavailable(unwrapped)
+	*s = WaitForWaitingInputRoundServiceUnavailable(unwrapped)
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s *WaitForAgentInteractionStatusServiceUnavailable) MarshalJSON() ([]byte, error) {
+func (s *WaitForWaitingInputRoundServiceUnavailable) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *WaitForAgentInteractionStatusServiceUnavailable) UnmarshalJSON(data []byte) error {
+func (s *WaitForWaitingInputRoundServiceUnavailable) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes WaitingInputRound as json.
+func (s WaitingInputRound) Encode(e *jx.Encoder) {
+	unwrapped := int64(s)
+
+	e.Int64(unwrapped)
+}
+
+// Decode decodes WaitingInputRound from json.
+func (s *WaitingInputRound) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode WaitingInputRound to nil")
+	}
+	var unwrapped int64
+	if err := func() error {
+		v, err := d.Int64()
+		unwrapped = int64(v)
+		if err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return errors.Wrap(err, "alias")
+	}
+	*s = WaitingInputRound(unwrapped)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s WaitingInputRound) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *WaitingInputRound) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *WaitingInputRoundState) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *WaitingInputRoundState) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("waitingInputRound")
+		s.WaitingInputRound.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfWaitingInputRoundState = [1]string{
+	0: "waitingInputRound",
+}
+
+// Decode decodes WaitingInputRoundState from json.
+func (s *WaitingInputRoundState) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode WaitingInputRoundState to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "waitingInputRound":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.WaitingInputRound.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"waitingInputRound\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode WaitingInputRoundState")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfWaitingInputRoundState) {
+					name = jsonFieldsNameOfWaitingInputRoundState[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *WaitingInputRoundState) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *WaitingInputRoundState) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

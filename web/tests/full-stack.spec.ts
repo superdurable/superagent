@@ -107,7 +107,27 @@ test("renders chronological transient activity and durable queue interactions", 
   releaseMessage();
 
   const history = page.getByRole("region", { name: "Conversation history" });
-  await expect(history.getByText("Checked the constraints")).toBeVisible();
+  await expect(
+    optimisticQueue.getByText(
+      "/reason Checked the constraints | Durable answer",
+    ),
+  ).toHaveCount(0);
+  await expect(
+    history.getByText("Consumed 1 queued user message."),
+  ).toBeVisible();
+  expect(snapshots.length).toBeGreaterThanOrEqual(2);
+
+  const reasoningCard = history.locator("details.reasoning-card").filter({
+    hasText: "Checked the constraints",
+  });
+  const reasoningText = reasoningCard.getByText("Checked the constraints", {
+    exact: true,
+  });
+  await expect(reasoningCard).toBeVisible();
+  if (!(await reasoningText.isVisible())) {
+    await reasoningCard.locator("summary").click();
+  }
+  await expect(reasoningText).toBeVisible();
   await expect(
     history
       .locator(".message-bubble.assistant")
@@ -119,14 +139,21 @@ test("renders chronological transient activity and durable queue interactions", 
     }),
   ).toHaveCount(1);
   await expect(history.locator(".live-message")).toHaveCount(0);
-  await expect(history.locator(".activity-entry")).toHaveCount(2);
+  await expect(history.locator(".activity-entry")).toHaveCount(3);
   await expect(composer).toBeFocused();
-  await expect(history.locator(".activity-entry").nth(0)).toContainText(
-    "Calling mock/dex.",
-  );
-  await expect(history.locator(".activity-entry").nth(1)).toContainText(
-    "Model response completed.",
-  );
+  await expect(
+    history
+      .locator(".activity-entry")
+      .filter({ hasText: "Consumed 1 queued user message." }),
+  ).toHaveCount(1);
+  await expect(
+    history.locator(".activity-entry").filter({ hasText: "Calling mock/dex." }),
+  ).toHaveCount(1);
+  await expect(
+    history
+      .locator(".activity-entry")
+      .filter({ hasText: "Model response completed." }),
+  ).toHaveCount(1);
   const timelineText = await directTimelineText(history);
   const reasoningIndex = timelineText.findIndex((text) =>
     text.includes("Reasoning summary"),
@@ -246,6 +273,83 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toHaveCount(1);
 });
 
+test("removes a consumed queued message before the next Snapshot completes", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const snapshotStatuses: number[] = [];
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/products/ai-agent/snapshot") {
+      snapshotStatuses.push(response.status());
+    }
+  });
+  let shouldHoldNextSnapshot = false;
+  let didHoldSnapshot = false;
+  let releaseSnapshot: () => void = () => undefined;
+  const heldSnapshot = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve;
+  });
+  await page.route("**/products/ai-agent/snapshot?**", async (route) => {
+    if (shouldHoldNextSnapshot) {
+      shouldHoldNextSnapshot = false;
+      didHoldSnapshot = true;
+      await heldSnapshot;
+    }
+    await route.continue();
+  });
+
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill("/wait 90 preserve the queue window");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("90s")).toBeVisible();
+
+  await composer.fill("consume this queued message");
+  await page.getByRole("button", { name: "Send" }).click();
+  const queuedMessage = page
+    .locator(".queue-message")
+    .filter({ hasText: "consume this queued message" });
+  await expect(queuedMessage).toBeVisible();
+  await expect(page.locator(".queue-message.submitting")).toHaveCount(0);
+  const flowId = await displayedFlowID(page);
+  const messageId = await pendingMessageID(
+    page,
+    flowId,
+    "consume this queued message",
+  );
+  const completedSnapshots = snapshotStatuses.length;
+  shouldHoldNextSnapshot = true;
+
+  const steer = await page.request.post(
+    `${apiOrigin}/products/ai-agent/message-queue/steer`,
+    {
+      data: { flowId, messageId },
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+  expect(steer.status()).toBe(200);
+
+  await expect(queuedMessage).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "Conversation history" })
+      .getByText("Consumed 1 steered user message."),
+  ).toBeVisible();
+  const consumedMessage = page
+    .getByRole("region", { name: "Conversation history" })
+    .locator(".message-bubble.user")
+    .filter({ hasText: "consume this queued message" });
+  await expect(consumedMessage).toHaveCount(1);
+  expect(snapshotStatuses).toHaveLength(completedSnapshots);
+  await expect.poll(() => didHoldSnapshot).toBe(true);
+  expect(snapshotStatuses).toHaveLength(completedSnapshots);
+  releaseSnapshot();
+  await expect
+    .poll(() => snapshotStatuses.length)
+    .toBeGreaterThan(completedSnapshots);
+  await expect(consumedMessage).toHaveCount(1);
+});
+
 test("accepts the first message after Start and retains it across refresh", async ({
   page,
 }) => {
@@ -311,7 +415,7 @@ test("prioritizes a first message while another Agent tab is polling", async ({
       const path = new URL(request.url()).pathname;
       return (
         path === "/products/ai-agent/events" ||
-        path === "/products/ai-agent/interaction-status"
+        path === "/products/ai-agent/waiting-input-round"
       );
     };
     secondPage.on("request", (request) => {
@@ -472,6 +576,7 @@ test("reconciles accepted commands when their browser responses are lost", async
   ).toHaveCount(1);
   expect(requestCounts.get(answerPath)).toBe(answersBefore + 1);
   await page.unroute(`**${answerPath}`);
+  await expectAgentWaitingForMessage(page);
 
   await composer.fill('/tool fixture__echo {"value":"ambiguous approval"}');
   await page.getByRole("button", { name: "Send" }).click();
@@ -490,6 +595,7 @@ test("reconciles accepted commands when their browser responses are lost", async
   ).toHaveCount(1);
   expect(requestCounts.get(approvalPath)).toBe(approvalsBefore + 1);
   await page.unroute(`**${approvalPath}`);
+  await expectAgentWaitingForMessage(page);
 
   await composer.fill("/wait 90 ambiguous steering");
   await page.getByRole("button", { name: "Send" }).click();
@@ -567,6 +673,7 @@ test("reconciles stale queue, question, and approval controls without damaging t
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(questions).toHaveCount(0);
   await page.unroute(`**${answerPath}`);
+  await expectAgentWaitingForMessage(page);
 
   await composer.fill('/tool fixture__echo {"value":"stale approval"}');
   await page.getByRole("button", { name: "Send" }).click();
@@ -578,6 +685,7 @@ test("reconciles stale queue, question, and approval controls without damaging t
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(approval).toHaveCount(0);
   await page.unroute(`**${approvalPath}`);
+  await expectAgentWaitingForMessage(page);
 
   expect(staleStatuses).toHaveLength(3);
   for (const status of staleStatuses) expect([404, 409]).toContain(status);
@@ -644,7 +752,7 @@ test("resumes each live Stream after interruption without duplicate timeline ent
       history.locator(".message-bubble.assistant").filter({ hasText: message }),
     ).toHaveCount(1);
     await expect(history.locator(".live-message")).toHaveCount(0);
-    await expect(history.locator(".activity-entry")).toHaveCount(2);
+    await expect(history.locator(".activity-entry")).toHaveCount(3);
     const activityRows = await history
       .locator(".activity-entry")
       .allTextContents();
@@ -1371,7 +1479,13 @@ async function startAgent(page: Page): Promise<void> {
   await expect(page.locator(".flow-identity code")).toHaveCount(2);
   await expect(page.locator(".flow-identity code").first()).not.toBeEmpty();
   await expect(page.locator(".flow-identity code").last()).not.toBeEmpty();
-  await expect(page.getByText("Waiting For Message").first()).toBeVisible();
+  await expectAgentWaitingForMessage(page);
+}
+
+async function expectAgentWaitingForMessage(page: Page): Promise<void> {
+  await expect(page.getByRole("group", { name: "Agent status" })).toContainText(
+    "Waiting For Message",
+  );
 }
 
 async function directTimelineText(history: Locator): Promise<string[]> {

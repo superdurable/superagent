@@ -97,12 +97,14 @@ type Handler interface {
 	//
 	// POST /products/ai-agent/message-queue/steer
 	SteerQueuedMessage(ctx context.Context, req *QueueMutationRequest) (SteerQueuedMessageRes, error)
-	// WaitForAgentInteractionStatus implements waitForAgentInteractionStatus operation.
+	// WaitForWaitingInputRound implements waitForWaitingInputRound operation.
 	//
-	// Wait for one durable Agent interaction status.
+	// Waits until WaitingInputRound is greater than the supplied watermark, the caller cancels, the Flow
+	// closes, or an error occurs. The response contains the actual matched round. This operation does not
+	// use the bounded Stream poll timeout response.
 	//
-	// GET /products/ai-agent/interaction-status
-	WaitForAgentInteractionStatus(ctx context.Context, params WaitForAgentInteractionStatusParams) (WaitForAgentInteractionStatusRes, error)
+	// GET /products/ai-agent/waiting-input-round
+	WaitForWaitingInputRound(ctx context.Context, params WaitForWaitingInputRoundParams) (WaitForWaitingInputRoundRes, error)
 }
 
 // Server implements http server based on OpenAPI v3 specification and

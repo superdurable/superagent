@@ -147,6 +147,7 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	planRevision := agent.PlanRevision(4)
 	planTaskIndex := agent.PlanTaskIndex(1)
 	planTaskStatus := agent.TaskStatusInProgress
+	consumedRevision := agent.PlanRevision(3)
 	service := &fakeAgentService{event: agent.StreamEvent{
 		Kind: agent.StreamEventKindActivity,
 		Activity: agent.AgentEvent{
@@ -154,6 +155,10 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 			MessageSequence:  &messageSequence,
 			PlanBaseRevision: &planBaseRevision, PlanRevision: &planRevision,
 			PlanTaskIndex: &planTaskIndex, PlanTaskStatus: &planTaskStatus,
+			InputConsumption: &agent.InputConsumption{
+				QueuedMessageIDs: []agent.MessageID{"queued-1"}, SteeredMessageIDs: []agent.MessageID{"steered-1"},
+				PlanExecutionRevision: &consumedRevision,
+			},
 		},
 		ResumeToken: "resume-1", CreatedAt: time.Unix(1, 0).UTC(), Source: "turn-1",
 	}}
@@ -169,13 +174,17 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 	activity, _ := event.GetActivityStreamEvent()
+	consumption, hasConsumption := activity.Value.InputConsumption.Get()
 	if activity.Value.Kind != transportapi.EventKindPlanTaskUpdated ||
 		activity.Value.CallId.Or("") != "call-1" ||
 		activity.Value.MessageSequence.Or(0) != 2 ||
 		activity.Value.PlanBaseRevision.Or(0) != 3 ||
 		activity.Value.PlanRevision.Or(0) != 4 ||
 		activity.Value.PlanTaskIndex.Or(-1) != 1 ||
-		activity.Value.PlanTaskStatus.Or("") != transportapi.TaskStatusInProgress {
+		activity.Value.PlanTaskStatus.Or("") != transportapi.TaskStatusInProgress ||
+		!hasConsumption || len(consumption.QueuedMessageIds) != 1 || consumption.QueuedMessageIds[0] != "queued-1" ||
+		len(consumption.SteeredMessageIds) != 1 || consumption.SteeredMessageIds[0] != "steered-1" ||
+		consumption.PlanExecutionRevision.Or(0) != 3 {
 		t.Fatalf("activity = %#v", activity)
 	}
 }
@@ -252,7 +261,7 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 		}}},
 		Description: &agent.AgentDescription{
 			Status:                     agent.AgentStatusWaitingForToolApproval,
-			InteractionStatus:          agent.AgentInteractionStatusWaiting,
+			WaitingInputRound:          7,
 			Model:                      "openai/gpt-5-mini",
 			SystemPrompt:               "be helpful",
 			FirstRetainedSequence:      1,
@@ -421,30 +430,19 @@ func TestGetArchivedMessagesMapsExactChunkAndBoundary(t *testing.T) {
 	}
 }
 
-func TestWaitForAgentInteractionStatusReturnsDurableValueAndTimeout(t *testing.T) {
+func TestWaitForWaitingInputRoundReturnsMatchedWatermark(t *testing.T) {
 	t.Parallel()
-	service := &fakeAgentService{}
+	service := &fakeAgentService{waitResult: 9}
 	handler := newTestHandler(service, fakeCredentials{})
-	response, err := handler.WaitForAgentInteractionStatus(context.Background(), transportapi.WaitForAgentInteractionStatusParams{
-		FlowId: "flow-1", ExpectedStatus: transportapi.AgentInteractionStatusWaiting,
+	response, err := handler.WaitForWaitingInputRound(context.Background(), transportapi.WaitForWaitingInputRoundParams{
+		FlowId: "flow-1", AfterWaitingInputRound: 7,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, ok := response.(*transportapi.AgentInteractionState)
-	if !ok || state.Status != transportapi.AgentInteractionStatusWaiting || service.waitedStatus != agent.AgentInteractionStatusWaiting {
-		t.Fatalf("response = %#v, waited = %q", response, service.waitedStatus)
-	}
-
-	service.waitErr = context.DeadlineExceeded
-	response, err = handler.WaitForAgentInteractionStatus(context.Background(), transportapi.WaitForAgentInteractionStatusParams{
-		FlowId: "flow-1", ExpectedStatus: transportapi.AgentInteractionStatusSubmitted,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := response.(*transportapi.PollTimeout); !ok {
-		t.Fatalf("timeout response = %T", response)
+	state, ok := response.(*transportapi.WaitingInputRoundState)
+	if !ok || state.WaitingInputRound != 9 || service.waitedRound != 7 {
+		t.Fatalf("response = %#v, waited = %d", response, service.waitedRound)
 	}
 }
 
@@ -547,7 +545,8 @@ type fakeAgentService struct {
 	archived         agent.HistoryPage
 	archivedErr      error
 	waitErr          error
-	waitedStatus     agent.AgentInteractionStatus
+	waitedRound      agent.WaitingInputRound
+	waitResult       agent.WaitingInputRound
 	deletedMessageID agent.MessageID
 	deleteErr        error
 	steeredMessageID agent.MessageID
@@ -597,13 +596,13 @@ func (service *fakeAgentService) GetArchivedMessages(
 	return service.archived, service.archivedErr
 }
 
-func (service *fakeAgentService) WaitForInteractionStatus(
+func (service *fakeAgentService) WaitForWaitingInputRound(
 	_ context.Context,
 	_ agent.FlowID,
-	status agent.AgentInteractionStatus,
-) error {
-	service.waitedStatus = status
-	return service.waitErr
+	after agent.WaitingInputRound,
+) (agent.WaitingInputRound, error) {
+	service.waitedRound = after
+	return service.waitResult, service.waitErr
 }
 
 func (service *fakeAgentService) DeleteQueuedMessage(

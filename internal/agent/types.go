@@ -34,8 +34,8 @@ const (
 	maximumMessageIDBytes   = 256
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
 	MaximumRuntimeMetadataBytes = 16 << 10
-	// MaximumLeaseStateBytes bounds one opaque runtime Lease state.
-	MaximumLeaseStateBytes = 16 << 10
+	// MaximumWaitingInputRound is the largest round exactly representable by JavaScript.
+	MaximumWaitingInputRound WaitingInputRound = 9_007_199_254_740_991
 	// MaximumUserMessageContentBytes bounds one user-message body.
 	MaximumUserMessageContentBytes = 256 << 10
 
@@ -58,7 +58,7 @@ type RunID string
 // CallID uniquely identifies one model-requested tool call.
 type CallID string
 
-// MessageID uniquely identifies one pending Dex Channel message.
+// MessageID uniquely identifies one pending application message across Channel moves.
 type MessageID string
 
 // Sequence orders durable application-history messages.
@@ -165,28 +165,8 @@ func (status *AgentStatus) UnmarshalJSON(data []byte) error {
 	return decodeEnum(data, status, AgentStatus.Validate)
 }
 
-// AgentInteractionStatus coordinates durable browser reconciliation.
-type AgentInteractionStatus string
-
-const (
-	AgentInteractionStatusSubmitted AgentInteractionStatus = "submitted"
-	AgentInteractionStatusWaiting   AgentInteractionStatus = "waiting"
-)
-
-// Validate rejects unknown interaction statuses.
-func (status AgentInteractionStatus) Validate() error {
-	switch status {
-	case AgentInteractionStatusSubmitted, AgentInteractionStatusWaiting:
-		return nil
-	default:
-		return newEnumValidationError("AgentInteractionStatus", string(status))
-	}
-}
-
-// UnmarshalJSON decodes and validates an interaction status.
-func (status *AgentInteractionStatus) UnmarshalJSON(data []byte) error {
-	return decodeEnum(data, status, AgentInteractionStatus.Validate)
-}
+// WaitingInputRound is the monotonic browser reconciliation watermark.
+type WaitingInputRound int64
 
 // FlowStatus describes the Dex lifecycle state exposed with an Agent Snapshot.
 type FlowStatus string
@@ -356,6 +336,8 @@ const (
 	EventKindPlanStarted        EventKind = "plan_started"
 	EventKindPlanUpdated        EventKind = "plan_updated"
 	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
+	EventKindInputConsumed      EventKind = "input_consumed"
+	EventKindSnapshotRequired   EventKind = "snapshot_required"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
 	EventKindCompacted          EventKind = "compacted"
@@ -375,6 +357,8 @@ func (kind EventKind) Validate() error {
 	case EventKindPlanStarted,
 		EventKindPlanUpdated,
 		EventKindPlanTaskUpdated,
+		EventKindInputConsumed,
+		EventKindSnapshotRequired,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
 		EventKindCompacted,
@@ -565,50 +549,10 @@ type AgentConfig struct {
 	EnabledTools []ToolName `json:"enabled_tools"`
 }
 
-// StartRequest contains Agent configuration and optional trusted runtime state.
+// StartRequest contains Agent configuration and trusted runtime metadata.
 type StartRequest struct {
-	Config          AgentConfig          `json:"config"`
-	RuntimeMetadata JSONObject           `json:"runtime_metadata"`
-	InitialLease    *LeaseInitialization `json:"initial_lease,omitempty"`
-}
-
-// LeaseInitialization supplies immediately usable state and its first refresh time.
-type LeaseInitialization struct {
-	State     JSONObject `json:"state"`
-	RefreshAt time.Time  `json:"refresh_at"`
-}
-
-// LeaseRefreshID identifies one idempotent refresh generation.
-type LeaseRefreshID string
-
-// LeaseRefreshRequest asks an integration to replace one runtime Lease generation.
-type LeaseRefreshRequest struct {
-	FlowID           FlowID
-	State            JSONObject
-	RefreshID        LeaseRefreshID
-	TargetGeneration int64
-}
-
-// LeaseRefreshResult contains immediately usable replacement state and its next refresh time.
-type LeaseRefreshResult struct {
-	State     JSONObject
-	RefreshAt time.Time
-}
-
-// LeaseRefresher replaces opaque runtime Lease state through an external control plane.
-type LeaseRefresher interface {
-	Refresh(context.Context, LeaseRefreshRequest) (LeaseRefreshResult, error)
-}
-
-// LeaseExtensionConfig controls the optional runtime Lease maintenance Step.
-type LeaseExtensionConfig struct {
-	// AttemptTimeout bounds one refresh attempt. Zero selects two minutes.
-	// Nonzero values must be whole seconds of at least ten seconds and remain
-	// fixed for the lifetime of the Flow definition.
-	AttemptTimeout time.Duration
-	// RetryTotalDuration bounds all attempts for one generation. Zero selects
-	// 30 minutes. Nonzero values must be whole seconds and at least AttemptTimeout.
-	RetryTotalDuration time.Duration
+	Config          AgentConfig `json:"config"`
+	RuntimeMetadata JSONObject  `json:"runtime_metadata"`
 }
 
 // NewAgentConfig returns deterministic local defaults.
@@ -744,7 +688,7 @@ type ArchivedMessageChunk struct {
 	Messages []SequencedMessage `json:"messages"`
 }
 
-// PendingUserMessage preserves one Dex Channel message ID and value.
+// PendingUserMessage carries one stable application message ID through durable queues.
 type PendingUserMessage struct {
 	MessageID MessageID   `json:"message_id"`
 	Value     UserMessage `json:"value"`
@@ -752,22 +696,22 @@ type PendingUserMessage struct {
 
 // AgentDescription is the durable application state needed to render a conversation.
 type AgentDescription struct {
-	Status                     AgentStatus            `json:"status"`
-	InteractionStatus          AgentInteractionStatus `json:"interaction_status"`
-	Model                      Model                  `json:"model"`
-	SystemPrompt               string                 `json:"system_prompt"`
-	FirstRetainedSequence      Sequence               `json:"first_retained_sequence"`
-	LastSequence               Sequence               `json:"last_sequence"`
-	SummarizedThroughSequence  Sequence               `json:"summarized_through_sequence"`
-	PendingApproval            *PendingApproval       `json:"pending_approval,omitempty"`
-	PendingTimer               *PendingTimer          `json:"pending_timer,omitempty"`
-	PendingUserInput           *PendingUserInput      `json:"pending_user_input,omitempty"`
-	Plan                       *AgentPlan             `json:"plan,omitempty"`
-	IsPlanExecutionRequested   bool                   `json:"is_plan_execution_requested"`
-	PendingQueuedMessageCount  int                    `json:"pending_queued_message_count"`
-	PendingSteeredMessageCount int                    `json:"pending_steered_message_count"`
-	AvailableMCPServers        []string               `json:"available_mcp_servers"`
-	AvailableTools             []ToolName             `json:"available_tools"`
+	Status                     AgentStatus       `json:"status"`
+	WaitingInputRound          WaitingInputRound `json:"waiting_input_round"`
+	Model                      Model             `json:"model"`
+	SystemPrompt               string            `json:"system_prompt"`
+	FirstRetainedSequence      Sequence          `json:"first_retained_sequence"`
+	LastSequence               Sequence          `json:"last_sequence"`
+	SummarizedThroughSequence  Sequence          `json:"summarized_through_sequence"`
+	PendingApproval            *PendingApproval  `json:"pending_approval,omitempty"`
+	PendingTimer               *PendingTimer     `json:"pending_timer,omitempty"`
+	PendingUserInput           *PendingUserInput `json:"pending_user_input,omitempty"`
+	Plan                       *AgentPlan        `json:"plan,omitempty"`
+	IsPlanExecutionRequested   bool              `json:"is_plan_execution_requested"`
+	PendingQueuedMessageCount  int               `json:"pending_queued_message_count"`
+	PendingSteeredMessageCount int               `json:"pending_steered_message_count"`
+	AvailableMCPServers        []string          `json:"available_mcp_servers"`
+	AvailableTools             []ToolName        `json:"available_tools"`
 }
 
 // AgentSnapshot is one atomic durable application view.
@@ -881,8 +825,9 @@ type PendingUserInput struct {
 
 // AnswerQuestionsRequest identifies and answers one pending batch.
 type AnswerQuestionsRequest struct {
-	CallID  CallID            `json:"call_id"`
-	Answers []UserInputAnswer `json:"answers"`
+	MessageID MessageID         `json:"message_id,omitempty"`
+	CallID    CallID            `json:"call_id"`
+	Answers   []UserInputAnswer `json:"answers"`
 }
 
 // UserInputAnswer answers one question in a pending input batch.
@@ -893,15 +838,23 @@ type UserInputAnswer struct {
 
 // AgentEvent is emitted to the best-effort activity Stream.
 type AgentEvent struct {
-	Kind             EventKind      `json:"kind"`
-	Message          string         `json:"message"`
-	CallID           *CallID        `json:"call_id,omitempty"`
-	ToolName         *ToolName      `json:"tool_name,omitempty"`
-	MessageSequence  *Sequence      `json:"message_sequence,omitempty"`
-	PlanBaseRevision *PlanRevision  `json:"plan_base_revision,omitempty"`
-	PlanRevision     *PlanRevision  `json:"plan_revision,omitempty"`
-	PlanTaskIndex    *PlanTaskIndex `json:"plan_task_index,omitempty"`
-	PlanTaskStatus   *TaskStatus    `json:"plan_task_status,omitempty"`
+	Kind             EventKind         `json:"kind"`
+	Message          string            `json:"message"`
+	CallID           *CallID           `json:"call_id,omitempty"`
+	ToolName         *ToolName         `json:"tool_name,omitempty"`
+	MessageSequence  *Sequence         `json:"message_sequence,omitempty"`
+	PlanBaseRevision *PlanRevision     `json:"plan_base_revision,omitempty"`
+	PlanRevision     *PlanRevision     `json:"plan_revision,omitempty"`
+	PlanTaskIndex    *PlanTaskIndex    `json:"plan_task_index,omitempty"`
+	PlanTaskStatus   *TaskStatus       `json:"plan_task_status,omitempty"`
+	InputConsumption *InputConsumption `json:"input_consumption,omitempty"`
+}
+
+// InputConsumption identifies exact durable inputs consumed at a Step boundary.
+type InputConsumption struct {
+	QueuedMessageIDs      []MessageID   `json:"queued_message_ids"`
+	SteeredMessageIDs     []MessageID   `json:"steered_message_ids"`
+	PlanExecutionRevision *PlanRevision `json:"plan_execution_revision,omitempty"`
 }
 
 // StreamEvent is one typed best-effort Stream message.
@@ -1024,40 +977,6 @@ func validateRuntimeMetadata(value JSONObject) error {
 	return err
 }
 
-func validateLeaseInitialization(initial *LeaseInitialization, now time.Time) error {
-	if initial == nil {
-		return errors.New("initial Lease is required")
-	}
-	if initial.State == "" {
-		return errors.New("initial Lease state is required")
-	}
-	if len(initial.State) > MaximumLeaseStateBytes {
-		return fmt.Errorf("initial Lease state exceeds %d bytes", MaximumLeaseStateBytes)
-	}
-	if _, err := ParseJSONObject(initial.State.String()); err != nil {
-		return fmt.Errorf("initial Lease state: %w", err)
-	}
-	if initial.RefreshAt.IsZero() || !initial.RefreshAt.After(now) {
-		return errors.New("initial Lease refresh_at must be in the future")
-	}
-	return nil
-}
-
-func (config LeaseExtensionConfig) validate() error {
-	switch {
-	case config.AttemptTimeout < 10*time.Second:
-		return errors.New("attempt timeout must be at least 10 seconds")
-	case config.AttemptTimeout%time.Second != 0:
-		return errors.New("attempt timeout must use whole seconds")
-	case config.RetryTotalDuration < config.AttemptTimeout:
-		return errors.New("retry total duration must be at least the attempt timeout")
-	case config.RetryTotalDuration%time.Second != 0:
-		return errors.New("retry total duration must use whole seconds")
-	default:
-		return nil
-	}
-}
-
 // ModelReply is one complete provider response.
 type ModelReply struct {
 	Content              string                `json:"content"`
@@ -1120,7 +1039,6 @@ type ModelClient interface {
 type ToolInvocation struct {
 	FlowID          FlowID
 	RuntimeMetadata JSONObject
-	LeaseState      *JSONObject
 	Name            ToolName
 	Arguments       JSONObject
 	EnabledServers  []string

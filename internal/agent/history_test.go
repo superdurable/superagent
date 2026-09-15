@@ -51,7 +51,7 @@ type FlowStateForTestOnly struct {
 	PendingApproval *PendingApproval
 	PendingInput    *PendingUserInput
 	PendingTimer    *PendingTimer
-	Queued          []dex.ChannelMessage[UserMessage]
+	Queued          []dex.ChannelMessage[PendingUserMessage]
 }
 
 // GetFlowStateForTestOnly returns exact durable state without mutating the Flow.

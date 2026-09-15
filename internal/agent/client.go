@@ -23,13 +23,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
 const (
 	defaultCommandTimeout = 20 * time.Second
 	defaultEventPoll      = 20 * time.Second
-	snapshotActiveProbe   = 100 * time.Millisecond
 	// MaximumRecentEventLimit matches Dex's default maximum Stream list page size.
 	MaximumRecentEventLimit = 1_000
 )
@@ -70,9 +70,6 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, request StartReq
 	if err := validateRuntimeMetadata(request.RuntimeMetadata); err != nil {
 		return "", err
 	}
-	if err := client.flow.validateInitialLease(request.InitialLease, time.Now()); err != nil {
-		return "", err
-	}
 	metadata := request.RuntimeMetadata
 	if metadata == "" {
 		metadata = MustJSONObject(`{}`)
@@ -81,30 +78,15 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, request StartReq
 	if err != nil {
 		return "", fmt.Errorf("encode Agent runtime metadata: %w", err)
 	}
-	initialAttributes := []dex.InitialAttributeDef{initialMetadata}
-	if request.InitialLease != nil {
-		initialLeaseState, leaseErr := dex.InitialAttribute(agentLeaseStateAttribute, request.InitialLease.State)
-		if leaseErr != nil {
-			return "", fmt.Errorf("encode initial Agent Lease state: %w", leaseErr)
-		}
-		initialLeaseSchedule, leaseErr := dex.InitialAttribute(agentLeaseScheduleAttribute, leaseSchedule{
-			Generation: 1,
-			RefreshAt:  request.InitialLease.RefreshAt,
-		})
-		if leaseErr != nil {
-			return "", fmt.Errorf("encode initial Agent Lease schedule: %w", leaseErr)
-		}
-		initialAttributes = append(initialAttributes, initialLeaseState, initialLeaseSchedule)
-	}
 	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), request.Config, dex.StartFlowOptions{
 		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    initialAttributes,
+		Attributes:    []dex.InitialAttributeDef{initialMetadata},
 	})
 	if err != nil {
 		return "", err
 	}
-	if err := client.WaitForInteractionStatus(ctx, flowID, AgentInteractionStatusWaiting); err != nil {
-		return "", fmt.Errorf("wait for initial Agent interaction status: %w", err)
+	if _, err := client.WaitForWaitingInputRound(ctx, flowID, 0); err != nil {
+		return "", fmt.Errorf("wait for initial Agent input round: %w", err)
 	}
 	return RunID(runID), nil
 }
@@ -117,8 +99,9 @@ func (client *Client) SendMessage(ctx context.Context, flowID FlowID, message Us
 	if err := validateNewUserMessage(message); err != nil {
 		return err
 	}
+	pending := PendingUserMessage{MessageID: MessageID(uuid.NewString()), Value: message}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, message, accepted, dex.InvokeOptions{
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, pending, accepted, dex.InvokeOptions{
 			Timeout:        client.commandTimeout,
 			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
 		})
@@ -141,6 +124,7 @@ func (client *Client) AnswerQuestions(
 	if err := validateAnswerQuestionsRequest(request); err != nil {
 		return err
 	}
+	request.MessageID = MessageID(uuid.NewString())
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
 		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
 			Timeout:        client.commandTimeout,
@@ -214,6 +198,10 @@ func (client *Client) GetSnapshot(
 	if err := validateFlowID(flowID); err != nil {
 		return AgentSnapshot{}, err
 	}
+	current, statusErr := client.latestAgentRun(ctx, flowID)
+	if statusErr == nil && current != nil && current.Status != dex.FlowRunning {
+		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
+	}
 	var snapshot AgentSnapshot
 	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.GetSnapshot, nil, &snapshot, dex.InvokeOptions{
 		Timeout:           client.commandTimeout,
@@ -224,7 +212,7 @@ func (client *Client) GetSnapshot(
 		},
 	})
 	if err == nil {
-		return client.resolveSnapshotLifecycle(ctx, flowID, snapshot)
+		return snapshot, nil
 	}
 	var inactive *dex.FlowNotActiveError
 	if !errors.As(err, &inactive) {
@@ -235,38 +223,6 @@ func (client *Client) GetSnapshot(
 		return AgentSnapshot{}, errors.Join(err, terminalErr)
 	}
 	return terminal, nil
-}
-
-func (client *Client) resolveSnapshotLifecycle(
-	ctx context.Context,
-	flowID FlowID,
-	snapshot AgentSnapshot,
-) (AgentSnapshot, error) {
-	if snapshot.Description == nil {
-		return snapshot, nil
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, snapshotActiveProbe)
-	defer cancel()
-	var matched AgentInteractionStatus
-	err := client.sdk.WaitForAttributeMatch(
-		probeCtx,
-		string(flowID),
-		agentInteractionStatusAttribute,
-		dex.AttributeMatchEqual(snapshot.Description.InteractionStatus),
-		&matched,
-	)
-	if err == nil || errors.Is(err, context.DeadlineExceeded) {
-		return snapshot, nil
-	}
-	if ctx.Err() != nil {
-		return AgentSnapshot{}, ctx.Err()
-	}
-	var inactive *dex.FlowNotActiveError
-	if errors.As(err, &inactive) {
-		return client.terminalSnapshot(ctx, flowID, snapshot.RunID)
-	}
-	// Keep active Snapshots available during lifecycle probe outages.
-	return snapshot, nil
 }
 
 // GetArchivedMessages reads exactly one immutable history chunk before a sequence boundary.
@@ -294,26 +250,28 @@ func (client *Client) GetArchivedMessages(ctx context.Context, flowID FlowID, be
 	return result.Page, nil
 }
 
-// WaitForInteractionStatus blocks until the durable synchronization status matches expected.
-func (client *Client) WaitForInteractionStatus(
+// WaitForWaitingInputRound blocks until the durable watermark advances.
+func (client *Client) WaitForWaitingInputRound(
 	ctx context.Context,
 	flowID FlowID,
-	expected AgentInteractionStatus,
-) error {
+	after WaitingInputRound,
+) (WaitingInputRound, error) {
 	if err := validateFlowID(flowID); err != nil {
-		return err
+		return 0, err
 	}
-	if err := expected.Validate(); err != nil {
-		return err
+	if after < 0 || after > MaximumWaitingInputRound {
+		return 0, fmt.Errorf("after waiting input round must be between 0 and %d", MaximumWaitingInputRound)
 	}
-	var matched AgentInteractionStatus
-	return client.sdk.WaitForAttributeMatch(
+	var matched WaitingInputRound
+	err := client.sdk.WaitForAttributeMatch(
 		ctx,
 		string(flowID),
-		agentInteractionStatusAttribute,
-		dex.AttributeMatchEqual(expected),
+		waitingInputRoundAttribute,
+		dex.AttributeMatchGreaterThan(after),
 		&matched,
+		dex.WaitForAttributeOptions{},
 	)
+	return matched, err
 }
 
 func (client *Client) terminalSnapshot(

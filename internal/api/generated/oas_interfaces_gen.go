@@ -53,6 +53,6 @@ type SteerQueuedMessageRes interface {
 	steerQueuedMessageRes()
 }
 
-type WaitForAgentInteractionStatusRes interface {
-	waitForAgentInteractionStatusRes()
+type WaitForWaitingInputRoundRes interface {
+	waitForWaitingInputRoundRes()
 }

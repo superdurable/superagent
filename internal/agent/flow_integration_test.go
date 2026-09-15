@@ -93,116 +93,6 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 	})
 }
 
-func TestAgentRuntimeLeaseIntegration(t *testing.T) {
-	t.Run("initial state remains usable while refresh is blocked", func(t *testing.T) {
-		refresher := newBlockingLeaseRefresherForTestOnly()
-		tools := newLeaseToolRegistryForTestOnly(false)
-		environment := newAgentIntegrationEnvironmentWithOptions(
-			t,
-			integrationModel{},
-			tools,
-			WithLeaseExtension(refresher, nil),
-		)
-		flowID := FlowID("agent-lease-initial-" + randomLocalID(t))
-		initialState := MustJSONObject(`{"token":"initial","config":{"provider":"fixture"}}`)
-		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{
-			Config: NewAgentConfig(),
-			InitialLease: &LeaseInitialization{
-				State:     initialState,
-				RefreshAt: time.Now().Add(200 * time.Millisecond),
-			},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		refresher.waitUntilStartedForTestOnly(t)
-		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
-			t.Fatal(err)
-		}
-		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
-		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState})
-
-		refresher.releaseForTestOnly()
-		waitForStepCompletionForTestOnly(t, environment, flowID, stepTypeRefreshLease, 1)
-		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
-			t.Fatal(err)
-		}
-		waitForToolInvocationCountForTestOnly(t, tools, 2)
-		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 8)
-		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState, refreshedLeaseStateForTestOnly})
-		refresher.assertRequestForTestOnly(t, flowID, initialState, 2)
-		assertLeaseStateNotExposedForTestOnly(t, environment, flowID, "initial", "refreshed")
-	})
-
-	t.Run("one tool execution keeps its first Lease snapshot", func(t *testing.T) {
-		refresher := newImmediateLeaseRefresherForTestOnly()
-		tools := newLeaseToolRegistryForTestOnly(true)
-		environment := newAgentIntegrationEnvironmentWithOptions(
-			t,
-			integrationModel{},
-			tools,
-			WithLeaseExtension(refresher, nil),
-		)
-		flowID := FlowID("agent-lease-snapshot-" + randomLocalID(t))
-		initialState := MustJSONObject(`{"token":"snapshot-initial","config":{"provider":"fixture"}}`)
-		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{
-			Config: NewAgentConfig(),
-			InitialLease: &LeaseInitialization{
-				State:     initialState,
-				RefreshAt: time.Now().Add(5 * time.Second),
-			},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
-			t.Fatal(err)
-		}
-		tools.waitUntilFirstAttemptStartedForTestOnly(t)
-		waitForStepCompletionForTestOnly(t, environment, flowID, stepTypeRefreshLease, 1)
-		tools.releaseFirstAttemptForTestOnly()
-		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
-		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState, initialState})
-
-		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
-			t.Fatal(err)
-		}
-		waitForToolInvocationCountForTestOnly(t, tools, 3)
-		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 8)
-		tools.assertLeaseStatesForTestOnly(t, []JSONObject{initialState, initialState, refreshedLeaseStateForTestOnly})
-	})
-
-	t.Run("known Lease failure causes one new model tool call", func(t *testing.T) {
-		refresher := newImmediateLeaseRefresherForTestOnly()
-		tools := newLeaseRecoveryToolRegistryForTestOnly()
-		model := &leaseRetryModelForTestOnly{}
-		environment := newAgentIntegrationEnvironmentWithOptions(
-			t,
-			model,
-			tools,
-			WithLeaseExtension(refresher, nil),
-		)
-		flowID := FlowID("agent-lease-model-retry-" + randomLocalID(t))
-		initialState := MustJSONObject(`{"token":"expired","config":{"provider":"fixture"}}`)
-		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{
-			Config: NewAgentConfig(),
-			InitialLease: &LeaseInitialization{
-				State:     initialState,
-				RefreshAt: time.Now().Add(5 * time.Second),
-			},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
-			t.Fatal(err)
-		}
-		tools.waitUntilFirstCallStartedForTestOnly(t)
-		waitForStepCompletionForTestOnly(t, environment, flowID, stepTypeRefreshLease, 1)
-		tools.releaseFirstCallForTestOnly()
-		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 6)
-		tools.assertRecoveryCallsForTestOnly(t, initialState, refreshedLeaseStateForTestOnly)
-		model.assertLeasePromptForTestOnly(t)
-	})
-}
-
 func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	modelClient := integrationModel{}
 	toolRegistry := newIntegrationToolRegistry()
@@ -260,6 +150,14 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	assertTextStream(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
+	consumed := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindInputConsumed && event.InputConsumption != nil &&
+			len(event.InputConsumption.QueuedMessageIDs) == 1
+	})
+	if consumed.Activity.Message != "Consumed 1 queued user message." ||
+		strings.Contains(consumed.Activity.Message, "hello") {
+		t.Fatalf("queued input consumption Activity = %#v", consumed.Activity)
+	}
 	assertRecentTextEvents(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertRecentTextEvents(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertRecentActivityEvents(t, environment.agent, flowID)
@@ -271,6 +169,13 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	approval := waitForPendingApproval(t, environment, flowID)
 	if approval.ToolName != integrationToolName {
 		t.Fatalf("pending tool = %q", approval.ToolName)
+	}
+	snapshotRequired := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindSnapshotRequired
+	})
+	if snapshotRequired.Activity.Message != "Durable interaction state changed." ||
+		snapshotRequired.Activity.InputConsumption != nil {
+		t.Fatalf("Snapshot control Activity = %#v", snapshotRequired.Activity)
 	}
 	environment.replaceWorker(t, flowID)
 	recoveredApproval := waitForPendingApproval(t, environment, flowID)
@@ -381,18 +286,21 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		if firstQueueSnapshot.Queued[index] != secondQueueSnapshot.Queued[index] {
 			t.Fatalf("Snapshot queue changed at %d: %#v != %#v", index, firstQueueSnapshot.Queued[index], secondQueueSnapshot.Queued[index])
 		}
+		if firstQueueSnapshot.Queued[index].MessageID != queued[index].Value.MessageID {
+			t.Fatalf("Snapshot message ID = %q, want application ID %q", firstQueueSnapshot.Queued[index].MessageID, queued[index].Value.MessageID)
+		}
 	}
-	if err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID)); err != nil {
+	if err := environment.agent.DeleteQueuedMessage(t.Context(), flowID, queued[1].Value.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	waitForQueuedMessages(t, environment, flowID, 1)
-	deleteErr := environment.agent.DeleteQueuedMessage(t.Context(), flowID, MessageID(queued[1].MessageID))
+	deleteErr := environment.agent.DeleteQueuedMessage(t.Context(), flowID, queued[1].Value.MessageID)
 	var deletedMessageNotFound *PendingMessageNotFoundError
 	if !errors.As(deleteErr, &deletedMessageNotFound) {
 		t.Fatalf("repeated queue delete error = %T %v", deleteErr, deleteErr)
 	}
 	if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
-		MessageID: MessageID(queued[0].MessageID),
+		MessageID: queued[0].Value.MessageID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +313,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal("steered message did not enter application history")
 	}
 	steerErr := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
-		MessageID: MessageID(queued[0].MessageID),
+		MessageID: queued[0].Value.MessageID,
 	})
 	var pendingMessageNotFound *PendingMessageNotFoundError
 	if !errors.As(steerErr, &pendingMessageNotFound) {
@@ -437,37 +345,104 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	}
 }
 
-func TestAgentInteractionStatusIntegration(t *testing.T) {
+func TestAgentWaitingInputRoundIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
 	flowID := FlowID("agent-interaction-" + randomLocalID(t))
 	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
 		t.Fatal(err)
 	}
-	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
-		return state.Status == AgentStatusWaitingForMessage
-	})
-	if err := environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusWaiting); err != nil {
-		t.Fatal(err)
+	initial := readSnapshot(t, environment, flowID)
+	if initial.Description == nil || initial.Description.WaitingInputRound != 1 {
+		t.Fatalf("initial waiting input round = %#v, want 1", initial.Description)
 	}
 
-	submitted := make(chan error, 1)
+	type roundResult struct {
+		round WaitingInputRound
+		err   error
+	}
+	advanced := make(chan roundResult, 1)
 	go func() {
-		submitted <- environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusSubmitted)
+		round, err := environment.agent.WaitForWaitingInputRound(t.Context(), flowID, 1)
+		advanced <- roundResult{round: round, err: err}
 	}()
-	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "status cycle"}); err != nil {
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "round cycle"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-submitted; err != nil {
-		t.Fatal(err)
-	}
-	if err := environment.agent.WaitForInteractionStatus(t.Context(), flowID, AgentInteractionStatusWaiting); err != nil {
-		t.Fatal(err)
+	first := <-advanced
+	if first.err != nil || first.round <= 1 {
+		t.Fatalf("first round result = %#v", first)
 	}
 	snapshot := readSnapshot(t, environment, flowID)
-	if snapshot.Description == nil || snapshot.Description.InteractionStatus != AgentInteractionStatusWaiting ||
-		!historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: status cycle") {
+	if snapshot.Description == nil || snapshot.Description.WaitingInputRound != first.round ||
+		!historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: round cycle") {
 		t.Fatalf("reconciled Snapshot = %#v", snapshot)
 	}
+
+	environment.replaceWorker(t, flowID)
+	advanced = make(chan roundResult, 1)
+	go func() {
+		round, err := environment.agent.WaitForWaitingInputRound(t.Context(), flowID, first.round)
+		advanced <- roundResult{round: round, err: err}
+	}()
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "replacement cycle"}); err != nil {
+		t.Fatal(err)
+	}
+	second := <-advanced
+	if second.err != nil || second.round <= first.round {
+		t.Fatalf("replacement round result = %#v", second)
+	}
+}
+
+func TestAgentConsumesSteeringAtApprovalAndModelBoundariesIntegration(t *testing.T) {
+	t.Run("approval", func(t *testing.T) {
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+		flowID := FlowID("agent-approval-consumption-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForPendingApproval(t, environment, flowID)
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "private approval steering"}); err != nil {
+			t.Fatal(err)
+		}
+		queued := waitForQueuedMessages(t, environment, flowID, 1)
+		messageID := queued[0].Value.MessageID
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: messageID}); err != nil {
+			t.Fatal(err)
+		}
+		assertSteeredInputConsumption(t, environment.agent, flowID, []MessageID{messageID}, []string{"private approval steering"})
+	})
+
+	t.Run("model", func(t *testing.T) {
+		model := newBlockingFirstModel()
+		environment := newAgentIntegrationEnvironment(t, model, newIntegrationToolRegistry())
+		flowID := FlowID("agent-model-consumption-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "start model"}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-model.started:
+		case <-time.After(integrationWaitTimeout):
+			t.Fatal("model did not start")
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "private model steering"}); err != nil {
+			t.Fatal(err)
+		}
+		queued := waitForQueuedMessages(t, environment, flowID, 1)
+		messageID := queued[0].Value.MessageID
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: messageID}); err != nil {
+			t.Fatal(err)
+		}
+		close(model.release)
+		assertSteeredInputConsumption(t, environment.agent, flowID, []MessageID{messageID}, []string{"private model steering"})
+	})
 }
 
 func TestAgentMessageArchiveIntegration(t *testing.T) {
@@ -832,20 +807,19 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 	}
 
 	environment.replaceWorker(t, flowID)
-	submitted := make(chan error, 1)
+	advanced := make(chan error, 1)
 	go func() {
-		submitted <- environment.agent.WaitForInteractionStatus(
-			t.Context(),
-			flowID,
-			AgentInteractionStatusSubmitted,
+		_, err := environment.agent.WaitForWaitingInputRound(
+			t.Context(), flowID, active.Description.WaitingInputRound,
 		)
+		advanced <- err
 	}()
 	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
 		Revision: active.Description.Plan.Revision,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-submitted; err != nil {
+	if err := <-advanced; err != nil {
 		t.Fatal(err)
 	}
 	continued := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
@@ -967,6 +941,16 @@ func TestAgentPlanTaskActivityIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	consumed := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindInputConsumed && event.InputConsumption != nil &&
+			event.InputConsumption.PlanExecutionRevision != nil &&
+			*event.InputConsumption.PlanExecutionRevision == draft.Revision
+	})
+	if consumed.Activity.Message != fmt.Sprintf(
+		"Consumed plan execution request for revision %d.", draft.Revision,
+	) {
+		t.Fatalf("Plan input consumption Activity = %#v", consumed.Activity)
+	}
 	event := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
 		return event.Kind == EventKindPlanTaskUpdated && event.PlanTaskStatus != nil &&
 			*event.PlanTaskStatus == TaskStatusInProgress
@@ -994,6 +978,7 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage
 	})
+	initial := readSnapshot(t, environment, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1004,8 +989,13 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 		}
 	}
 	queued := waitForQueuedMessages(t, environment, flowID, 2)
+	queuedSnapshot := readSnapshot(t, environment, flowID)
+	if initial.Description == nil || queuedSnapshot.Description == nil ||
+		queuedSnapshot.Description.WaitingInputRound != initial.Description.WaitingInputRound {
+		t.Fatalf("queued input created a false waiting round: initial=%#v queued=%#v", initial.Description, queuedSnapshot.Description)
+	}
 	for _, message := range queued {
-		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: MessageID(message.MessageID)}); err != nil {
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: message.Value.MessageID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1023,6 +1013,13 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 	if len(users) != 2 || users[0] != "first replacement objective" || users[1] != "final replacement objective" {
 		t.Fatalf("steered user messages = %q", users)
 	}
+	assertSteeredInputConsumption(
+		t,
+		environment.agent,
+		flowID,
+		[]MessageID{queued[0].Value.MessageID, queued[1].Value.MessageID},
+		[]string{queued[0].Value.Value.Content, queued[1].Value.Value.Content},
+	)
 }
 
 func TestAgentTerminalSnapshotIntegration(t *testing.T) {
@@ -1047,6 +1044,9 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	}
 	if result.Status != dex.FlowTerminated {
 		t.Fatalf("Flow status = %v, want terminated", result.Status)
+	}
+	if _, err := environment.agent.WaitForWaitingInputRound(t.Context(), flowID, 1); err == nil {
+		t.Fatal("waiting input round remained active after termination")
 	}
 
 	snapshot := readSnapshot(t, environment, flowID)
@@ -1138,18 +1138,9 @@ type agentIntegrationEnvironment struct {
 }
 
 func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools ToolRegistry) *agentIntegrationEnvironment {
-	return newAgentIntegrationEnvironmentWithOptions(t, modelClient, tools)
-}
-
-func newAgentIntegrationEnvironmentWithOptions(
-	t *testing.T,
-	modelClient ModelClient,
-	tools ToolRegistry,
-	options ...FlowOption,
-) *agentIntegrationEnvironment {
 	t.Helper()
 	environment := &agentIntegrationEnvironment{
-		flow:          NewFlow(modelClient, tools, options...),
+		flow:          NewFlow(modelClient, tools),
 		address:       availableLocalAddress(t, t.Context()),
 		serverAddress: os.Getenv("DEX_FLOW_SERVICE_ADDRESS"),
 	}
@@ -1403,9 +1394,9 @@ func waitForQueuedMessages(
 	environment *agentIntegrationEnvironment,
 	flowID FlowID,
 	count int,
-) []dex.ChannelMessage[UserMessage] {
+) []dex.ChannelMessage[PendingUserMessage] {
 	t.Helper()
-	var messages []dex.ChannelMessage[UserMessage]
+	var messages []dex.ChannelMessage[PendingUserMessage]
 	waitUntil(t, environment, "queued messages", func() (bool, error) {
 		view, err := environment.agent.GetFlowStateForTestOnly(t.Context(), flowID)
 		messages = view.Queued
@@ -1506,10 +1497,9 @@ func assertTextStream(t *testing.T, client *Client, flowID FlowID, stream EventS
 
 func assertModelActivity(t *testing.T, client *Client, flowID FlowID, expectedSequence Sequence) {
 	t.Helper()
-	event, err := client.ReadEvent(context.Background(), flowID, EventStreamActivity, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	event := readActivityUntil(t, client, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindModelStarted
+	})
 	if event.Activity.Kind != EventKindModelStarted ||
 		event.Activity.MessageSequence == nil ||
 		*event.Activity.MessageSequence != expectedSequence {
@@ -1575,6 +1565,49 @@ func readActivityUntil(
 		resumeToken = event.ResumeToken
 		if matches(event.Activity) {
 			return event
+		}
+	}
+}
+
+func assertSteeredInputConsumption(
+	t *testing.T,
+	client *Client,
+	flowID FlowID,
+	messageIDs []MessageID,
+	secrets []string,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), integrationWaitTimeout)
+	defer cancel()
+	remaining := make(map[MessageID]struct{}, len(messageIDs))
+	for _, messageID := range messageIDs {
+		remaining[messageID] = struct{}{}
+	}
+	resumeToken := ResumeToken("")
+	for len(remaining) > 0 {
+		event, err := client.ReadEvent(ctx, flowID, EventStreamActivity, resumeToken)
+		if err != nil {
+			t.Fatalf("read Activity Stream for %s: %v", flowID, err)
+		}
+		resumeToken = event.ResumeToken
+		consumption := event.Activity.InputConsumption
+		if event.Activity.Kind != EventKindInputConsumed || consumption == nil ||
+			len(consumption.SteeredMessageIDs) == 0 {
+			continue
+		}
+		if event.Activity.Message != consumedMessagesDescription(len(consumption.SteeredMessageIDs), "steered") {
+			t.Fatalf("steered input consumption Activity = %#v", event.Activity)
+		}
+		for _, messageID := range consumption.SteeredMessageIDs {
+			if _, expected := remaining[messageID]; !expected {
+				t.Fatalf("unexpected steered message ID %q in %#v", messageID, event.Activity)
+			}
+			delete(remaining, messageID)
+		}
+		for _, secret := range secrets {
+			if strings.Contains(event.Activity.Message, secret) {
+				t.Fatalf("steered input consumption Activity leaked content: %#v", event.Activity)
+			}
 		}
 	}
 }
@@ -1748,6 +1781,35 @@ type blockingPlanModel struct {
 	activeCalls atomic.Int32
 }
 
+type blockingFirstModel struct {
+	integrationModel
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+var _ ModelClient = (*blockingFirstModel)(nil)
+
+func newBlockingFirstModel() *blockingFirstModel {
+	return &blockingFirstModel{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (model *blockingFirstModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	shouldBlock := false
+	model.once.Do(func() {
+		shouldBlock = true
+		close(model.started)
+	})
+	if shouldBlock {
+		select {
+		case <-model.release:
+		case <-ctx.Done():
+			return ModelReply{}, ctx.Err()
+		}
+	}
+	return model.integrationModel.Complete(ctx, request)
+}
+
 var _ ModelClient = (*blockingPlanModel)(nil)
 
 func newBlockingPlanModel() *blockingPlanModel {
@@ -1885,93 +1947,6 @@ func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool)
 	return "", false
 }
 
-var refreshedLeaseStateForTestOnly = MustJSONObject(`{"token":"refreshed","config":{"provider":"fixture"}}`)
-
-type blockingLeaseRefresherForTestOnly struct {
-	mutex    sync.Mutex
-	requests []LeaseRefreshRequest
-	started  chan struct{}
-	release  chan struct{}
-	start    sync.Once
-	unblock  sync.Once
-}
-
-func newBlockingLeaseRefresherForTestOnly() *blockingLeaseRefresherForTestOnly {
-	return &blockingLeaseRefresherForTestOnly{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-}
-
-func (refresher *blockingLeaseRefresherForTestOnly) Refresh(
-	ctx context.Context,
-	request LeaseRefreshRequest,
-) (LeaseRefreshResult, error) {
-	refresher.mutex.Lock()
-	refresher.requests = append(refresher.requests, request)
-	refresher.mutex.Unlock()
-	refresher.start.Do(func() { close(refresher.started) })
-	select {
-	case <-refresher.release:
-		return LeaseRefreshResult{
-			State:     refreshedLeaseStateForTestOnly,
-			RefreshAt: time.Now().Add(time.Hour),
-		}, nil
-	case <-ctx.Done():
-		return LeaseRefreshResult{}, ctx.Err()
-	}
-}
-
-func (refresher *blockingLeaseRefresherForTestOnly) waitUntilStartedForTestOnly(t *testing.T) {
-	t.Helper()
-	select {
-	case <-refresher.started:
-	case <-time.After(integrationWaitTimeout):
-		t.Fatal("Lease refresh did not start")
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
-	}
-}
-
-func (refresher *blockingLeaseRefresherForTestOnly) releaseForTestOnly() {
-	refresher.unblock.Do(func() { close(refresher.release) })
-}
-
-func (refresher *blockingLeaseRefresherForTestOnly) assertRequestForTestOnly(
-	t *testing.T,
-	flowID FlowID,
-	state JSONObject,
-	generation int64,
-) {
-	t.Helper()
-	refresher.mutex.Lock()
-	defer refresher.mutex.Unlock()
-	if len(refresher.requests) != 1 {
-		t.Fatalf("Lease refresh requests = %d, want 1", len(refresher.requests))
-	}
-	request := refresher.requests[0]
-	if request.FlowID != flowID || request.State != state || request.TargetGeneration != generation ||
-		request.RefreshID != stableLeaseRefreshID(flowID, generation) {
-		t.Fatalf("Lease refresh request = %#v", request)
-	}
-}
-
-type immediateLeaseRefresherForTestOnly struct{}
-
-func newImmediateLeaseRefresherForTestOnly() *immediateLeaseRefresherForTestOnly {
-	return &immediateLeaseRefresherForTestOnly{}
-}
-
-func (*immediateLeaseRefresherForTestOnly) Refresh(
-	context.Context,
-	LeaseRefreshRequest,
-) (LeaseRefreshResult, error) {
-	return LeaseRefreshResult{
-		State:     refreshedLeaseStateForTestOnly,
-		RefreshAt: time.Now().Add(time.Hour),
-	}, nil
-}
-
 type retryToolRegistryForTestOnly struct {
 	mutex             sync.Mutex
 	failuresRemaining int
@@ -2075,244 +2050,6 @@ func (registry *retryToolRegistryForTestOnly) assertAttemptsForTestOnly(
 	}
 }
 
-type leaseToolRegistryForTestOnly struct {
-	mutex               sync.Mutex
-	invocations         []ToolInvocation
-	failFirstAttempt    bool
-	firstAttempt        sync.Once
-	firstAttemptStarted chan struct{}
-	firstAttemptRelease chan struct{}
-	release             sync.Once
-}
-
-func newLeaseToolRegistryForTestOnly(failFirstAttempt bool) *leaseToolRegistryForTestOnly {
-	return &leaseToolRegistryForTestOnly{
-		failFirstAttempt:    failFirstAttempt,
-		firstAttemptStarted: make(chan struct{}),
-		firstAttemptRelease: make(chan struct{}),
-	}
-}
-
-func (*leaseToolRegistryForTestOnly) ServerNames() []string { return []string{"integration"} }
-
-func (*leaseToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
-	return []RegisteredTool{{ServerName: "integration", RemoteName: string(integrationToolName), Definition: leaseToolDefinitionForTestOnly()}}
-}
-
-func (*leaseToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
-	return []ToolDefinition{leaseToolDefinitionForTestOnly()}
-}
-
-func leaseToolDefinitionForTestOnly() ToolDefinition {
-	return ToolDefinition{
-		Name:               integrationToolName,
-		Description:        "Record runtime Lease snapshots.",
-		InputSchema:        MustJSONObject(`{"type":"object","additionalProperties":false}`),
-		AttemptTimeout:     10 * time.Second,
-		MaximumAttempts:    2,
-		RetryTotalDuration: 20 * time.Second,
-	}
-}
-
-func (registry *leaseToolRegistryForTestOnly) Execute(
-	ctx context.Context,
-	invocation ToolInvocation,
-) (ToolExecutionResult, error) {
-	registry.mutex.Lock()
-	invocationIndex := len(registry.invocations)
-	registry.invocations = append(registry.invocations, invocation)
-	registry.mutex.Unlock()
-	if registry.failFirstAttempt && invocationIndex == 0 {
-		registry.firstAttempt.Do(func() { close(registry.firstAttemptStarted) })
-		select {
-		case <-registry.firstAttemptRelease:
-			return ToolExecutionResult{}, errors.New("transient fixture failure after Lease refresh")
-		case <-ctx.Done():
-			return ToolExecutionResult{}, ctx.Err()
-		}
-	}
-	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
-}
-
-func (registry *leaseToolRegistryForTestOnly) waitUntilFirstAttemptStartedForTestOnly(t *testing.T) {
-	t.Helper()
-	select {
-	case <-registry.firstAttemptStarted:
-	case <-time.After(integrationWaitTimeout):
-		t.Fatal("first tool attempt did not start")
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
-	}
-}
-
-func (registry *leaseToolRegistryForTestOnly) releaseFirstAttemptForTestOnly() {
-	registry.release.Do(func() { close(registry.firstAttemptRelease) })
-}
-
-func (registry *leaseToolRegistryForTestOnly) assertLeaseStatesForTestOnly(t *testing.T, expected []JSONObject) {
-	t.Helper()
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	if len(registry.invocations) != len(expected) {
-		t.Fatalf("tool invocations = %d, want %d", len(registry.invocations), len(expected))
-	}
-	for index, invocation := range registry.invocations {
-		if invocation.LeaseState == nil || *invocation.LeaseState != expected[index] {
-			t.Fatalf("Lease state %d = %v, want %s", index, invocation.LeaseState, expected[index])
-		}
-	}
-}
-
-func waitForToolInvocationCountForTestOnly(t *testing.T, registry *leaseToolRegistryForTestOnly, expected int) {
-	t.Helper()
-	deadline := time.NewTimer(integrationWaitTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		registry.mutex.Lock()
-		count := len(registry.invocations)
-		registry.mutex.Unlock()
-		if count >= expected {
-			return
-		}
-		select {
-		case <-ticker.C:
-		case <-deadline.C:
-			t.Fatalf("tool invocations = %d, want at least %d", count, expected)
-		case <-t.Context().Done():
-			t.Fatal(t.Context().Err())
-		}
-	}
-}
-
-type leaseRecoveryToolRegistryForTestOnly struct {
-	mutex       sync.Mutex
-	invocations []ToolInvocation
-	started     chan struct{}
-	release     chan struct{}
-	start       sync.Once
-	unblock     sync.Once
-}
-
-func newLeaseRecoveryToolRegistryForTestOnly() *leaseRecoveryToolRegistryForTestOnly {
-	return &leaseRecoveryToolRegistryForTestOnly{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-}
-
-func (*leaseRecoveryToolRegistryForTestOnly) ServerNames() []string {
-	return []string{"integration"}
-}
-
-func (*leaseRecoveryToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
-	return []RegisteredTool{{
-		ServerName: "integration",
-		RemoteName: string(integrationToolName),
-		Definition: leaseToolDefinitionForTestOnly(),
-	}}
-}
-
-func (*leaseRecoveryToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
-	return []ToolDefinition{leaseToolDefinitionForTestOnly()}
-}
-
-func (registry *leaseRecoveryToolRegistryForTestOnly) Execute(
-	ctx context.Context,
-	invocation ToolInvocation,
-) (ToolExecutionResult, error) {
-	registry.mutex.Lock()
-	index := len(registry.invocations)
-	registry.invocations = append(registry.invocations, invocation)
-	registry.mutex.Unlock()
-	if index == 0 {
-		registry.start.Do(func() { close(registry.started) })
-		select {
-		case <-registry.release:
-			return ToolExecutionResult{
-				Content: `{"status":"failed","error":"lease_expired","message":"retry with a new tool call"}`,
-				Outcome: ToolOutcomeKnownFailure,
-				IsError: true,
-			}, nil
-		case <-ctx.Done():
-			return ToolExecutionResult{}, ctx.Err()
-		}
-	}
-	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
-}
-
-func (registry *leaseRecoveryToolRegistryForTestOnly) waitUntilFirstCallStartedForTestOnly(t *testing.T) {
-	t.Helper()
-	select {
-	case <-registry.started:
-	case <-time.After(integrationWaitTimeout):
-		t.Fatal("Lease failure tool call did not start")
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
-	}
-}
-
-func (registry *leaseRecoveryToolRegistryForTestOnly) releaseFirstCallForTestOnly() {
-	registry.unblock.Do(func() { close(registry.release) })
-}
-
-func (registry *leaseRecoveryToolRegistryForTestOnly) assertRecoveryCallsForTestOnly(
-	t *testing.T,
-	initial JSONObject,
-	refreshed JSONObject,
-) {
-	t.Helper()
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	if len(registry.invocations) != 2 {
-		t.Fatalf("Lease recovery tool calls = %d, want 2", len(registry.invocations))
-	}
-	expected := []JSONObject{initial, refreshed}
-	for index, invocation := range registry.invocations {
-		if invocation.Attempt != 1 || invocation.LeaseState == nil || *invocation.LeaseState != expected[index] {
-			t.Fatalf("Lease recovery invocation %d = %#v", index, invocation)
-		}
-	}
-	if registry.invocations[0].CallID == registry.invocations[1].CallID {
-		t.Fatal("model Lease recovery reused the original tool CallID")
-	}
-}
-
-type leaseRetryModelForTestOnly struct {
-	integrationModel
-	mutex          sync.Mutex
-	sawLeasePrompt bool
-}
-
-func (model *leaseRetryModelForTestOnly) Complete(
-	ctx context.Context,
-	request ModelRequest,
-) (ModelReply, error) {
-	model.mutex.Lock()
-	model.sawLeasePrompt = model.sawLeasePrompt || strings.Contains(request.Config.SystemPrompt, leaseRecoveryPrompt)
-	model.mutex.Unlock()
-	last := integrationLastConversationMessage(request.Messages)
-	if last != nil && last.Role == MessageRoleTool && strings.Contains(last.Content, "lease_expired") {
-		return integrationToolReply(
-			request,
-			integrationToolName,
-			MustJSONObject(`{}`),
-			"retrying tool with refreshed Lease",
-		)
-	}
-	return model.integrationModel.Complete(ctx, request)
-}
-
-func (model *leaseRetryModelForTestOnly) assertLeasePromptForTestOnly(t *testing.T) {
-	t.Helper()
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-	if !model.sawLeasePrompt {
-		t.Fatal("model did not receive the Lease recovery instruction")
-	}
-}
-
 func waitForCompletedToolTurnForTestOnly(
 	t *testing.T,
 	environment *agentIntegrationEnvironment,
@@ -2340,35 +2077,8 @@ func waitForStepCompletionForTestOnly(
 	if err := environment.sdk.WaitForStepCompletion(ctx, string(flowID), dex.StepExecutionID{
 		StepType:        string(step),
 		ExecutionNumber: &execution,
-	}); err != nil {
+	}, dex.WaitForStepCompletionOptions{}); err != nil {
 		t.Fatalf("wait for %s completion: %v", step, err)
-	}
-}
-
-func assertLeaseStateNotExposedForTestOnly(
-	t *testing.T,
-	environment *agentIntegrationEnvironment,
-	flowID FlowID,
-	secrets ...string,
-) {
-	t.Helper()
-	values := make([]any, 0, 4)
-	values = append(values, readSnapshot(t, environment, flowID))
-	for _, stream := range []EventStream{EventStreamAssistant, EventStreamReasoning, EventStreamActivity} {
-		events, err := environment.agent.ListRecentEvents(t.Context(), flowID, stream, MaximumRecentEventLimit)
-		if err != nil {
-			t.Fatalf("list %s events: %v", stream, err)
-		}
-		values = append(values, events)
-	}
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, secret := range secrets {
-		if strings.Contains(string(encoded), secret) {
-			t.Fatalf("Lease value %q was exposed in browser read models", secret)
-		}
 	}
 }
 

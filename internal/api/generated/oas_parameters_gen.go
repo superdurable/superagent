@@ -535,13 +535,13 @@ func decodeReadEventParams(args [0]string, argsEscaped bool, r *http.Request) (p
 	return params, nil
 }
 
-// WaitForAgentInteractionStatusParams is parameters of waitForAgentInteractionStatus operation.
-type WaitForAgentInteractionStatusParams struct {
-	FlowId         FlowID
-	ExpectedStatus AgentInteractionStatus
+// WaitForWaitingInputRoundParams is parameters of waitForWaitingInputRound operation.
+type WaitForWaitingInputRoundParams struct {
+	FlowId                 FlowID
+	AfterWaitingInputRound WaitingInputRound
 }
 
-func unpackWaitForAgentInteractionStatusParams(packed middleware.Parameters) (params WaitForAgentInteractionStatusParams) {
+func unpackWaitForWaitingInputRoundParams(packed middleware.Parameters) (params WaitForWaitingInputRoundParams) {
 	{
 		key := middleware.ParameterKey{
 			Name: "flowId",
@@ -551,15 +551,15 @@ func unpackWaitForAgentInteractionStatusParams(packed middleware.Parameters) (pa
 	}
 	{
 		key := middleware.ParameterKey{
-			Name: "expectedStatus",
+			Name: "afterWaitingInputRound",
 			In:   "query",
 		}
-		params.ExpectedStatus = packed[key].(AgentInteractionStatus)
+		params.AfterWaitingInputRound = packed[key].(WaitingInputRound)
 	}
 	return params
 }
 
-func decodeWaitForAgentInteractionStatusParams(args [0]string, argsEscaped bool, r *http.Request) (params WaitForAgentInteractionStatusParams, _ error) {
+func decodeWaitForWaitingInputRoundParams(args [0]string, argsEscaped bool, r *http.Request) (params WaitForWaitingInputRoundParams, _ error) {
 	q := uri.NewQueryDecoder(r.URL.Query())
 	// Decode query: flowId.
 	if err := func() error {
@@ -612,33 +612,40 @@ func decodeWaitForAgentInteractionStatusParams(args [0]string, argsEscaped bool,
 			Err:  err,
 		}
 	}
-	// Decode query: expectedStatus.
+	// Decode query: afterWaitingInputRound.
 	if err := func() error {
 		cfg := uri.QueryParameterDecodingConfig{
-			Name:    "expectedStatus",
+			Name:    "afterWaitingInputRound",
 			Style:   uri.QueryStyleForm,
 			Explode: true,
 		}
 
 		if err := q.HasParam(cfg); err == nil {
 			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
-				val, err := d.DecodeValue()
-				if err != nil {
+				var paramsDotAfterWaitingInputRoundVal int64
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToInt64(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotAfterWaitingInputRoundVal = c
+					return nil
+				}(); err != nil {
 					return err
 				}
-
-				c, err := conv.ToString(val)
-				if err != nil {
-					return err
-				}
-
-				params.ExpectedStatus = AgentInteractionStatus(c)
+				params.AfterWaitingInputRound = WaitingInputRound(paramsDotAfterWaitingInputRoundVal)
 				return nil
 			}); err != nil {
 				return err
 			}
 			if err := func() error {
-				if err := params.ExpectedStatus.Validate(); err != nil {
+				if err := params.AfterWaitingInputRound.Validate(); err != nil {
 					return err
 				}
 				return nil
@@ -651,7 +658,7 @@ func decodeWaitForAgentInteractionStatusParams(args [0]string, argsEscaped bool,
 		return nil
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
-			Name: "expectedStatus",
+			Name: "afterWaitingInputRound",
 			In:   "query",
 			Err:  err,
 		}

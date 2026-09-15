@@ -197,31 +197,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					}
 
-				case 'i': // Prefix: "interaction-status"
-
-					if l := len("interaction-status"); len(elem) >= l && elem[0:l] == "interaction-status" {
-						elem = elem[l:]
-					} else {
-						break
-					}
-
-					if len(elem) == 0 {
-						// Leaf node.
-						switch r.Method {
-						case "GET":
-							s.handleWaitForAgentInteractionStatusRequest([0]string{}, elemIsEscaped, w, r)
-						default:
-							s.notAllowed(w, r, notAllowedParams{
-								allowedMethods: "GET",
-								allowedHeaders: nil,
-								acceptPost:     "",
-								acceptPatch:    "",
-							})
-						}
-
-						return
-					}
-
 				case 'm': // Prefix: "message"
 
 					if l := len("message"); len(elem) >= l && elem[0:l] == "message" {
@@ -503,6 +478,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 
+				case 'w': // Prefix: "waiting-input-round"
+
+					if l := len("waiting-input-round"); len(elem) >= l && elem[0:l] == "waiting-input-round" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleWaitForWaitingInputRoundRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
 				}
 
 			case 'r': // Prefix: "readyz"
@@ -741,31 +741,6 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 							}
 						}
 
-					}
-
-				case 'i': // Prefix: "interaction-status"
-
-					if l := len("interaction-status"); len(elem) >= l && elem[0:l] == "interaction-status" {
-						elem = elem[l:]
-					} else {
-						break
-					}
-
-					if len(elem) == 0 {
-						// Leaf node.
-						switch method {
-						case "GET":
-							r.name = WaitForAgentInteractionStatusOperation
-							r.summary = "Wait for one durable Agent interaction status"
-							r.operationID = "waitForAgentInteractionStatus"
-							r.operationGroup = ""
-							r.pathPattern = "/products/ai-agent/interaction-status"
-							r.args = args
-							r.count = 0
-							return r, true
-						default:
-							return
-						}
 					}
 
 				case 'm': // Prefix: "message"
@@ -1041,6 +1016,31 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 							r.operationID = "approveTool"
 							r.operationGroup = ""
 							r.pathPattern = "/products/ai-agent/tool-approvals"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 'w': // Prefix: "waiting-input-round"
+
+					if l := len("waiting-input-round"); len(elem) >= l && elem[0:l] == "waiting-input-round" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = WaitForWaitingInputRoundOperation
+							r.summary = "Wait for the durable Agent input watermark to advance"
+							r.operationID = "waitForWaitingInputRound"
+							r.operationGroup = ""
+							r.pathPattern = "/products/ai-agent/waiting-input-round"
 							r.args = args
 							r.count = 0
 							return r, true

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 2026-09-10. Supersedes the reconciliation policy in ADR 0004.
+Superseded by ADR 0012 on 2026-09-14.
 
 ## Context
 

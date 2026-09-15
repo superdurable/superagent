@@ -7,10 +7,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentSnapshot } from "./api/generated";
-import {
-  SnapshotCoordinator,
-  snapshotFreshnessMilliseconds,
-} from "./snapshot-coordinator";
+import { SnapshotCoordinator } from "./snapshot-coordinator";
+import { defaultSnapshotRefreshIntervalMilliseconds } from "./runtime-config";
+
+const customRefreshIntervalMilliseconds = 10_000;
 
 describe("SnapshotCoordinator", () => {
   afterEach(() => {
@@ -38,7 +38,9 @@ describe("SnapshotCoordinator", () => {
     reads[0]?.resolve(snapshot("initial"));
     await flushPromises();
 
-    await vi.advanceTimersByTimeAsync(snapshotFreshnessMilliseconds - 1);
+    await vi.advanceTimersByTimeAsync(
+      defaultSnapshotRefreshIntervalMilliseconds - 1,
+    );
     expect(reads).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(reads).toHaveLength(2);
@@ -49,16 +51,19 @@ describe("SnapshotCoordinator", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const reads: Deferred<AgentSnapshot>[] = [];
-    const coordinator = new SnapshotCoordinator({
-      load: () => {
-        const read = deferred<AgentSnapshot>();
-        reads.push(read);
-        return read.promise;
+    const coordinator = new SnapshotCoordinator(
+      {
+        load: () => {
+          const read = deferred<AgentSnapshot>();
+          reads.push(read);
+          return read.promise;
+        },
+        requested: vi.fn(),
+        loaded: vi.fn(),
+        failed: vi.fn(),
       },
-      requested: vi.fn(),
-      loaded: vi.fn(),
-      failed: vi.fn(),
-    });
+      customRefreshIntervalMilliseconds,
+    );
     coordinator.start();
     reads[0]?.resolve(snapshot("initial"));
     await flushPromises();
@@ -113,18 +118,21 @@ describe("SnapshotCoordinator", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValue(snapshot("recovered"));
     const failed = vi.fn();
-    const coordinator = new SnapshotCoordinator({
-      load,
-      requested: vi.fn(),
-      loaded: vi.fn(),
-      failed,
-    });
+    const coordinator = new SnapshotCoordinator(
+      {
+        load,
+        requested: vi.fn(),
+        loaded: vi.fn(),
+        failed,
+      },
+      customRefreshIntervalMilliseconds,
+    );
     coordinator.start();
     await flushPromises();
     expect(failed).toHaveBeenCalledWith("offline");
 
     coordinator.setVisible(false);
-    await vi.advanceTimersByTimeAsync(snapshotFreshnessMilliseconds + 500);
+    await vi.advanceTimersByTimeAsync(customRefreshIntervalMilliseconds + 500);
     expect(load).toHaveBeenCalledTimes(1);
     coordinator.setVisible(true);
     expect(load).toHaveBeenCalledTimes(2);

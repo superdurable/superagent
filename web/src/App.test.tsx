@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import {
-  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   EventStream,
@@ -33,10 +32,11 @@ import {
   sendMessage,
   startAgent,
   steerQueuedMessage,
-  waitForAgentInteractionStatus,
+  waitForWaitingInputRound,
   type AgentSnapshot,
   type AgentDescription,
   type Portal,
+  type StreamEvent,
 } from "./api/generated";
 import type * as GeneratedAPI from "./api/generated";
 
@@ -55,7 +55,7 @@ vi.mock("./api/generated", async (importOriginal) => {
     sendMessage: vi.fn(),
     startAgent: vi.fn(),
     steerQueuedMessage: vi.fn(),
-    waitForAgentInteractionStatus: vi.fn(),
+    waitForWaitingInputRound: vi.fn(),
   };
 });
 
@@ -84,7 +84,7 @@ const portal: Portal = {
 
 const activeDescription: AgentDescription = {
   status: AgentStatus.WAITING_FOR_MESSAGE,
-  interactionStatus: AgentInteractionStatus.WAITING,
+  waitingInputRound: 1,
   model: "mock/reliable",
   systemPrompt: "Be helpful.",
   firstRetainedSequence: 1,
@@ -132,7 +132,7 @@ describe("App", () => {
           );
         }),
     );
-    vi.mocked(waitForAgentInteractionStatus).mockImplementation(
+    vi.mocked(waitForWaitingInputRound).mockImplementation(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
           signal?.addEventListener(
@@ -357,17 +357,42 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "SuperAgent" });
 
       expect(listRecentEvents).not.toHaveBeenCalled();
-      expect(waitForAgentInteractionStatus).not.toHaveBeenCalled();
+      expect(waitForWaitingInputRound).not.toHaveBeenCalled();
 
       visibility.mockReturnValue("visible");
       fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => {
         expect(listRecentEvents).toHaveBeenCalledTimes(3);
-        expect(waitForAgentInteractionStatus).toHaveBeenCalledTimes(1);
+        expect(waitForWaitingInputRound).toHaveBeenCalledTimes(1);
       });
     } finally {
       visibility.mockRestore();
     }
+  });
+
+  it("advances the waiting input watermark from each actual response", async () => {
+    const firstWait = deferred<{ waitingInputRound: number }>();
+    const observed: number[] = [];
+    vi.mocked(waitForWaitingInputRound).mockImplementation(
+      ({ query, signal }) => {
+        observed.push(query.afterWaitingInputRound);
+        if (observed.length === 1) return firstWait.promise;
+        return pendingStream(signal);
+      },
+    );
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+    await screen.findByRole("heading", { name: "SuperAgent" });
+    await waitFor(() => {
+      expect(observed).toEqual([1]);
+    });
+
+    firstWait.resolve({ waitingInputRound: 4 });
+
+    await waitFor(() => {
+      expect(observed).toEqual([1, 4]);
+      expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("shows a terminal Flow result without opening live subscriptions", async () => {
@@ -421,7 +446,7 @@ describe("App", () => {
   it("releases the idle durable wait before sending the first message", async () => {
     let isWaitAborted = false;
     let isWaitSettled = false;
-    vi.mocked(waitForAgentInteractionStatus).mockImplementationOnce(
+    vi.mocked(waitForWaitingInputRound).mockImplementationOnce(
       ({ signal }) =>
         new Promise((_resolve, reject) => {
           signal?.addEventListener(
@@ -446,7 +471,7 @@ describe("App", () => {
     render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message" });
     await waitFor(() => {
-      expect(waitForAgentInteractionStatus).toHaveBeenCalledTimes(1);
+      expect(waitForWaitingInputRound).toHaveBeenCalledTimes(1);
     });
 
     fireEvent.change(composer, { target: { value: "first" } });
@@ -524,7 +549,7 @@ describe("App", () => {
       description: {
         ...activeDescription,
         status: AgentStatus.CALLING_MODEL,
-        interactionStatus: AgentInteractionStatus.SUBMITTED,
+        waitingInputRound: 1,
       },
       history: {
         messages: [
@@ -597,7 +622,7 @@ describe("App", () => {
       description: {
         ...activeDescription,
         status: AgentStatus.CALLING_MODEL,
-        interactionStatus: AgentInteractionStatus.SUBMITTED,
+        waitingInputRound: 1,
         pendingQueuedMessageCount: 1,
         plan: {
           revision: 4,
@@ -633,6 +658,7 @@ describe("App", () => {
             planRevision: 5,
             planTaskIndex: 0,
             planTaskStatus: TaskStatus.IN_PROGRESS,
+            inputConsumption: null,
           },
         });
       }
@@ -678,7 +704,7 @@ describe("App", () => {
       description: {
         ...activeDescription,
         status: AgentStatus.CALLING_MODEL,
-        interactionStatus: AgentInteractionStatus.SUBMITTED,
+        waitingInputRound: 1,
         plan: {
           revision: 7,
           status: PlanStatus.ACTIVE,
@@ -700,7 +726,73 @@ describe("App", () => {
     );
   });
 
-  it("closes the Plan execution boundary immediately on submitted status", async () => {
+  it("moves a consumed queued message into the conversation before Snapshot", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        pendingQueuedMessageCount: 1,
+      },
+      queued: [
+        {
+          messageId: "queued-1",
+          value: { content: "Show this immediately", planMode: false },
+        },
+      ],
+    });
+    const consumed = deferred<StreamEvent>();
+    let sentConsumption = false;
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY && !sentConsumption) {
+        sentConsumption = true;
+        return consumed.promise;
+      }
+      return pendingStream(signal);
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    const queue = await screen.findByRole("region", { name: "Message queue" });
+    expect(
+      within(queue).getByText("Show this immediately"),
+    ).toBeInTheDocument();
+    act(() => {
+      consumed.resolve({
+        ...activityEvent(
+          "input-consumed-1",
+          EventKind.INPUT_CONSUMED,
+          "Consumed 1 queued user message.",
+          "2026-09-03T00:01:00Z",
+        ),
+        value: {
+          kind: EventKind.INPUT_CONSUMED,
+          message: "Consumed 1 queued user message.",
+          callId: null,
+          toolName: null,
+          messageSequence: null,
+          inputConsumption: {
+            queuedMessageIds: ["queued-1"],
+            steeredMessageIds: [],
+            planExecutionRevision: null,
+          },
+        },
+      });
+    });
+
+    const history = screen.getByRole("region", {
+      name: "Conversation history",
+    });
+    expect(
+      await within(history).findByText("Show this immediately"),
+    ).toBeInTheDocument();
+    expect(
+      within(queue).queryByText("Show this immediately"),
+    ).not.toBeInTheDocument();
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the Plan boundary closed after its request is consumed", async () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       ...snapshot,
       description: {
@@ -710,32 +802,54 @@ describe("App", () => {
           status: PlanStatus.ACTIVE,
           tasks: [{ content: "Finish the work", status: TaskStatus.PENDING }],
         },
+        isPlanExecutionRequested: true,
       },
     });
-    let resolveSubmitted:
-      ((value: { status: AgentInteractionStatus }) => void) | null = null;
-    vi.mocked(waitForAgentInteractionStatus).mockImplementationOnce(
-      ({ signal }) =>
-        new Promise((resolve, reject) => {
-          resolveSubmitted = resolve;
-          signal?.addEventListener(
-            "abort",
-            () => {
-              reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-          );
-        }),
-    );
+    const consumed = deferred<StreamEvent>();
+    let sentConsumption = false;
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY && !sentConsumption) {
+        sentConsumption = true;
+        return consumed.promise;
+      }
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    });
     window.history.replaceState({}, "", "/?flowId=flow-existing");
     render(<App />);
 
     const plan = await screen.findByLabelText("Agent plan");
     expect(
-      within(plan).getByRole("button", { name: "Continue plan" }),
-    ).toBeEnabled();
+      within(plan).getByRole("button", { name: "Execution requested" }),
+    ).toBeDisabled();
     act(() => {
-      resolveSubmitted?.({ status: AgentInteractionStatus.SUBMITTED });
+      consumed.resolve({
+        ...activityEvent(
+          "input-consumed-1",
+          EventKind.INPUT_CONSUMED,
+          "Consumed plan execution request for revision 7.",
+          "2026-09-03T00:01:00Z",
+        ),
+        value: {
+          kind: EventKind.INPUT_CONSUMED,
+          message: "Consumed plan execution request for revision 7.",
+          callId: null,
+          toolName: null,
+          messageSequence: null,
+          inputConsumption: {
+            queuedMessageIds: [],
+            steeredMessageIds: [],
+            planExecutionRevision: 7,
+          },
+        },
+      });
     });
 
     await waitFor(() => {
@@ -743,7 +857,44 @@ describe("App", () => {
         within(plan).getByRole("button", { name: "Plan running…" }),
       ).toBeDisabled();
     });
+    expect(
+      screen.getByText("Consumed plan execution request for revision 7."),
+    ).toBeInTheDocument();
     expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles durable state after a live Snapshot request", async () => {
+    const requested = deferred<StreamEvent>();
+    let sentRequest = false;
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY && !sentRequest) {
+        sentRequest = true;
+        return requested.promise;
+      }
+      return pendingStream(signal);
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "SuperAgent" });
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+    act(() => {
+      requested.resolve(
+        activityEvent(
+          "snapshot-required-1",
+          EventKind.SNAPSHOT_REQUIRED,
+          "Durable interaction state changed.",
+          "2026-09-03T00:01:00Z",
+        ),
+      );
+    });
+
+    await waitFor(() => {
+      expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      screen.queryByText("Durable interaction state changed."),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1048,6 +1199,7 @@ function activityEvent(
       callId: null,
       toolName,
       messageSequence: null,
+      inputConsumption: null,
     },
     resumeToken,
     createdAt,

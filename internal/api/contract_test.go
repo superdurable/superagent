@@ -30,7 +30,6 @@ var supportedPaths = []string{
 	"/products/ai-agent/archived-messages",
 	"/products/ai-agent/events",
 	"/products/ai-agent/events/recent",
-	"/products/ai-agent/interaction-status",
 	"/products/ai-agent/message-queue/delete",
 	"/products/ai-agent/message-queue/steer",
 	"/products/ai-agent/messages",
@@ -40,6 +39,7 @@ var supportedPaths = []string{
 	"/products/ai-agent/snapshot",
 	"/products/ai-agent/start",
 	"/products/ai-agent/tool-approvals",
+	"/products/ai-agent/waiting-input-round",
 	"/readyz",
 }
 

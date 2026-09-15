@@ -22,9 +22,10 @@ turns may create any number of additional batches.
 
 `AnswerQuestions` takes the pending call ID and one non-empty answer for every
 question ID. The RPC locks `PendingUserInput`, validates the exact set, deletes
-the batch, publishes one ordered answer message to `QueuedUserMessages`, and
-writes `AgentInteractionStatus=submitted` in one atomic commit. The message
-retains the answered call ID internally for Plan execution semantics.
+the batch, and publishes one ordered answer message to `QueuedUserMessages` in
+one atomic commit. The Agent Client assigns the message one stable application
+ID before RPC retry. The message retains the answered call ID internally for
+Plan execution semantics.
 
 `SendMessage` rejects while a batch is pending. The browser keeps answers only
 in its current React session, allows backward navigation and edits, and submits

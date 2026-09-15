@@ -23,7 +23,6 @@ import {
 } from "@superdurable/superagent-ui";
 
 import {
-  AgentInteractionStatus,
   AgentStatus,
   EventKind,
   MessageRole,
@@ -100,6 +99,7 @@ export function ConversationView({
     description.plan !== null;
   const timeline = buildConversationTimeline(
     snapshot.history.messages,
+    state.consumedUserMessages,
     state.reasoning,
     state.activities,
     state.assistant,
@@ -268,6 +268,22 @@ export function ConversationView({
                       </span>
                     </div>
                     <RichText value={entry.value.value} />
+                  </article>
+                );
+              }
+              if (entry.kind === "consumed-user") {
+                return (
+                  <article
+                    className="message-bubble user"
+                    key={`consumed-user:${entry.value.messageId}`}
+                  >
+                    <div className="message-meta">
+                      <strong>User</strong>
+                      <time dateTime={entry.value.createdAt}>
+                        {formatTime(entry.value.createdAt)}
+                      </time>
+                    </div>
+                    <p>{entry.value.value.content}</p>
                   </article>
                 );
               }
@@ -681,7 +697,7 @@ function planActionPresentation(
     };
   }
   if (
-    description.interactionStatus !== AgentInteractionStatus.WAITING ||
+    !state.isWaitingForInput ||
     description.status !== AgentStatus.WAITING_FOR_MESSAGE
   ) {
     const isDraft = plan.status === PlanStatus.DRAFT;
@@ -891,6 +907,10 @@ function activityIcon(kind: AgentEvent["kind"]): string {
     case EventKind.PLAN_UPDATED:
     case EventKind.PLAN_TASK_UPDATED:
       return "☷";
+    case EventKind.INPUT_CONSUMED:
+      return "⇥";
+    case EventKind.SNAPSHOT_REQUIRED:
+      return "↻";
     case EventKind.STEERING_APPLIED:
       return "↪";
     case EventKind.COMPACTION_FAILED:

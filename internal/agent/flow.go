@@ -17,8 +17,6 @@
 package agent
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,108 +30,46 @@ import (
 )
 
 var (
-	agentConfigAttribute            = dex.DefineAttribute[AgentConfig]("AgentConfig")
-	agentRuntimeMetadataAttribute   = dex.DefineAttribute[JSONObject]("AgentRuntimeMetadata")
-	agentLeaseStateAttribute        = dex.DefineAttribute[JSONObject]("AgentLeaseState")
-	agentLeaseScheduleAttribute     = dex.DefineAttribute[leaseSchedule]("AgentLeaseSchedule")
-	agentStateAttribute             = dex.DefineAttribute[AgentState]("AgentState")
-	agentInteractionStatusAttribute = dex.DefineAttribute[AgentInteractionStatus]("AgentInteractionStatus")
-	contextSummaryAttribute         = dex.DefineAttribute[ContextSummary]("ContextSummary")
-	currentMessagesAttribute        = dex.DefineAttributeMap[AgentMessage]("CurrentMessages")
-	archivedMessagesAttribute       = dex.DefineAttributeMap[ArchivedMessageChunk]("ArchivedMessages")
-	agentPlanAttribute              = dex.DefineAttribute[AgentPlan]("AgentPlan")
-	pendingApprovalAttribute        = dex.DefineAttribute[PendingApproval]("PendingApproval")
-	pendingTimerAttribute           = dex.DefineAttribute[PendingTimer]("PendingTimer")
-	pendingUserInputAttribute       = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
-	queuedUserMessagesChannel       = dex.DefineChannel[UserMessage]("QueuedUserMessages")
-	steeredUserMessagesChannel      = dex.DefineChannel[UserMessage]("SteeredUserMessages")
-	toolApprovalsChannel            = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
-	planExecutionsChannel           = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
-	reasoningSummaryStream          = dex.DefineStream[string]("ReasoningSummary", 10<<20)
-	assistantTextStream             = dex.DefineStream[string]("AssistantText", 10<<20)
-	agentActivityStream             = dex.DefineStream[AgentEvent]("AgentActivity", 10<<20)
+	agentConfigAttribute          = dex.DefineAttribute[AgentConfig]("AgentConfig")
+	agentRuntimeMetadataAttribute = dex.DefineAttribute[JSONObject]("AgentRuntimeMetadata")
+	agentStateAttribute           = dex.DefineAttribute[AgentState]("AgentState")
+	waitingInputRoundAttribute    = dex.DefineAttribute[WaitingInputRound]("WaitingInputRound")
+	contextSummaryAttribute       = dex.DefineAttribute[ContextSummary]("ContextSummary")
+	currentMessagesAttribute      = dex.DefineAttributeMap[AgentMessage]("CurrentMessages")
+	archivedMessagesAttribute     = dex.DefineAttributeMap[ArchivedMessageChunk]("ArchivedMessages")
+	agentPlanAttribute            = dex.DefineAttribute[AgentPlan]("AgentPlan")
+	pendingApprovalAttribute      = dex.DefineAttribute[PendingApproval]("PendingApproval")
+	pendingTimerAttribute         = dex.DefineAttribute[PendingTimer]("PendingTimer")
+	pendingUserInputAttribute     = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
+	queuedUserMessagesChannel     = dex.DefineChannel[PendingUserMessage]("QueuedUserMessages")
+	steeredUserMessagesChannel    = dex.DefineChannel[PendingUserMessage]("SteeredUserMessages")
+	toolApprovalsChannel          = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
+	planExecutionsChannel         = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
+	reasoningSummaryStream        = dex.DefineStream[string]("ReasoningSummary", 10<<20)
+	assistantTextStream           = dex.DefineStream[string]("AssistantText", 10<<20)
+	agentActivityStream           = dex.DefineStream[AgentEvent]("AgentActivity", 10<<20)
 )
 
 // Flow is the durable AI Agent state machine.
 type Flow struct {
 	modelClient ModelClient
 	tools       ToolRegistry
-	lease       *leaseExtension
 }
 
 var _ dex.Flow = (*Flow)(nil)
 
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
-func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption) *Flow {
+func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
 	if modelClient == nil {
 		panic("model client is required")
 	}
 	if tools == nil {
 		panic("tool registry is required")
 	}
-	flow := &Flow{modelClient: modelClient, tools: tools}
-	for _, option := range options {
-		if option == nil {
-			panic("Flow option is required")
-		}
-		option.applyFlowOption(flow)
-	}
-	return flow
-}
-
-// FlowOption configures one optional Agent capability.
-type FlowOption interface {
-	applyFlowOption(*Flow)
-}
-
-type leaseFlowOption struct {
-	refresher LeaseRefresher
-	config    LeaseExtensionConfig
-}
-
-func (option leaseFlowOption) applyFlowOption(flow *Flow) {
-	if flow.lease != nil {
-		panic("Lease extension is already configured")
-	}
-	flow.lease = &leaseExtension{refresher: option.refresher, config: option.config}
-}
-
-// WithLeaseExtension enables durable maintenance of one opaque runtime Lease.
-func WithLeaseExtension(refresher LeaseRefresher, config *LeaseExtensionConfig) FlowOption {
-	if refresher == nil {
-		panic("Lease refresher is required")
-	}
-	resolved := LeaseExtensionConfig{
-		AttemptTimeout:     2 * time.Minute,
-		RetryTotalDuration: 30 * time.Minute,
-	}
-	if config != nil {
-		if config.AttemptTimeout != 0 {
-			resolved.AttemptTimeout = config.AttemptTimeout
-		}
-		if config.RetryTotalDuration != 0 {
-			resolved.RetryTotalDuration = config.RetryTotalDuration
-		}
-	}
-	if err := resolved.validate(); err != nil {
-		panic(fmt.Sprintf("invalid Lease extension config: %v", err))
-	}
-	return leaseFlowOption{refresher: refresher, config: resolved}
-}
-
-type leaseExtension struct {
-	refresher LeaseRefresher
-	config    LeaseExtensionConfig
-}
-
-type leaseSchedule struct {
-	Generation int64     `json:"generation"`
-	RefreshAt  time.Time `json:"refresh_at"`
+	return &Flow{modelClient: modelClient, tools: tools}
 }
 
 const flowTypeAIAgent = "AIAgentFlow"
-
-const leaseRecoveryPrompt = "If a tool reports that its runtime lease, credential, or token expired and a refresh may recover it, issue one new tool call so it can read the latest lease state. Do not automatically retry the same lease failure more than once; report the repeated failure to the user."
 
 // GetFlowType pins the durable Flow identity.
 func (*Flow) GetFlowType() string {
@@ -154,8 +90,6 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(executeToolWithRetryStep{flow: flow}),
 		dex.DefineStep(recoverToolExecutionStep{flow: flow}),
 		dex.DefineStep(durableWaitStep{flow: flow}),
-		dex.DefineStep(waitForLeaseRefreshStep{flow: flow}),
-		dex.DefineStep(refreshLeaseStep{flow: flow}),
 	}
 }
 
@@ -165,10 +99,8 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 		Attributes: []dex.AttributeDef{
 			agentConfigAttribute,
 			agentRuntimeMetadataAttribute,
-			agentLeaseStateAttribute,
-			agentLeaseScheduleAttribute,
 			agentStateAttribute,
-			agentInteractionStatusAttribute,
+			waitingInputRoundAttribute,
 			contextSummaryAttribute,
 			currentMessagesAttribute,
 			archivedMessagesAttribute,
@@ -192,9 +124,12 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 }
 
 // SendMessage queues one non-empty user message when no question is pending.
-func (*Flow) SendMessage(ctx dex.Context, input UserMessage) (*dex.RPCResult[bool], error) {
-	if strings.TrimSpace(input.Content) == "" {
+func (*Flow) SendMessage(ctx dex.Context, input PendingUserMessage) (*dex.RPCResult[bool], error) {
+	if strings.TrimSpace(input.Value.Content) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if err := validateMessageID(input.MessageID); err != nil {
+		return nil, err
 	}
 	pending, err := getPendingUserInput(ctx)
 	if err != nil {
@@ -206,9 +141,6 @@ func (*Flow) SendMessage(ctx dex.Context, input UserMessage) (*dex.RPCResult[boo
 	if err := queuedUserMessagesChannel.Publish(ctx, input); err != nil {
 		return nil, err
 	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
-		return nil, err
-	}
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
@@ -216,6 +148,9 @@ func (*Flow) SendMessage(ctx dex.Context, input UserMessage) (*dex.RPCResult[boo
 func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(string(input.CallID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if err := validateMessageID(input.MessageID); err != nil {
+		return nil, err
 	}
 	pending, err := getPendingUserInput(ctx)
 	if err != nil {
@@ -231,10 +166,10 @@ func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*de
 	if err := pendingUserInputAttribute.Delete(ctx); err != nil {
 		return nil, err
 	}
-	if err := queuedUserMessagesChannel.Publish(ctx, message); err != nil {
-		return nil, err
-	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+	if err := queuedUserMessagesChannel.Publish(ctx, PendingUserMessage{
+		MessageID: input.MessageID,
+		Value:     message,
+	}); err != nil {
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
@@ -245,20 +180,18 @@ func (*Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCR
 	if strings.TrimSpace(string(input.MessageID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	message, found, err := queuedUserMessagesChannel.FindPendingMessage(ctx, string(input.MessageID))
+	messages, err := queuedUserMessagesChannel.PendingMessages(ctx)
 	if err != nil {
 		return nil, err
 	}
+	message, found := findPendingUserMessage(messages, input.MessageID)
 	if !found {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	if err := queuedUserMessagesChannel.Delete(ctx, string(input.MessageID)); err != nil {
+	if err := queuedUserMessagesChannel.Delete(ctx, message.MessageID); err != nil {
 		return nil, err
 	}
 	if err := steeredUserMessagesChannel.Publish(ctx, message.Value); err != nil {
-		return nil, err
-	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
@@ -355,14 +288,15 @@ func (*Flow) DeleteQueuedMessage(ctx dex.Context, messageID MessageID) (*dex.RPC
 	if strings.TrimSpace(string(messageID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	_, found, err := queuedUserMessagesChannel.FindPendingMessage(ctx, string(messageID))
+	messages, err := queuedUserMessagesChannel.PendingMessages(ctx)
 	if err != nil {
 		return nil, err
 	}
+	message, found := findPendingUserMessage(messages, messageID)
 	if !found {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	if err := queuedUserMessagesChannel.Delete(ctx, string(messageID)); err != nil {
+	if err := queuedUserMessagesChannel.Delete(ctx, message.MessageID); err != nil {
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
@@ -381,9 +315,6 @@ func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCRe
 		return nil, err
 	}
 	if err := toolApprovalsChannel.Publish(ctx, string(input.CallID), ToolApproval{Approved: input.Approved}); err != nil {
-		return nil, err
-	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
 		return nil, err
 	}
 	return &dex.RPCResult[bool]{Output: true}, nil
@@ -433,9 +364,6 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	if err := planExecutionsChannel.Publish(ctx, fmt.Sprint(plan.Revision), input); err != nil {
 		return nil, err
 	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
-		return nil, err
-	}
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
@@ -462,7 +390,7 @@ func (flow *Flow) describe(
 	if err != nil {
 		return AgentDescription{}, err
 	}
-	interactionStatus, err := agentInteractionStatusAttribute.Get(ctx)
+	waitingInputRound, err := waitingInputRoundAttribute.Get(ctx)
 	if err != nil {
 		return AgentDescription{}, err
 	}
@@ -474,7 +402,7 @@ func (flow *Flow) describe(
 	}
 	return AgentDescription{
 		Status:                     state.Status,
-		InteractionStatus:          interactionStatus,
+		WaitingInputRound:          waitingInputRound,
 		Model:                      config.Model,
 		SystemPrompt:               config.SystemPrompt,
 		FirstRetainedSequence:      state.FirstRetainedSequence,
@@ -494,8 +422,8 @@ func (flow *Flow) describe(
 
 func (flow *Flow) initializingSnapshot(
 	ctx dex.Context,
-	queued []dex.ChannelMessage[UserMessage],
-	steered []dex.ChannelMessage[UserMessage],
+	queued []dex.ChannelMessage[PendingUserMessage],
+	steered []dex.ChannelMessage[PendingUserMessage],
 ) AgentSnapshot {
 	return AgentSnapshot{
 		RunID:      RunID(ctx.RunID()),
@@ -503,7 +431,7 @@ func (flow *Flow) initializingSnapshot(
 		History:    HistoryPage{Messages: []SequencedMessage{}},
 		Description: &AgentDescription{
 			Status:                     AgentStatusInitializing,
-			InteractionStatus:          AgentInteractionStatusSubmitted,
+			WaitingInputRound:          0,
 			FirstRetainedSequence:      1,
 			PendingQueuedMessageCount:  len(queued),
 			PendingSteeredMessageCount: len(steered),
@@ -519,15 +447,24 @@ func (flow *Flow) initializingSnapshot(
 	}
 }
 
-func pendingUserMessages(messages []dex.ChannelMessage[UserMessage]) []PendingUserMessage {
+func pendingUserMessages(messages []dex.ChannelMessage[PendingUserMessage]) []PendingUserMessage {
 	result := make([]PendingUserMessage, 0, len(messages))
 	for _, message := range messages {
-		result = append(result, PendingUserMessage{
-			MessageID: MessageID(message.MessageID),
-			Value:     message.Value,
-		})
+		result = append(result, message.Value)
 	}
 	return result
+}
+
+func findPendingUserMessage(
+	messages []dex.ChannelMessage[PendingUserMessage],
+	messageID MessageID,
+) (dex.ChannelMessage[PendingUserMessage], bool) {
+	for _, message := range messages {
+		if message.Value.MessageID == messageID {
+			return message, true
+		}
+	}
+	return dex.ChannelMessage[PendingUserMessage]{}, false
 }
 
 func (flow *Flow) validateConfig(config AgentConfig) error {
@@ -568,16 +505,6 @@ func validateToolExecutionPolicy(definition ToolDefinition) error {
 	default:
 		return nil
 	}
-}
-
-func (flow *Flow) validateInitialLease(initial *LeaseInitialization, now time.Time) error {
-	if flow.lease != nil {
-		return validateLeaseInitialization(initial, now)
-	}
-	if initial != nil {
-		return errors.New("initial Lease requires the Lease extension")
-	}
-	return nil
 }
 
 func (flow *Flow) currentToolStepOptions(ctx dex.Context) (*dex.StepOptions, error) {
@@ -696,7 +623,7 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
 	return err
 }
 
-func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []UserMessage) error {
+func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessage) error {
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
 		return err
@@ -732,9 +659,12 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []UserMessage) erro
 		}
 	}
 	for _, message := range messages {
-		if err := flow.beginUserTurn(ctx, message); err != nil {
+		if err := flow.beginUserTurn(ctx, message.Value); err != nil {
 			return err
 		}
+	}
+	if err := flow.writeInputConsumption(ctx, nil, messages, nil); err != nil {
+		return err
 	}
 	return flow.writeActivity(ctx, AgentEvent{
 		Kind:    EventKindSteeringApplied,
@@ -1223,6 +1153,85 @@ func (*Flow) writeActivity(ctx dex.Context, event AgentEvent) error {
 	return agentActivityStream.Write(ctx, event)
 }
 
+func (flow *Flow) writeSnapshotRequired(ctx dex.Context) error {
+	return flow.writeActivity(ctx, AgentEvent{
+		Kind:    EventKindSnapshotRequired,
+		Message: "Durable interaction state changed.",
+	})
+}
+
+func (flow *Flow) writeInputConsumption(
+	ctx dex.Context,
+	queued []PendingUserMessage,
+	steered []PendingUserMessage,
+	planExecutionRevision *PlanRevision,
+) error {
+	if len(queued) == 0 && len(steered) == 0 && planExecutionRevision == nil {
+		return nil
+	}
+	consumption := InputConsumption{
+		QueuedMessageIDs:      pendingMessageIDs(queued),
+		SteeredMessageIDs:     pendingMessageIDs(steered),
+		PlanExecutionRevision: planExecutionRevision,
+	}
+	messages := make([]string, 0, 3)
+	if len(queued) > 0 {
+		messages = append(messages, consumedMessagesDescription(len(queued), "queued"))
+	}
+	if len(steered) > 0 {
+		messages = append(messages, consumedMessagesDescription(len(steered), "steered"))
+	}
+	if planExecutionRevision != nil {
+		messages = append(messages, fmt.Sprintf(
+			"Consumed plan execution request for revision %d.",
+			*planExecutionRevision,
+		))
+	}
+	return flow.writeActivity(ctx, AgentEvent{
+		Kind:             EventKindInputConsumed,
+		Message:          strings.Join(messages, " "),
+		InputConsumption: &consumption,
+	})
+}
+
+func pendingMessageIDs(messages []PendingUserMessage) []MessageID {
+	ids := make([]MessageID, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.MessageID)
+	}
+	return ids
+}
+
+func consumedMessagesDescription(count int, queue string) string {
+	noun := "messages"
+	if count == 1 {
+		noun = "message"
+	}
+	return fmt.Sprintf("Consumed %d %s user %s.", count, queue, noun)
+}
+
+func incrementWaitingInputRound(ctx dex.Context) error {
+	round, err := waitingInputRoundAttribute.Get(ctx)
+	if err != nil {
+		return err
+	}
+	next, err := nextWaitingInputRound(round)
+	if err != nil {
+		return err
+	}
+	return waitingInputRoundAttribute.Set(ctx, next)
+}
+
+func nextWaitingInputRound(round WaitingInputRound) (WaitingInputRound, error) {
+	if round < 0 {
+		return 0, errors.New("waiting input round must not be negative")
+	}
+	if round >= MaximumWaitingInputRound {
+		return 0, fmt.Errorf("waiting input round reached the JavaScript safe integer limit %d", MaximumWaitingInputRound)
+	}
+	return round + 1, nil
+}
+
 func condenseActivityMessage(message string) string {
 	const maximumRunes = 200
 	condensed := strings.Join(strings.Fields(message), " ")
@@ -1370,8 +1379,6 @@ const (
 	stepTypeExecuteRetry   stepType = "ExecuteToolWithRetry"
 	stepTypeRecoverTool    stepType = "RecoverToolExecution"
 	stepTypeDurableWait    stepType = "DurableWait"
-	stepTypeWaitLease      stepType = "WaitForLeaseRefresh"
-	stepTypeRefreshLease   stepType = "RefreshLease"
 
 	maximumSteeringMessageCount       = 2_147_483_647
 	maximumAutomaticPlanRecoveryCount = 1
@@ -1408,6 +1415,15 @@ type toolHeartbeat struct {
 var (
 	messageMutationStepOptions = &dex.StepOptions{
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
+		ExecuteLockAttributes: []dex.AttributeLock{
+			dex.LockAttribute(pendingUserInputAttribute),
+			dex.LockAttribute(pendingApprovalAttribute),
+		},
+	}
+	awaitUserStepOptions = &dex.StepOptions{
+		ExecuteLoadAttributeMaps: []dex.AttributeDef{
+			currentMessagesAttribute,
+		},
 		ExecuteLockAttributes: []dex.AttributeLock{
 			dex.LockAttribute(pendingUserInputAttribute),
 			dex.LockAttribute(pendingApprovalAttribute),
@@ -1458,22 +1474,10 @@ func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecis
 	if err := agentStateAttribute.Set(ctx, NewAgentState()); err != nil {
 		return nil, err
 	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
+	if err := waitingInputRoundAttribute.Set(ctx, 0); err != nil {
 		return nil, err
 	}
-	if step.flow.lease == nil {
-		return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
-	}
-	if _, err := agentLeaseStateAttribute.Get(ctx); err != nil {
-		return nil, fmt.Errorf("read initial Agent Lease state: %w", err)
-	}
-	if _, err := agentLeaseScheduleAttribute.Get(ctx); err != nil {
-		return nil, fmt.Errorf("read initial Agent Lease schedule: %w", err)
-	}
-	return dex.GoToMany(
-		dex.MovementOf(awaitUserStep{flow: step.flow}, nil),
-		dex.MovementOf(waitForLeaseRefreshStep{flow: step.flow}, nil),
-	), nil
+	return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
 }
 
 type awaitUserStep struct {
@@ -1485,7 +1489,7 @@ var _ dex.Step[dex.None] = awaitUserStep{}
 
 func (awaitUserStep) GetStepType() string { return string(stepTypeAwaitUser) }
 
-func (awaitUserStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
+func (awaitUserStep) GetStepOptions() *dex.StepOptions { return awaitUserStepOptions }
 
 func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForMessage); err != nil {
@@ -1499,15 +1503,25 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err != nil {
 		return nil, err
 	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
-		return nil, err
-	}
 	if pendingInput == nil && plan != nil && plan.Status != PlanStatusCompleted {
+		planKey := planRevisionKey(plan.Revision)
+		if steeredUserMessagesChannel.Size(ctx) == 0 &&
+			queuedUserMessagesChannel.Size(ctx) == 0 &&
+			planExecutionsChannel.Size(ctx, planKey) == 0 {
+			if err := incrementWaitingInputRound(ctx); err != nil {
+				return nil, err
+			}
+		}
 		return dex.AnyOf(
 			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
 			queuedUserMessagesChannel.ForOne(),
-			planExecutionsChannel.ForOne(planRevisionKey(plan.Revision)),
+			planExecutionsChannel.ForOne(planKey),
 		), nil
+	}
+	if steeredUserMessagesChannel.Size(ctx) == 0 && queuedUserMessagesChannel.Size(ctx) == 0 {
+		if err := incrementWaitingInputRound(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return dex.AnyOf(
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
@@ -1516,9 +1530,6 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 }
 
 func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
-		return nil, err
-	}
 	steered, err := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if err != nil {
 		return nil, err
@@ -1534,8 +1545,11 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(queued) > 0 {
-		if beginErr := step.flow.beginUserTurn(ctx, queued[0]); beginErr != nil {
+		if beginErr := step.flow.beginUserTurn(ctx, queued[0].Value); beginErr != nil {
 			return nil, beginErr
+		}
+		if consumptionErr := step.flow.writeInputConsumption(ctx, []PendingUserMessage{queued[0]}, nil, nil); consumptionErr != nil {
+			return nil, consumptionErr
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
 	}
@@ -1550,6 +1564,12 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	executions, err := planExecutionsChannel.GetConditionResults(ctx, planRevisionKey(plan.Revision))
 	if err != nil {
 		return nil, err
+	}
+	if len(executions) > 0 {
+		revision := executions[0].Revision
+		if consumptionErr := step.flow.writeInputConsumption(ctx, nil, nil, &revision); consumptionErr != nil {
+			return nil, consumptionErr
+		}
 	}
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
@@ -1728,7 +1748,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	reply, err := step.flow.modelClient.Complete(ctx, ModelRequest{
-		Config:         step.flow.modelConfig(config),
+		Config:         config,
 		Messages:       messages,
 		Tools:          tools,
 		WriteAssistant: writeAssistant,
@@ -1810,14 +1830,6 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueRouteTool), nil
-}
-
-func (flow *Flow) modelConfig(config AgentConfig) AgentConfig {
-	if flow.lease == nil {
-		return config
-	}
-	config.SystemPrompt += "\n\n" + leaseRecoveryPrompt
-	return config
 }
 
 type checkSteeredStep struct {
@@ -2004,6 +2016,9 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}); err != nil {
 			return nil, err
 		}
+		if err := step.flow.writeSnapshotRequired(ctx); err != nil {
+			return nil, err
+		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueDurableWait), nil
 	}
 	if call.Name == ToolNameRequestUserInput {
@@ -2080,6 +2095,9 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}); err != nil {
 			return nil, err
 		}
+		if err := step.flow.writeSnapshotRequired(ctx); err != nil {
+			return nil, err
+		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueAwaitToolApproval), nil
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteToolRetry), nil
@@ -2104,9 +2122,6 @@ func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wai
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForToolApproval); err != nil {
 		return nil, err
 	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
-		return nil, err
-	}
 	return dex.AnyOf(
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
 		toolApprovalsChannel.ForOne(string(call.ID)),
@@ -2114,9 +2129,6 @@ func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wai
 }
 
 func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
-		return nil, err
-	}
 	steered, err := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if err != nil {
 		return nil, err
@@ -2199,15 +2211,10 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	} else if metadataErr != nil {
 		return nil, metadataErr
 	}
-	leaseState, leaseErr := step.flow.currentLeaseState(ctx)
-	if leaseErr != nil {
-		return nil, leaseErr
-	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
 	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
-		LeaseState:      leaseState,
 		Name:            call.Name,
 		Arguments:       call.Arguments,
 		EnabledServers:  config.EnabledMCPServers,
@@ -2242,17 +2249,6 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, finishErr
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
-}
-
-func (flow *Flow) currentLeaseState(ctx dex.Context) (*JSONObject, error) {
-	if flow.lease == nil {
-		return nil, nil
-	}
-	state, err := agentLeaseStateAttribute.Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read Agent Lease state: %w", err)
-	}
-	return &state, nil
 }
 
 func (flow *Flow) finishToolExecution(
@@ -2329,10 +2325,6 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	} else if err != nil {
 		return nil, err
 	}
-	leaseState, err := step.flow.currentLeaseState(ctx)
-	if err != nil {
-		return nil, err
-	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
 	if writeErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", call.Name, ctx.Attempt())); writeErr != nil {
 		return nil, writeErr
@@ -2340,7 +2332,6 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	result, err := step.flow.tools.Execute(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
-		LeaseState:      leaseState,
 		Name:            call.Name,
 		Arguments:       call.Arguments,
 		EnabledServers:  config.EnabledMCPServers,
@@ -2428,9 +2419,6 @@ func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, err
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForTimer); err != nil {
 		return nil, err
 	}
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusWaiting); err != nil {
-		return nil, err
-	}
 	return dex.AnyOf(
 		dex.Timer(time.Duration(timer.DurationSeconds)*time.Second),
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
@@ -2438,9 +2426,6 @@ func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, err
 }
 
 func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
-	if err := agentInteractionStatusAttribute.Set(ctx, AgentInteractionStatusSubmitted); err != nil {
-		return nil, err
-	}
 	call, err := step.flow.currentToolCall(ctx)
 	if err != nil {
 		return nil, err
@@ -2490,98 +2475,6 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, err
 	}
 	return step.flow.continueAfterTool(ctx)
-}
-
-type waitForLeaseRefreshStep struct {
-	dex.StepDefaults
-	flow *Flow
-}
-
-var _ dex.Step[dex.None] = waitForLeaseRefreshStep{}
-
-func (waitForLeaseRefreshStep) GetStepType() string { return string(stepTypeWaitLease) }
-
-func (step waitForLeaseRefreshStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
-	schedule, err := agentLeaseScheduleAttribute.Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read Agent Lease schedule: %w", err)
-	}
-	delay := time.Until(schedule.RefreshAt)
-	if delay < 0 {
-		delay = 0
-	}
-	return dex.Until(dex.Timer(delay)), nil
-}
-
-func (step waitForLeaseRefreshStep) Execute(_ dex.Context, _ dex.None) (*dex.StepDecision, error) {
-	return dex.GoTo(refreshLeaseStep{flow: step.flow}, nil), nil
-}
-
-type refreshLeaseStep struct {
-	dex.StepDefaultsNoWaitFor[dex.None]
-	flow *Flow
-}
-
-var _ dex.Step[dex.None] = refreshLeaseStep{}
-
-func (refreshLeaseStep) GetStepType() string { return string(stepTypeRefreshLease) }
-
-func (step refreshLeaseStep) GetStepOptions() *dex.StepOptions {
-	if step.flow.lease == nil {
-		return &dex.StepOptions{ExecuteRetry: &dex.RetryPolicy{MaximumAttempts: 1}}
-	}
-	return &dex.StepOptions{
-		ExecuteMethodTimeout: step.flow.lease.config.AttemptTimeout,
-		ExecuteRetry: &dex.RetryPolicy{
-			TotalDuration: step.flow.lease.config.RetryTotalDuration,
-		},
-	}
-}
-
-func (step refreshLeaseStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
-	if step.flow.lease == nil {
-		return nil, errors.New("agent Lease extension is not configured")
-	}
-	state, err := agentLeaseStateAttribute.Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read Agent Lease state: %w", err)
-	}
-	schedule, err := agentLeaseScheduleAttribute.Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read Agent Lease schedule: %w", err)
-	}
-	targetGeneration := schedule.Generation + 1
-	refreshID := stableLeaseRefreshID(FlowID(ctx.FlowID()), targetGeneration)
-	result, err := step.flow.lease.refresher.Refresh(ctx, LeaseRefreshRequest{
-		FlowID:           FlowID(ctx.FlowID()),
-		State:            state,
-		RefreshID:        refreshID,
-		TargetGeneration: targetGeneration,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("refresh Agent Lease: %w", err)
-	}
-	if err := validateLeaseInitialization(&LeaseInitialization{
-		State:     result.State,
-		RefreshAt: result.RefreshAt,
-	}, time.Now()); err != nil {
-		return nil, fmt.Errorf("validate refreshed Agent Lease: %w", err)
-	}
-	if err := agentLeaseStateAttribute.Set(ctx, result.State); err != nil {
-		return nil, err
-	}
-	if err := agentLeaseScheduleAttribute.Set(ctx, leaseSchedule{
-		Generation: targetGeneration,
-		RefreshAt:  result.RefreshAt,
-	}); err != nil {
-		return nil, err
-	}
-	return dex.GoTo(waitForLeaseRefreshStep{flow: step.flow}, nil), nil
-}
-
-func stableLeaseRefreshID(flowID FlowID, generation int64) LeaseRefreshID {
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", flowID, generation)))
-	return LeaseRefreshID(hex.EncodeToString(digest[:]))
 }
 
 type modelProgress struct {

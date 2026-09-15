@@ -5,9 +5,9 @@
  */
 
 import {
-  AgentInteractionStatus,
   AgentStatus,
   EventKind,
+  MessageRole,
   type TaskStatus,
   type AgentDescription,
   type AgentEvent,
@@ -73,6 +73,13 @@ export interface ActivityEntry {
   value: AgentEvent;
 }
 
+export interface ConsumedUserEntry {
+  messageId: MessageId;
+  value: UserMessage;
+  createdAt: string;
+  consumedAfterSequence: Sequence;
+}
+
 export type LiveUpdate =
   | ({ kind: "assistant" } & LiveText)
   | ({ kind: "reasoning" } & LiveText)
@@ -117,7 +124,9 @@ interface ReadyConversationBase {
   assistant: AssistantEntry | null;
   reasoning: ReasoningEntry[];
   activities: ActivityEntry[];
+  consumedUserMessages: ConsumedUserEntry[];
   planProgress: PlanProgressHint | null;
+  isWaitingForInput: boolean;
   reconciliation: ReconciliationState;
   commandError: string | null;
   error: string | null;
@@ -157,7 +166,6 @@ export type ConversationAction =
   | { type: "stream-update"; update: LiveUpdate }
   | { type: "stream-recovered"; updates: LiveUpdate[] }
   | { type: "stream-failed"; message: string }
-  | { type: "interaction-submitted" }
   | { type: "composer-changed"; value: string }
   | { type: "plan-mode-changed"; value: boolean }
   | { type: "command-started"; id: number; command: Command }
@@ -241,20 +249,6 @@ export function conversationReducer(
         connection: "reconnecting",
         error: action.message,
       };
-    case "interaction-submitted":
-      if (state.kind !== "ready" || state.lifecycle === "terminal") {
-        return state;
-      }
-      return {
-        ...state,
-        snapshot: {
-          ...state.snapshot,
-          description: {
-            ...state.snapshot.description,
-            interactionStatus: AgentInteractionStatus.SUBMITTED,
-          },
-        },
-      };
     case "composer-changed":
       return state.kind === "ready" && state.lifecycle === "active"
         ? { ...state, composer: action.value }
@@ -305,6 +299,27 @@ function reconcileSnapshot(
       previousAnsweredUserInputCallID
       ? previousAnsweredUserInputCallID
       : null;
+  const history =
+    previousRun !== null
+      ? reconcileHistory(
+          previousRun.snapshot.history,
+          snapshot.history,
+          snapshot.description.firstRetainedSequence,
+        )
+      : snapshot.history;
+  const consumedUserMessages = reconcileConsumedUserMessages(
+    previousRun?.consumedUserMessages ?? [],
+    history,
+  );
+  const consumedMessageIDs = new Set(
+    consumedUserMessages.map((message) => message.messageId),
+  );
+  const queued = snapshot.queued.filter(
+    (message) => !consumedMessageIDs.has(message.messageId),
+  );
+  const steered = snapshot.steered.filter(
+    (message) => !consumedMessageIDs.has(message.messageId),
+  );
   const activeSnapshot = {
     ...snapshot,
     description: {
@@ -313,15 +328,12 @@ function reconcileSnapshot(
         answeredUserInputCallID === null
           ? snapshot.description.pendingUserInput
           : null,
+      pendingQueuedMessageCount: queued.length,
+      pendingSteeredMessageCount: steered.length,
     },
-    history:
-      previousRun !== null
-        ? reconcileHistory(
-            previousRun.snapshot.history,
-            snapshot.history,
-            snapshot.description.firstRetainedSequence,
-          )
-        : snapshot.history,
+    history,
+    queued,
+    steered,
   };
   const hasDurableProgress =
     previousRun !== null &&
@@ -356,7 +368,13 @@ function reconcileSnapshot(
       ? completeReasoning(previousRun.reasoning)
       : (previousRun?.reasoning ?? []),
     activities: previousRun?.activities ?? [],
+    consumedUserMessages,
     planProgress: null,
+    isWaitingForInput:
+      snapshot.description.status === AgentStatus.WAITING_FOR_MESSAGE &&
+      snapshot.description.pendingQueuedMessageCount === 0 &&
+      snapshot.description.pendingSteeredMessageCount === 0 &&
+      !snapshot.description.isPlanExecutionRequested,
     reconciliation: "open",
     commandError: previousRun?.commandError ?? null,
     error: previousRun?.commandError ?? null,
@@ -384,7 +402,9 @@ function terminalState(
     assistant: null,
     reasoning: completeReasoning(priorReady?.reasoning ?? []),
     activities: priorReady?.activities ?? [],
+    consumedUserMessages: [],
     planProgress: null,
+    isWaitingForInput: false,
     commandError: null,
     error: snapshot.errorMessage,
   };
@@ -631,7 +651,7 @@ function reconcileOptimisticSubmissions(
       ({ sequence, message }) =>
         sequence > submission.submittedAfterSequence &&
         !claimed.has(`history:${String(sequence)}`) &&
-        message.role === "user" &&
+        message.role === MessageRole.USER &&
         message.content === submission.value.content,
     );
     if (durable !== undefined) {
@@ -639,6 +659,25 @@ function reconcileOptimisticSubmissions(
       return false;
     }
     return true;
+  });
+}
+
+function reconcileConsumedUserMessages(
+  messages: ConsumedUserEntry[],
+  history: HistoryPage,
+): ConsumedUserEntry[] {
+  const claimedSequences = new Set<Sequence>();
+  return messages.filter((consumed) => {
+    const durable = history.messages.find(
+      ({ sequence, message }) =>
+        sequence > consumed.consumedAfterSequence &&
+        !claimedSequences.has(sequence) &&
+        message.role === MessageRole.USER &&
+        message.content === consumed.value.content,
+    );
+    if (durable === undefined) return true;
+    claimedSequences.add(durable.sequence);
+    return false;
   });
 }
 
@@ -677,6 +716,9 @@ function applyLiveUpdate(
         ),
       };
     case "activity":
+      if (update.value.kind === EventKind.SNAPSHOT_REQUIRED) {
+        return state;
+      }
       if (
         state.activities.some(
           (activity) => activity.resumeToken === update.resumeToken,
@@ -684,21 +726,100 @@ function applyLiveUpdate(
       ) {
         return state;
       }
-      return {
-        ...state,
-        assistant: isModelFinished(update.value.kind)
-          ? state.snapshot.description.status ===
-            AgentStatus.WAITING_FOR_MESSAGE
-            ? null
-            : completeAssistantSource(state.assistant, update.source)
-          : state.assistant,
-        reasoning: isModelFinished(update.value.kind)
-          ? completeReasoningSource(state.reasoning, update.source)
-          : state.reasoning,
-        activities: [...state.activities, update],
-        planProgress: applyPlanTaskUpdate(state, update.value),
-      };
+      return applyInputConsumption(
+        {
+          ...state,
+          assistant: isModelFinished(update.value.kind)
+            ? state.snapshot.description.status ===
+              AgentStatus.WAITING_FOR_MESSAGE
+              ? null
+              : completeAssistantSource(state.assistant, update.source)
+            : state.assistant,
+          reasoning: isModelFinished(update.value.kind)
+            ? completeReasoningSource(state.reasoning, update.source)
+            : state.reasoning,
+          activities: [...state.activities, update],
+          planProgress: applyPlanTaskUpdate(state, update.value),
+        },
+        update,
+      );
   }
+}
+
+function applyInputConsumption(
+  state: ActiveConversationState,
+  update: ActivityEntry,
+): ActiveConversationState {
+  const event = update.value;
+  if (
+    event.kind !== EventKind.INPUT_CONSUMED ||
+    event.inputConsumption === null
+  ) {
+    return state;
+  }
+  const queuedIDs = new Set(event.inputConsumption.queuedMessageIds);
+  const steeredIDs = new Set(event.inputConsumption.steeredMessageIds);
+  const consumedIDs = new Set([...queuedIDs, ...steeredIDs]);
+  const pendingByID = new Map(
+    [...state.snapshot.queued, ...state.snapshot.steered].map((message) => [
+      message.messageId,
+      message,
+    ]),
+  );
+  const projectedIDs = new Set(
+    state.consumedUserMessages.map((message) => message.messageId),
+  );
+  const newlyConsumedUserMessages = [...consumedIDs]
+    .filter((messageID) => !projectedIDs.has(messageID))
+    .flatMap((messageID): ConsumedUserEntry[] => {
+      const pending = pendingByID.get(messageID);
+      return pending === undefined
+        ? []
+        : [
+            {
+              messageId: messageID,
+              value: pending.value,
+              createdAt: update.createdAt,
+              consumedAfterSequence: state.snapshot.description.lastSequence,
+            },
+          ];
+    });
+  const queued = state.snapshot.queued.filter(
+    (message) => !consumedIDs.has(message.messageId),
+  );
+  const steered = state.snapshot.steered.filter(
+    (message) => !consumedIDs.has(message.messageId),
+  );
+  const consumedPlanRevision = event.inputConsumption.planExecutionRevision;
+  const didConsumePlanRequest =
+    consumedPlanRevision !== null &&
+    state.snapshot.description.isPlanExecutionRequested &&
+    state.snapshot.description.plan?.revision === consumedPlanRevision;
+  const didConsumeVisibleInput =
+    queued.length !== state.snapshot.queued.length ||
+    steered.length !== state.snapshot.steered.length ||
+    didConsumePlanRequest;
+  return {
+    ...state,
+    isWaitingForInput: didConsumeVisibleInput ? false : state.isWaitingForInput,
+    consumedUserMessages: [
+      ...state.consumedUserMessages,
+      ...newlyConsumedUserMessages,
+    ],
+    snapshot: {
+      ...state.snapshot,
+      queued,
+      steered,
+      description: {
+        ...state.snapshot.description,
+        pendingQueuedMessageCount: queued.length,
+        pendingSteeredMessageCount: steered.length,
+        isPlanExecutionRequested: didConsumePlanRequest
+          ? false
+          : state.snapshot.description.isPlanExecutionRequested,
+      },
+    },
+  };
 }
 
 function applyPlanTaskUpdate(

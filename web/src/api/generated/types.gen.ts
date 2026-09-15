@@ -40,6 +40,8 @@ export const EventKind = {
     PLAN_STARTED: 'plan_started',
     PLAN_UPDATED: 'plan_updated',
     PLAN_TASK_UPDATED: 'plan_task_updated',
+    INPUT_CONSUMED: 'input_consumed',
+    SNAPSHOT_REQUIRED: 'snapshot_required',
     STEERING_APPLIED: 'steering_applied',
     COMPACTION_FAILED: 'compaction_failed',
     COMPACTED: 'compacted',
@@ -69,12 +71,10 @@ export const AgentStatus = {
 
 export type AgentStatus = typeof AgentStatus[keyof typeof AgentStatus];
 
-export const AgentInteractionStatus = { SUBMITTED: 'submitted', WAITING: 'waiting' } as const;
+export type WaitingInputRound = number;
 
-export type AgentInteractionStatus = typeof AgentInteractionStatus[keyof typeof AgentInteractionStatus];
-
-export type AgentInteractionState = {
-    status: AgentInteractionStatus;
+export type WaitingInputRoundState = {
+    waitingInputRound: WaitingInputRound;
 };
 
 export const MessageRole = {
@@ -268,7 +268,7 @@ export type UserMessage = {
 
 export type AgentDescription = {
     status: AgentStatus;
-    interactionStatus: AgentInteractionStatus;
+    waitingInputRound: WaitingInputRound;
     model: string;
     systemPrompt: string;
     firstRetainedSequence: number;
@@ -393,6 +393,16 @@ export type AgentEvent = {
      * Updated status of the indexed Plan task, or null.
      */
     planTaskStatus?: TaskStatus | null;
+    /**
+     * Exact durable inputs consumed at this boundary, or null for unrelated activity.
+     */
+    inputConsumption: InputConsumption | null;
+};
+
+export type InputConsumption = {
+    queuedMessageIds: Array<MessageId>;
+    steeredMessageIds: Array<MessageId>;
+    planExecutionRevision: number | null;
 };
 
 export type Problem = {
@@ -647,17 +657,17 @@ export type GetArchivedMessagesResponses = {
 
 export type GetArchivedMessagesResponse = GetArchivedMessagesResponses[keyof GetArchivedMessagesResponses];
 
-export type WaitForAgentInteractionStatusData = {
+export type WaitForWaitingInputRoundData = {
     body?: never;
     path?: never;
     query: {
         flowId: FlowId;
-        expectedStatus: AgentInteractionStatus;
+        afterWaitingInputRound: WaitingInputRound;
     };
-    url: '/products/ai-agent/interaction-status';
+    url: '/products/ai-agent/waiting-input-round';
 };
 
-export type WaitForAgentInteractionStatusErrors = {
+export type WaitForWaitingInputRoundErrors = {
     /**
      * The request could not be completed.
      */
@@ -674,22 +684,18 @@ export type WaitForAgentInteractionStatusErrors = {
      * The request could not be completed.
      */
     503: Problem;
-    /**
-     * The expected status was not observed before the bounded poll expired.
-     */
-    504: PollTimeout;
 };
 
-export type WaitForAgentInteractionStatusError = WaitForAgentInteractionStatusErrors[keyof WaitForAgentInteractionStatusErrors];
+export type WaitForWaitingInputRoundError = WaitForWaitingInputRoundErrors[keyof WaitForWaitingInputRoundErrors];
 
-export type WaitForAgentInteractionStatusResponses = {
+export type WaitForWaitingInputRoundResponses = {
     /**
-     * The expected durable interaction status was observed.
+     * The durable input watermark advanced.
      */
-    200: AgentInteractionState;
+    200: WaitingInputRoundState;
 };
 
-export type WaitForAgentInteractionStatusResponse = WaitForAgentInteractionStatusResponses[keyof WaitForAgentInteractionStatusResponses];
+export type WaitForWaitingInputRoundResponse = WaitForWaitingInputRoundResponses[keyof WaitForWaitingInputRoundResponses];
 
 export type DeleteQueuedMessageData = {
     body: QueueMutationRequest;

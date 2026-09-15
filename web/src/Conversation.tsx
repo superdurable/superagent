@@ -14,7 +14,7 @@ import {
 } from "react";
 
 import {
-  AgentInteractionStatus,
+  EventKind,
   EventStream,
   PollTimeoutReason,
   answerQuestions,
@@ -27,7 +27,7 @@ import {
   readEvent,
   sendMessage,
   steerQueuedMessage,
-  waitForAgentInteractionStatus,
+  waitForWaitingInputRound,
   type CallId,
   type FlowId,
   type PendingUserMessage,
@@ -59,6 +59,7 @@ const eventStreams = [
 interface ConversationProps {
   flowId: FlowId;
   builtInTools: readonly ToolName[];
+  snapshotRefreshIntervalMilliseconds: number;
   onStartAnother: () => void;
 }
 
@@ -70,6 +71,7 @@ interface LiveReadSession {
 export function Conversation({
   flowId,
   builtInTools,
+  snapshotRefreshIntervalMilliseconds,
   onStartAnother,
 }: ConversationProps) {
   const [state, dispatch] = useReducer(
@@ -95,7 +97,12 @@ export function Conversation({
   }, []);
   const nextHistoryRequestID = useRef(1);
   const isTerminal = state.kind === "ready" && state.lifecycle === "terminal";
-  const requestSnapshot = useSnapshotCoordinator(flowId, dispatch, isTerminal);
+  const requestSnapshot = useSnapshotCoordinator(
+    flowId,
+    dispatch,
+    isTerminal,
+    snapshotRefreshIntervalMilliseconds,
+  );
   const runCommand = useCommandRunner(
     dispatch,
     requestSnapshot,
@@ -192,6 +199,9 @@ export function Conversation({
           resumeTokens.current[stream] = resumeToken;
           const update = liveUpdate(stream, event);
           dispatch({ type: "stream-update", update });
+          if (shouldReconcileAfter(update)) {
+            requestSnapshot({ blocking: false });
+          }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
           if (isPollTimeout(reason)) {
@@ -228,42 +238,33 @@ export function Conversation({
     requestSnapshot,
   ]);
 
-  const interactionStatus = canOpenLiveReads
-    ? state.snapshot.description.interactionStatus
-    : null;
+  const waitingInputRound =
+    state.kind === "ready" && state.lifecycle === "active"
+      ? state.snapshot.description.waitingInputRound
+      : 0;
+  const waitingInputRoundRef = useRef(waitingInputRound);
   useEffect(() => {
-    if (interactionStatus === null) return;
+    waitingInputRoundRef.current = waitingInputRound;
+  }, [waitingInputRound]);
+  useEffect(() => {
+    if (!canOpenLiveReads) return;
     const controller = new AbortController();
     let isCurrent = true;
     const wait = async (): Promise<void> => {
-      let expectedStatus =
-        interactionStatus === AgentInteractionStatus.WAITING
-          ? AgentInteractionStatus.SUBMITTED
-          : AgentInteractionStatus.WAITING;
+      let lastRound = waitingInputRoundRef.current;
       while (isCurrent && !controller.signal.aborted) {
         try {
-          const result = await waitForAgentInteractionStatus({
-            query: { flowId, expectedStatus },
+          const result = await waitForWaitingInputRound({
+            query: { flowId, afterWaitingInputRound: lastRound },
             signal: controller.signal,
           });
-          expectedStatus =
-            result.status === AgentInteractionStatus.WAITING
-              ? AgentInteractionStatus.SUBMITTED
-              : AgentInteractionStatus.WAITING;
-          if (result.status === AgentInteractionStatus.WAITING) {
-            requestSnapshot({ blocking: true });
-          } else {
-            dispatch({ type: "interaction-submitted" });
-          }
+          lastRound = result.waitingInputRound;
+          requestSnapshot({ blocking: true });
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
-          if (isPollTimeout(reason)) {
-            await waitBeforeNextPoll(controller.signal);
-            continue;
-          }
           dispatch({
             type: "stream-failed",
-            message: `Durable status disconnected: ${errorMessage(reason)}`,
+            message: `Waiting input round disconnected: ${errorMessage(reason)}`,
           });
           requestSnapshot({ blocking: true, connection: "reconnecting" });
           return;
@@ -282,7 +283,13 @@ export function Conversation({
         interactionSession.current = null;
       }
     };
-  }, [flowId, interactionStatus, subscriptionGeneration, requestSnapshot]);
+  }, [
+    flowId,
+    activeRunID,
+    canOpenLiveReads,
+    subscriptionGeneration,
+    requestSnapshot,
+  ]);
 
   if (state.kind === "loading") {
     return (
@@ -457,25 +464,29 @@ function useSnapshotCoordinator(
   flowId: FlowId,
   dispatch: Dispatch<ConversationAction>,
   isTerminal: boolean,
+  refreshIntervalMilliseconds: number,
 ) {
   const coordinator = useRef<SnapshotCoordinator | null>(null);
   useEffect(() => {
-    const current = new SnapshotCoordinator({
-      load: (signal) =>
-        getAgentSnapshot({
-          query: { flowId },
-          signal,
-        }),
-      requested: (trigger) => {
-        dispatch({ type: "snapshot-requested", ...trigger });
+    const current = new SnapshotCoordinator(
+      {
+        load: (signal) =>
+          getAgentSnapshot({
+            query: { flowId },
+            signal,
+          }),
+        requested: (trigger) => {
+          dispatch({ type: "snapshot-requested", ...trigger });
+        },
+        loaded: (snapshot) => {
+          dispatch({ type: "snapshot-loaded", snapshot });
+        },
+        failed: (message) => {
+          dispatch({ type: "snapshot-failed", message });
+        },
       },
-      loaded: (snapshot) => {
-        dispatch({ type: "snapshot-loaded", snapshot });
-      },
-      failed: (message) => {
-        dispatch({ type: "snapshot-failed", message });
-      },
-    });
+      refreshIntervalMilliseconds,
+    );
     coordinator.current = current;
     const handleVisibilityChange = () => {
       current.setVisible(document.visibilityState === "visible");
@@ -488,7 +499,7 @@ function useSnapshotCoordinator(
       current.stop();
       if (coordinator.current === current) coordinator.current = null;
     };
-  }, [dispatch, flowId]);
+  }, [dispatch, flowId, refreshIntervalMilliseconds]);
   useEffect(() => {
     if (isTerminal) coordinator.current?.stop();
   }, [isTerminal]);
@@ -606,6 +617,13 @@ function resetResumeTokens(
   tokens: Record<EventStream, ResumeToken | undefined>,
 ): void {
   for (const stream of eventStreams) tokens[stream] = undefined;
+}
+
+function shouldReconcileAfter(update: LiveUpdate): boolean {
+  return (
+    update.kind === "activity" &&
+    update.value.kind === EventKind.SNAPSHOT_REQUIRED
+  );
 }
 
 function isPollTimeout(reason: unknown): boolean {
