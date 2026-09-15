@@ -117,7 +117,9 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toBeVisible();
   expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
-  await expect(history.getByText("Checked the constraints")).toBeVisible();
+  await expect(
+    history.getByText("Checked the constraints", { exact: true }),
+  ).toBeVisible();
   await expect(
     history
       .locator(".message-bubble.assistant")
@@ -557,6 +559,7 @@ test("reconciles accepted commands when their browser responses are lost", async
   ).toHaveCount(1);
   expect(requestCounts.get(answerPath)).toBe(answersBefore + 1);
   await page.unroute(`**${answerPath}`);
+  await expectAgentWaitingForMessage(page);
 
   await composer.fill('/tool fixture__echo {"value":"ambiguous approval"}');
   await page.getByRole("button", { name: "Send" }).click();
@@ -575,6 +578,7 @@ test("reconciles accepted commands when their browser responses are lost", async
   ).toHaveCount(1);
   expect(requestCounts.get(approvalPath)).toBe(approvalsBefore + 1);
   await page.unroute(`**${approvalPath}`);
+  await expectAgentWaitingForMessage(page);
 
   await composer.fill("/wait 90 ambiguous steering");
   await page.getByRole("button", { name: "Send" }).click();
@@ -652,6 +656,7 @@ test("reconciles stale queue, question, and approval controls without damaging t
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(questions).toHaveCount(0);
   await page.unroute(`**${answerPath}`);
+  await expectAgentWaitingForMessage(page);
 
   await composer.fill('/tool fixture__echo {"value":"stale approval"}');
   await page.getByRole("button", { name: "Send" }).click();
@@ -663,6 +668,7 @@ test("reconciles stale queue, question, and approval controls without damaging t
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(approval).toHaveCount(0);
   await page.unroute(`**${approvalPath}`);
+  await expectAgentWaitingForMessage(page);
 
   expect(staleStatuses).toHaveLength(3);
   for (const status of staleStatuses) expect([404, 409]).toContain(status);
@@ -1456,7 +1462,13 @@ async function startAgent(page: Page): Promise<void> {
   await expect(page.locator(".flow-identity code")).toHaveCount(2);
   await expect(page.locator(".flow-identity code").first()).not.toBeEmpty();
   await expect(page.locator(".flow-identity code").last()).not.toBeEmpty();
-  await expect(page.getByText("Waiting For Message").first()).toBeVisible();
+  await expectAgentWaitingForMessage(page);
+}
+
+async function expectAgentWaitingForMessage(page: Page): Promise<void> {
+  await expect(page.getByRole("group", { name: "Agent status" })).toContainText(
+    "Waiting For Message",
+  );
 }
 
 async function directTimelineText(history: Locator): Promise<string[]> {
