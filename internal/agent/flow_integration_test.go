@@ -821,6 +821,16 @@ func TestAgentQuestionAnswerPriorityIntegration(t *testing.T) {
 			completed.History.Messages,
 		)
 	}
+	answered := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindUserInputAnswered && event.CallID != nil &&
+			*event.CallID == pendingSnapshot.Description.PendingUserInput.CallID
+	})
+	if answered.Activity.Message != "Answered 1 question." ||
+		answered.Activity.MessageSequence == nil ||
+		*answered.Activity.MessageSequence != answerSequence ||
+		strings.Contains(answered.Activity.Message, "priority answer") {
+		t.Fatalf("answered user input Activity = %#v", answered.Activity)
+	}
 }
 
 func assertAnswerRejected(t *testing.T, err error) {

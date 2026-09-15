@@ -978,6 +978,8 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindPlanTaskUpdated, nil
 	case agent.EventKindInputConsumed:
 		return transportapi.EventKindInputConsumed, nil
+	case agent.EventKindUserInputAnswered:
+		return transportapi.EventKindUserInputAnswered, nil
 	case agent.EventKindSnapshotRequired:
 		return transportapi.EventKindSnapshotRequired, nil
 	case agent.EventKindSteeringApplied:

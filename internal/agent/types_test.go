@@ -73,6 +73,16 @@ func TestNextWaitingInputRoundProtectsJavaScriptSafeIntegerRange(t *testing.T) {
 	}
 }
 
+func TestAnsweredQuestionsDescriptionDoesNotExposeAnswers(t *testing.T) {
+	t.Parallel()
+	if got := answeredQuestionsDescription(1); got != "Answered 1 question." {
+		t.Fatalf("single answer description = %q", got)
+	}
+	if got := answeredQuestionsDescription(3); got != "Answered 3 questions." {
+		t.Fatalf("multiple answer description = %q", got)
+	}
+}
+
 func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
 	tests := []struct {
 		name     string

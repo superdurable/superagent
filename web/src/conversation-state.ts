@@ -98,6 +98,12 @@ interface OptimisticSubmission {
   phase: "submitting" | "queued";
 }
 
+interface PendingAnsweredUserInput {
+  callID: CallId;
+  value: UserMessage;
+  submittedAfterSequence: Sequence;
+}
+
 interface PlanTaskProgress {
   index: number;
   status: TaskStatus;
@@ -117,7 +123,7 @@ interface ReadyConversationBase {
   subscriptionGeneration: number;
   historyRequest: HistoryRequest | null;
   pendingCommand: { id: number; command: Command } | null;
-  answeredUserInputCallID: CallId | null;
+  pendingAnsweredUserInput: PendingAnsweredUserInput | null;
   optimisticSubmissions: OptimisticSubmission[];
   composer: string;
   isPlanMode: boolean;
@@ -291,14 +297,6 @@ function reconcileSnapshot(
     state.kind === "ready" && state.lifecycle === "active" ? state : null;
   const previousRun =
     previous?.snapshot.runId === snapshot.runId ? previous : null;
-  const previousAnsweredUserInputCallID =
-    previousRun?.answeredUserInputCallID ?? null;
-  const answeredUserInputCallID =
-    previousAnsweredUserInputCallID !== null &&
-    snapshot.description.pendingUserInput?.callId ===
-      previousAnsweredUserInputCallID
-      ? previousAnsweredUserInputCallID
-      : null;
   const history =
     previousRun !== null
       ? reconcileHistory(
@@ -307,6 +305,18 @@ function reconcileSnapshot(
           snapshot.description.firstRetainedSequence,
         )
       : snapshot.history;
+  const previousPendingAnsweredUserInput =
+    previousRun?.pendingAnsweredUserInput ?? null;
+  const pendingAnsweredUserInput =
+    previousPendingAnsweredUserInput !== null &&
+    history.messages.some(
+      ({ sequence, message }) =>
+        sequence > previousPendingAnsweredUserInput.submittedAfterSequence &&
+        message.role === MessageRole.USER &&
+        message.content === previousPendingAnsweredUserInput.value.content,
+    )
+      ? null
+      : previousPendingAnsweredUserInput;
   const consumedUserMessages = reconcileConsumedUserMessages(
     previousRun?.consumedUserMessages ?? [],
     history,
@@ -325,9 +335,10 @@ function reconcileSnapshot(
     description: {
       ...snapshot.description,
       pendingUserInput:
-        answeredUserInputCallID === null
-          ? snapshot.description.pendingUserInput
-          : null,
+        pendingAnsweredUserInput?.callID ===
+        snapshot.description.pendingUserInput?.callId
+          ? null
+          : snapshot.description.pendingUserInput,
       pendingQueuedMessageCount: queued.length,
       pendingSteeredMessageCount: steered.length,
     },
@@ -353,7 +364,7 @@ function reconcileSnapshot(
         : (previousRun?.subscriptionGeneration ?? 0),
     historyRequest: null,
     pendingCommand: previousRun?.pendingCommand ?? null,
-    answeredUserInputCallID,
+    pendingAnsweredUserInput,
     optimisticSubmissions: reconcileOptimisticSubmissions(
       previousRun?.optimisticSubmissions ?? [],
       activeSnapshot,
@@ -395,7 +406,7 @@ function terminalState(
     subscriptionGeneration: priorReady?.subscriptionGeneration ?? 0,
     historyRequest: null,
     pendingCommand: null,
-    answeredUserInputCallID: null,
+    pendingAnsweredUserInput: null,
     optimisticSubmissions: [],
     composer: priorReady?.composer ?? "",
     isPlanMode: priorReady?.isPlanMode ?? false,
@@ -513,9 +524,13 @@ function completeCommand(
     return {
       ...state,
       pendingCommand: null,
-      answeredUserInputCallID: isAnswer
-        ? command.callID
-        : state.answeredUserInputCallID,
+      pendingAnsweredUserInput: isAnswer
+        ? {
+            callID: command.callID,
+            value: command.value,
+            submittedAfterSequence: command.submittedAfterSequence,
+          }
+        : state.pendingAnsweredUserInput,
       snapshot: {
         ...state.snapshot,
         description: {
@@ -717,31 +732,85 @@ function applyLiveUpdate(
       if (update.value.kind === EventKind.SNAPSHOT_REQUIRED) {
         return state;
       }
-      if (
-        state.activities.some(
-          (activity) => activity.resumeToken === update.resumeToken,
-        )
-      ) {
+      if (hasActivity(state.activities, update)) {
         return state;
       }
-      return applyInputConsumption(
-        {
-          ...state,
-          assistant: isModelFinished(update.value.kind)
-            ? state.snapshot.description.status ===
-              AgentStatus.WAITING_FOR_MESSAGE
-              ? null
-              : completeAssistantSource(state.assistant, update.source)
-            : state.assistant,
-          reasoning: isModelFinished(update.value.kind)
-            ? completeReasoningSource(state.reasoning, update.source)
-            : state.reasoning,
-          activities: [...state.activities, update],
-          planProgress: applyPlanTaskUpdate(state, update.value),
-        },
+      return applyAnsweredUserInput(
+        applyInputConsumption(
+          {
+            ...state,
+            assistant: isModelFinished(update.value.kind)
+              ? state.snapshot.description.status ===
+                AgentStatus.WAITING_FOR_MESSAGE
+                ? null
+                : completeAssistantSource(state.assistant, update.source)
+              : state.assistant,
+            reasoning: isModelFinished(update.value.kind)
+              ? completeReasoningSource(state.reasoning, update.source)
+              : state.reasoning,
+            activities: [...state.activities, update],
+            planProgress: applyPlanTaskUpdate(state, update.value),
+          },
+          update,
+        ),
         update,
       );
   }
+}
+
+function hasActivity(
+  activities: readonly ActivityEntry[],
+  update: ActivityEntry,
+): boolean {
+  return activities.some(
+    (activity) =>
+      activity.resumeToken === update.resumeToken ||
+      (update.value.kind === EventKind.USER_INPUT_ANSWERED &&
+        activity.value.kind === update.value.kind &&
+        activity.value.callId === update.value.callId &&
+        activity.value.messageSequence === update.value.messageSequence),
+  );
+}
+
+function applyAnsweredUserInput(
+  state: ActiveConversationState,
+  update: ActivityEntry,
+): ActiveConversationState {
+  const event = update.value;
+  const pending = state.pendingAnsweredUserInput;
+  if (
+    event.kind !== EventKind.USER_INPUT_ANSWERED ||
+    event.callId === null ||
+    event.messageSequence === null ||
+    pending?.callID !== event.callId
+  ) {
+    return state;
+  }
+  const projectedMessage = {
+    sequence: event.messageSequence,
+    message: {
+      role: MessageRole.USER,
+      content: pending.value.content,
+      toolCalls: [],
+      toolCallId: null,
+      toolName: null,
+      createdAt: update.createdAt,
+    },
+  };
+  return {
+    ...state,
+    pendingAnsweredUserInput: null,
+    isWaitingForInput: false,
+    snapshot: {
+      ...state.snapshot,
+      history: {
+        ...state.snapshot.history,
+        messages: mergeMessages(state.snapshot.history.messages, [
+          projectedMessage,
+        ]),
+      },
+    },
+  };
 }
 
 function applyInputConsumption(

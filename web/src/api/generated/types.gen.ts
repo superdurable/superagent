@@ -41,6 +41,7 @@ export const EventKind = {
     PLAN_UPDATED: 'plan_updated',
     PLAN_TASK_UPDATED: 'plan_task_updated',
     INPUT_CONSUMED: 'input_consumed',
+    USER_INPUT_ANSWERED: 'user_input_answered',
     SNAPSHOT_REQUIRED: 'snapshot_required',
     STEERING_APPLIED: 'steering_applied',
     COMPACTION_FAILED: 'compaction_failed',
@@ -374,7 +375,7 @@ export type AgentEvent = {
     callId: CallId | null;
     toolName: ToolName | null;
     /**
-     * Durable assistant message produced by this model invocation, or null for unrelated activity.
+     * Durable application message associated with this activity, or null for unrelated activity.
      */
     messageSequence: Sequence | null;
     /**

@@ -21,13 +21,13 @@ later call from replacing an unresolved batch. After resolution, later model
 turns may create any number of additional batches.
 
 `AnswerQuestions` takes the pending call ID and one non-empty answer for every
-question ID. The RPC locks `PendingUserInput`, validates the exact set, appends
-the answer directly to `CurrentMessages`, deletes the batch, cancels any
-unfinished `AwaitUser`, and schedules `AnsweredInput` in one atomic commit.
-While the batch is pending, `AwaitUser` enters an RPC-resumable dead-end instead
-of consuming steering or queued messages. `AnsweredInput` starts the answer's
-model turn before either queue. The message retains the answered call ID
-internally for Plan execution semantics.
+question ID. The RPC locks `PendingUserInput`, validates the exact set, deletes
+the batch, and publishes one typed value to `AnsweredUserInputs` in one atomic
+commit. While the batch is pending, `AwaitUser` waits only for that Channel
+instead of consuming steering or queued messages. Execute appends the answer to
+`CurrentMessages`, emits `user_input_answered`, and enters `AnsweredInput`.
+That Step starts the answer's model turn before either queue. The message
+retains the answered call ID internally for Plan execution semantics.
 
 `SendMessage` rejects while a batch is pending. The browser keeps answers only
 in its current React session, allows backward navigation and edits, and submits
@@ -38,8 +38,9 @@ pending-input mutation path.
 
 ## Consequences
 
-HTTP `202` means the exact batch is closed and its answer is durable in chat
-history. Duplicate, stale, partial, and mismatched answers return `409` without
-changing the batch or scheduling a Step. Accepted answers do not enter the
-editable message queue. RPC `NextSteps` observes the answer commit instead of
-continuing from the Attribute snapshot captured by an earlier wait.
+HTTP `202` means the exact batch is closed and its answer is durably queued for
+the waiting Agent Step. Duplicate, stale, partial, and mismatched answers return
+`409` without changing the batch. Accepted answers do not enter the editable
+message queue. The answer enters chat history when `AwaitUser.Execute` consumes
+it. Its activity event lets the browser display the locally known answer before
+the next Snapshot arrives.

@@ -622,7 +622,8 @@ function resetResumeTokens(
 function shouldReconcileAfter(update: LiveUpdate): boolean {
   return (
     update.kind === "activity" &&
-    update.value.kind === EventKind.SNAPSHOT_REQUIRED
+    (update.value.kind === EventKind.SNAPSHOT_REQUIRED ||
+      update.value.kind === EventKind.USER_INPUT_ANSWERED)
   );
 }
 

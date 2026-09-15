@@ -391,6 +391,11 @@ test("submits a question answer before steering and queued messages", async ({
   await expect(
     history.locator(".message-bubble.user").filter({ hasText: "Region" }),
   ).toContainText("US West");
+  const answeredActivity = history.locator(
+    ".activity-entry.user_input_answered",
+  );
+  await expect(answeredActivity).toContainText("Answered 3 questions.");
+  await expect(answeredActivity).not.toContainText("US West");
   await expect(
     history.locator(".message-bubble.user").filter({
       hasText: "steered after question",

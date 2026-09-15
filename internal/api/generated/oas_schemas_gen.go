@@ -321,7 +321,7 @@ type AgentEvent struct {
 	Message  string      `json:"message"`
 	CallId   NilCallID   `json:"callId"`
 	ToolName NilToolName `json:"toolName"`
-	// Durable assistant message produced by this model invocation, or null for unrelated activity.
+	// Durable application message associated with this activity, or null for unrelated activity.
 	MessageSequence NilSequence `json:"messageSequence"`
 	// Plan revision the browser must currently render before applying a task update, or null.
 	PlanBaseRevision OptNilInt64 `json:"planBaseRevision"`
@@ -942,6 +942,7 @@ const (
 	EventKindPlanUpdated        EventKind = "plan_updated"
 	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
 	EventKindInputConsumed      EventKind = "input_consumed"
+	EventKindUserInputAnswered  EventKind = "user_input_answered"
 	EventKindSnapshotRequired   EventKind = "snapshot_required"
 	EventKindSteeringApplied    EventKind = "steering_applied"
 	EventKindCompactionFailed   EventKind = "compaction_failed"
@@ -963,6 +964,7 @@ func (EventKind) AllValues() []EventKind {
 		EventKindPlanUpdated,
 		EventKindPlanTaskUpdated,
 		EventKindInputConsumed,
+		EventKindUserInputAnswered,
 		EventKindSnapshotRequired,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
@@ -988,6 +990,8 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindPlanTaskUpdated:
 		return []byte(s), nil
 	case EventKindInputConsumed:
+		return []byte(s), nil
+	case EventKindUserInputAnswered:
 		return []byte(s), nil
 	case EventKindSnapshotRequired:
 		return []byte(s), nil
@@ -1032,6 +1036,9 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindInputConsumed:
 		*s = EventKindInputConsumed
+		return nil
+	case EventKindUserInputAnswered:
+		*s = EventKindUserInputAnswered
 		return nil
 	case EventKindSnapshotRequired:
 		*s = EventKindSnapshotRequired

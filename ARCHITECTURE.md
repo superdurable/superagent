@@ -93,11 +93,13 @@ payload to `SteeredUserMessages`; a repeated or stale ID is not accepted.
 
 Queued messages use `QueuedUserMessages`. Validated question answers bypass
 both message queues. `AnswerQuestions` verifies the exact pending call ID and
-every question ID. One RPC commit appends the answer to `CurrentMessages`,
-deletes `PendingUserInput`, cancels any unfinished `AwaitUser`, and schedules
-`AnsweredInput`. A pending question leaves `AwaitUser` at an RPC-resumable
-dead-end. `AnsweredInput` starts the answer model turn without checking either
-message queue. Steering is otherwise consumed only at explicit safe Step
+every question ID. One RPC commit deletes `PendingUserInput` and publishes the
+validated answer to `AnsweredUserInputs`. `AwaitUser` waits only on that Channel
+while a question is pending and checks for an already-published answer before
+the Attribute. Its Execute appends the answer to `CurrentMessages`, emits a
+content-free `user_input_answered` activity, and enters `AnsweredInput`.
+`AnsweredInput` starts the answer model turn without checking either message
+queue. Steering is otherwise consumed only at explicit safe Step
 boundaries, so it cannot claim to cancel an in-flight model or MCP side effect.
 `ApproveTool` accepts only the current
 `PendingApproval.CallID`; it deletes the pending value and publishes the
@@ -151,7 +153,8 @@ unavailable. Unanchored reasoning retains its own chronological position.
 `WaitingInputRound` is a monotonic `int64` Attribute bounded by JavaScript's
 safe integer maximum. With no pending question, `AwaitUser.WaitFor` increments
 it only when steered, queued, and current-Plan execution Channels are empty. A
-pending question increments it before entering its RPC-resumable dead-end. The
+pending question increments it only when `AnsweredUserInputs` is empty, then
+waits exclusively for an answer. The
 browser takes the first Snapshot round as a watermark, then long-polls
 for `round > watermark`. Each response returns the actual matched round, which
 becomes the next watermark before requesting Snapshot. The ongoing round wait
@@ -216,9 +219,11 @@ later mutations. Pending input uses the dedicated
 collects every answer locally, permits review, and submits the complete batch.
 Preset answers may include a compact supplemental detail that is composed into
 the answer string; `Other` requires free text.
-HTTP acceptance means the server has durably removed that exact batch, appended
-the answer to chat history, and scheduled its model turn ahead of both queues.
-Answers never appear as optimistic queue items. Queue edit, delete, and steer optimistically
+HTTP acceptance means the server has durably removed that exact batch and
+published the validated answer to `AnsweredUserInputs`. `AwaitUser.Execute`
+immediately adds it to chat history and emits `user_input_answered`; the browser
+uses that event to display the locally known answer until Snapshot confirms the
+durable message. Answers never appear as optimistic queue items. Queue edit, delete, and steer optimistically
 remove one stable message ID.
 The backend resolves a steer value from the loaded
 Channel snapshot; the browser cannot replace the queued content during that

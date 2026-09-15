@@ -41,6 +41,7 @@ var (
 	pendingApprovalAttribute      = dex.DefineAttribute[PendingApproval]("PendingApproval")
 	pendingTimerAttribute         = dex.DefineAttribute[PendingTimer]("PendingTimer")
 	pendingUserInputAttribute     = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
+	answeredUserInputsChannel     = dex.DefineChannel[AnsweredUserInput]("AnsweredUserInputs")
 	queuedUserMessagesChannel     = dex.DefineChannel[PendingUserMessage]("QueuedUserMessages")
 	steeredUserMessagesChannel    = dex.DefineChannel[PendingUserMessage]("SteeredUserMessages")
 	toolApprovalsChannel          = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
@@ -111,6 +112,7 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 			pendingUserInputAttribute,
 		},
 		Channels: []dex.ChannelDef{
+			answeredUserInputsChannel,
 			queuedUserMessagesChannel,
 			steeredUserMessagesChannel,
 			toolApprovalsChannel,
@@ -145,8 +147,8 @@ func (*Flow) SendMessage(ctx dex.Context, input PendingUserMessage) (*dex.RPCRes
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
-// AnswerQuestions closes and answers one exact pending input batch atomically.
-func (flow *Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
+// AnswerQuestions validates and publishes one exact pending input batch atomically.
+func (*Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(string(input.CallID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
@@ -161,16 +163,17 @@ func (flow *Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest)
 	if !isValid {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	if err := flow.beginUserTurn(ctx, message); err != nil {
-		return nil, err
-	}
 	if err := pendingUserInputAttribute.Delete(ctx); err != nil {
 		return nil, err
 	}
-	return (&dex.RPCResult[bool]{
-		Output:    true,
-		NextSteps: []dex.StepMovement{dex.MovementOf(answeredInputStep{flow: flow}, nil)},
-	}).CancelSteps(awaitUserStep{flow: flow}), nil
+	if err := answeredUserInputsChannel.Publish(ctx, AnsweredUserInput{
+		CallID:        pending.CallID,
+		Message:       message,
+		QuestionCount: len(pending.Questions),
+	}); err != nil {
+		return nil, err
+	}
+	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
 // SteerMessage atomically moves a queued message into the Steer queue.
@@ -577,14 +580,14 @@ func (flow *Flow) invocationToolDefinition(config AgentConfig, state AgentState,
 	return ToolDefinition{}, fmt.Errorf("unknown or disabled tool %q", name)
 }
 
-func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
+func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) (Sequence, error) {
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	plan, err := getAgentPlan(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	switch {
 	case message.PlanMode:
@@ -610,15 +613,14 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) error {
 	state.PendingPlanExecutionRevision = nil
 	state.PlanNoProgressAttempts = 0
 	if setErr := agentStateAttribute.Set(ctx, state); setErr != nil {
-		return setErr
+		return 0, setErr
 	}
-	_, err = flow.appendMessage(ctx, AgentMessage{
+	return flow.appendMessage(ctx, AgentMessage{
 		Role:                 MessageRoleUser,
 		Content:              message.Content,
 		ToolCalls:            []ToolCall{},
 		ProviderContextItems: []ProviderContextItem{},
 	})
-	return err
 }
 
 func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessage) error {
@@ -657,7 +659,7 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessag
 		}
 	}
 	for _, message := range messages {
-		if err := flow.beginUserTurn(ctx, message.Value); err != nil {
+		if _, err := flow.beginUserTurn(ctx, message.Value); err != nil {
 			return err
 		}
 	}
@@ -1502,11 +1504,14 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 	if err != nil {
 		return nil, err
 	}
+	if answeredUserInputsChannel.Size(ctx) > 0 {
+		return dex.Until(answeredUserInputsChannel.ForOne()), nil
+	}
 	if pendingInput != nil {
 		if err := incrementWaitingInputRound(ctx); err != nil {
 			return nil, err
 		}
-		return dex.SkipWaitImmediately(), nil
+		return dex.Until(answeredUserInputsChannel.ForOne()), nil
 	}
 	if plan != nil && plan.Status != PlanStatusCompleted {
 		planKey := planRevisionKey(plan.Revision)
@@ -1535,12 +1540,25 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 }
 
 func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
-	pendingInput, err := getPendingUserInput(ctx)
+	answeredInputs, err := answeredUserInputsChannel.GetConditionResults(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if pendingInput != nil {
-		return dex.DeadEnd(), nil
+	if len(answeredInputs) > 0 {
+		answeredInput := answeredInputs[0]
+		sequence, beginErr := step.flow.beginUserTurn(ctx, answeredInput.Message)
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		if activityErr := step.flow.writeActivity(ctx, AgentEvent{
+			Kind:            EventKindUserInputAnswered,
+			Message:         answeredQuestionsDescription(answeredInput.QuestionCount),
+			CallID:          &answeredInput.CallID,
+			MessageSequence: &sequence,
+		}); activityErr != nil {
+			return nil, activityErr
+		}
+		return dex.GoTo(answeredInputStep{flow: step.flow}, nil), nil
 	}
 	steered, err := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if err != nil {
@@ -1557,7 +1575,7 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(queued) > 0 {
-		if beginErr := step.flow.beginUserTurn(ctx, queued[0].Value); beginErr != nil {
+		if _, beginErr := step.flow.beginUserTurn(ctx, queued[0].Value); beginErr != nil {
 			return nil, beginErr
 		}
 		if consumptionErr := step.flow.writeInputConsumption(ctx, []PendingUserMessage{queued[0]}, nil, nil); consumptionErr != nil {
@@ -1616,6 +1634,14 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
+}
+
+func answeredQuestionsDescription(questionCount int) string {
+	noun := "questions"
+	if questionCount == 1 {
+		noun = "question"
+	}
+	return fmt.Sprintf("Answered %d %s.", questionCount, noun)
 }
 
 type answeredInputStep struct {
