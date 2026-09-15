@@ -726,6 +726,72 @@ describe("App", () => {
     );
   });
 
+  it("moves a consumed queued message into the conversation before Snapshot", async () => {
+    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      description: {
+        ...activeDescription,
+        status: AgentStatus.CALLING_MODEL,
+        pendingQueuedMessageCount: 1,
+      },
+      queued: [
+        {
+          messageId: "queued-1",
+          value: { content: "Show this immediately", planMode: false },
+        },
+      ],
+    });
+    const consumed = deferred<StreamEvent>();
+    let sentConsumption = false;
+    vi.mocked(readEvent).mockImplementation(({ query, signal }) => {
+      if (query.stream === EventStream.ACTIVITY && !sentConsumption) {
+        sentConsumption = true;
+        return consumed.promise;
+      }
+      return pendingStream(signal);
+    });
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+    render(<App />);
+
+    const queue = await screen.findByRole("region", { name: "Message queue" });
+    expect(
+      within(queue).getByText("Show this immediately"),
+    ).toBeInTheDocument();
+    act(() => {
+      consumed.resolve({
+        ...activityEvent(
+          "input-consumed-1",
+          EventKind.INPUT_CONSUMED,
+          "Consumed 1 queued user message.",
+          "2026-09-03T00:01:00Z",
+        ),
+        value: {
+          kind: EventKind.INPUT_CONSUMED,
+          message: "Consumed 1 queued user message.",
+          callId: null,
+          toolName: null,
+          messageSequence: null,
+          inputConsumption: {
+            queuedMessageIds: ["queued-1"],
+            steeredMessageIds: [],
+            planExecutionRevision: null,
+          },
+        },
+      });
+    });
+
+    const history = screen.getByRole("region", {
+      name: "Conversation history",
+    });
+    expect(
+      await within(history).findByText("Show this immediately"),
+    ).toBeInTheDocument();
+    expect(
+      within(queue).queryByText("Show this immediately"),
+    ).not.toBeInTheDocument();
+    expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the Plan boundary closed after its request is consumed", async () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       ...snapshot,

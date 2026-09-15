@@ -23,6 +23,14 @@ describe("buildConversationTimeline", () => {
   it("orders messages, activities, reasoning, and live assistant by time", () => {
     const timeline = buildConversationTimeline(
       messages(),
+      [
+        {
+          messageId: "consumed-1",
+          value: { content: "follow up", planMode: false },
+          createdAt: "2026-09-03T00:02:15Z",
+          consumedAfterSequence: 2,
+        },
+      ],
       [reasoning("model-2", "2026-09-03T00:02:30Z")],
       [
         activity("model-2", "2026-09-03T00:02:00Z", EventKind.MODEL_STARTED, 4),
@@ -41,6 +49,7 @@ describe("buildConversationTimeline", () => {
       "message:2",
       "activity:model-1:model_completed",
       "activity:model-2:model_started",
+      "consumed-user:consumed-1",
       "reasoning:model-2",
       "message:3",
       "assistant:model-live",
@@ -51,6 +60,7 @@ describe("buildConversationTimeline", () => {
   it("places anchored reasoning before its assistant when timestamps tie", () => {
     const timeline = buildConversationTimeline(
       messages(),
+      [],
       [reasoning("model-1", "2026-09-03T00:01:00Z")],
       [
         activity(
@@ -79,6 +89,7 @@ describe("buildConversationTimeline", () => {
         message(1, MessageRole.USER, "2026-09-03T00:00:00Z"),
         message(2, MessageRole.ASSISTANT, "invalid"),
       ],
+      [],
       [reasoning("retained-model", "invalid")],
       [
         activity(
@@ -107,7 +118,13 @@ describe("buildConversationTimeline", () => {
       null,
     );
     const second = { ...first, resumeToken: "second-token" };
-    const timeline = buildConversationTimeline([], [], [first, second], null);
+    const timeline = buildConversationTimeline(
+      [],
+      [],
+      [],
+      [first, second],
+      null,
+    );
 
     expect(timeline).toHaveLength(2);
     expect(timeline.map(timelineIdentity)).toEqual([
@@ -179,6 +196,8 @@ function timelineIdentity(
   switch (entry.kind) {
     case "message":
       return `message:${String(entry.value.sequence)}`;
+    case "consumed-user":
+      return `consumed-user:${entry.value.messageId}`;
     case "reasoning":
       return `reasoning:${entry.value.source}`;
     case "activity":

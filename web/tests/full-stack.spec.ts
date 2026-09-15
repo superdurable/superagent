@@ -335,10 +335,19 @@ test("removes a consumed queued message before the next Snapshot completes", asy
       .getByRole("region", { name: "Conversation history" })
       .getByText("Consumed 1 steered user message."),
   ).toBeVisible();
+  const consumedMessage = page
+    .getByRole("region", { name: "Conversation history" })
+    .locator(".message-bubble.user")
+    .filter({ hasText: "consume this queued message" });
+  await expect(consumedMessage).toHaveCount(1);
   expect(snapshotStatuses).toHaveLength(completedSnapshots);
   await expect.poll(() => didHoldSnapshot).toBe(true);
   expect(snapshotStatuses).toHaveLength(completedSnapshots);
   releaseSnapshot();
+  await expect
+    .poll(() => snapshotStatuses.length)
+    .toBeGreaterThan(completedSnapshots);
+  await expect(consumedMessage).toHaveCount(1);
 });
 
 test("accepts the first message after Start and retains it across refresh", async ({

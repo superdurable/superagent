@@ -157,9 +157,12 @@ recovery path.
 Every consumed queued message, steered message, or Plan execution request emits
 one `input_consumed` Activity event with exact application IDs or revision and
 no user content. The reducer removes only matching visible inputs and closes
-the transient `isWaitingForInput` gate. Replays are idempotent and cannot remove
-messages that arrived later. A later authoritative Snapshot at a real waiting
-boundary reopens the gate. Stream loss is corrected by Snapshot.
+the transient `isWaitingForInput` gate. It projects payloads already known from
+Snapshot into temporary user bubbles without adding content to the Stream.
+Consumed IDs suppress stale queue data until durable history replaces those
+bubbles. Replays are idempotent and cannot remove messages that arrived later.
+A later authoritative Snapshot at a real waiting boundary reopens the gate.
+Stream loss is corrected by Snapshot.
 
 Approval and Timer setup emit a hidden `snapshot_required` Activity control
 event after their durable payload is committed. It requests one non-blocking

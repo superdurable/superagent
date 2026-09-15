@@ -7,6 +7,7 @@
 import {
   AgentStatus,
   EventKind,
+  MessageRole,
   type TaskStatus,
   type AgentDescription,
   type AgentEvent,
@@ -72,6 +73,13 @@ export interface ActivityEntry {
   value: AgentEvent;
 }
 
+export interface ConsumedUserEntry {
+  messageId: MessageId;
+  value: UserMessage;
+  createdAt: string;
+  consumedAfterSequence: Sequence;
+}
+
 export type LiveUpdate =
   | ({ kind: "assistant" } & LiveText)
   | ({ kind: "reasoning" } & LiveText)
@@ -116,6 +124,7 @@ interface ReadyConversationBase {
   assistant: AssistantEntry | null;
   reasoning: ReasoningEntry[];
   activities: ActivityEntry[];
+  consumedUserMessages: ConsumedUserEntry[];
   planProgress: PlanProgressHint | null;
   isWaitingForInput: boolean;
   reconciliation: ReconciliationState;
@@ -290,6 +299,27 @@ function reconcileSnapshot(
       previousAnsweredUserInputCallID
       ? previousAnsweredUserInputCallID
       : null;
+  const history =
+    previousRun !== null
+      ? reconcileHistory(
+          previousRun.snapshot.history,
+          snapshot.history,
+          snapshot.description.firstRetainedSequence,
+        )
+      : snapshot.history;
+  const consumedUserMessages = reconcileConsumedUserMessages(
+    previousRun?.consumedUserMessages ?? [],
+    history,
+  );
+  const consumedMessageIDs = new Set(
+    consumedUserMessages.map((message) => message.messageId),
+  );
+  const queued = snapshot.queued.filter(
+    (message) => !consumedMessageIDs.has(message.messageId),
+  );
+  const steered = snapshot.steered.filter(
+    (message) => !consumedMessageIDs.has(message.messageId),
+  );
   const activeSnapshot = {
     ...snapshot,
     description: {
@@ -298,15 +328,12 @@ function reconcileSnapshot(
         answeredUserInputCallID === null
           ? snapshot.description.pendingUserInput
           : null,
+      pendingQueuedMessageCount: queued.length,
+      pendingSteeredMessageCount: steered.length,
     },
-    history:
-      previousRun !== null
-        ? reconcileHistory(
-            previousRun.snapshot.history,
-            snapshot.history,
-            snapshot.description.firstRetainedSequence,
-          )
-        : snapshot.history,
+    history,
+    queued,
+    steered,
   };
   const hasDurableProgress =
     previousRun !== null &&
@@ -341,6 +368,7 @@ function reconcileSnapshot(
       ? completeReasoning(previousRun.reasoning)
       : (previousRun?.reasoning ?? []),
     activities: previousRun?.activities ?? [],
+    consumedUserMessages,
     planProgress: null,
     isWaitingForInput:
       snapshot.description.status === AgentStatus.WAITING_FOR_MESSAGE &&
@@ -374,6 +402,7 @@ function terminalState(
     assistant: null,
     reasoning: completeReasoning(priorReady?.reasoning ?? []),
     activities: priorReady?.activities ?? [],
+    consumedUserMessages: [],
     planProgress: null,
     isWaitingForInput: false,
     commandError: null,
@@ -622,7 +651,7 @@ function reconcileOptimisticSubmissions(
       ({ sequence, message }) =>
         sequence > submission.submittedAfterSequence &&
         !claimed.has(`history:${String(sequence)}`) &&
-        message.role === "user" &&
+        message.role === MessageRole.USER &&
         message.content === submission.value.content,
     );
     if (durable !== undefined) {
@@ -630,6 +659,25 @@ function reconcileOptimisticSubmissions(
       return false;
     }
     return true;
+  });
+}
+
+function reconcileConsumedUserMessages(
+  messages: ConsumedUserEntry[],
+  history: HistoryPage,
+): ConsumedUserEntry[] {
+  const claimedSequences = new Set<Sequence>();
+  return messages.filter((consumed) => {
+    const durable = history.messages.find(
+      ({ sequence, message }) =>
+        sequence > consumed.consumedAfterSequence &&
+        !claimedSequences.has(sequence) &&
+        message.role === MessageRole.USER &&
+        message.content === consumed.value.content,
+    );
+    if (durable === undefined) return true;
+    claimedSequences.add(durable.sequence);
+    return false;
   });
 }
 
@@ -693,15 +741,16 @@ function applyLiveUpdate(
           activities: [...state.activities, update],
           planProgress: applyPlanTaskUpdate(state, update.value),
         },
-        update.value,
+        update,
       );
   }
 }
 
 function applyInputConsumption(
   state: ActiveConversationState,
-  event: AgentEvent,
+  update: ActivityEntry,
 ): ActiveConversationState {
+  const event = update.value;
   if (
     event.kind !== EventKind.INPUT_CONSUMED ||
     event.inputConsumption === null
@@ -711,6 +760,30 @@ function applyInputConsumption(
   const queuedIDs = new Set(event.inputConsumption.queuedMessageIds);
   const steeredIDs = new Set(event.inputConsumption.steeredMessageIds);
   const consumedIDs = new Set([...queuedIDs, ...steeredIDs]);
+  const pendingByID = new Map(
+    [...state.snapshot.queued, ...state.snapshot.steered].map((message) => [
+      message.messageId,
+      message,
+    ]),
+  );
+  const projectedIDs = new Set(
+    state.consumedUserMessages.map((message) => message.messageId),
+  );
+  const newlyConsumedUserMessages = [...consumedIDs]
+    .filter((messageID) => !projectedIDs.has(messageID))
+    .flatMap((messageID): ConsumedUserEntry[] => {
+      const pending = pendingByID.get(messageID);
+      return pending === undefined
+        ? []
+        : [
+            {
+              messageId: messageID,
+              value: pending.value,
+              createdAt: update.createdAt,
+              consumedAfterSequence: state.snapshot.description.lastSequence,
+            },
+          ];
+    });
   const queued = state.snapshot.queued.filter(
     (message) => !consumedIDs.has(message.messageId),
   );
@@ -729,6 +802,10 @@ function applyInputConsumption(
   return {
     ...state,
     isWaitingForInput: didConsumeVisibleInput ? false : state.isWaitingForInput,
+    consumedUserMessages: [
+      ...state.consumedUserMessages,
+      ...newlyConsumedUserMessages,
+    ],
     snapshot: {
       ...state.snapshot,
       queued,

@@ -143,10 +143,13 @@ The payload contains only `queuedMessageIds`, `steeredMessageIds`, and nullable
 never user content.
 
 The browser removes only matching IDs and clears only the matching Plan
-revision. Replayed events are therefore idempotent and cannot delete newer
-inputs. The event also closes the transient Plan-action gate until a later
-Snapshot confirms a real waiting boundary. Snapshot remains the only durable
-current-interaction read model and corrects missed Stream events.
+revision. It temporarily projects consumed payloads already present in Snapshot
+as user messages, while consumed IDs hide any stale queue Snapshot. Replayed
+events are therefore idempotent and cannot delete newer inputs. Durable history
+replaces the temporary projection on the next current Snapshot. The event also
+closes the transient Plan-action gate until a later Snapshot confirms a real
+waiting boundary. Snapshot remains the only durable current-interaction read
+model and corrects missed Stream events.
 
 Approval and Timer setup write a `snapshot_required` control event after their
 durable payload is committed. The browser hides this event and requests one

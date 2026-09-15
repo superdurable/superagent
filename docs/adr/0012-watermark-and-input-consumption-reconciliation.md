@@ -60,7 +60,10 @@ designed `SandboxLifecycleFlow`; this change creates no placeholder contract.
 One long poll advances monotonically instead of alternating equality waits.
 Inputs already waiting at `AwaitUser` do not create false browser boundaries.
 Queue removal is immediate when the Activity Stream is available, while
-Snapshot remains the only authoritative durable reconciliation model.
+payloads already known from Snapshot remain visible as temporary user bubbles.
+Consumed IDs suppress stale queue data until durable history replaces the
+temporary projection. Snapshot remains the only authoritative durable
+reconciliation model.
 
 Deployments must use Dex Server `v0.7.0`, Dex Go SDK `v0.7.1`, and the matching
 Worker and browser behavior together. They must stop or clear Agent Flows

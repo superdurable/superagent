@@ -271,6 +271,14 @@ describe("conversationReducer", () => {
     expect(state).toMatchObject({
       kind: "ready",
       isWaitingForInput: false,
+      consumedUserMessages: [
+        { messageId: "queued-1", value: { content: "first" } },
+        { messageId: "steered-1", value: { content: "priority" } },
+        {
+          messageId: "queued-moved",
+          value: { content: "moved before consumption" },
+        },
+      ],
       snapshot: {
         queued: [{ messageId: "queued-later" }],
         steered: [],
@@ -283,6 +291,65 @@ describe("conversationReducer", () => {
         { resumeToken: "input-consumed-1" },
         { resumeToken: "input-consumed-replay" },
       ],
+    });
+
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: initial,
+    });
+    expect(state).toMatchObject({
+      consumedUserMessages: [
+        { messageId: "queued-1" },
+        { messageId: "steered-1" },
+        { messageId: "queued-moved" },
+      ],
+      snapshot: {
+        queued: [{ messageId: "queued-later" }],
+        steered: [],
+      },
+    });
+
+    const queuedLater = initial.queued.find(
+      (message) => message.messageId === "queued-later",
+    );
+    if (queuedLater === undefined) throw new Error("expected later message");
+    const durable = {
+      ...initial,
+      history: {
+        ...initial.history,
+        messages: [
+          ...initial.history.messages,
+          sequencedMessage(2, "first"),
+          sequencedMessage(3, "priority"),
+          sequencedMessage(4, "moved before consumption"),
+        ],
+      },
+      description: {
+        ...initial.description,
+        lastSequence: 4,
+        pendingQueuedMessageCount: 1,
+        pendingSteeredMessageCount: 0,
+      },
+      queued: [queuedLater],
+      steered: [],
+    } satisfies AgentSnapshot;
+    state = conversationReducer(state, {
+      type: "snapshot-loaded",
+      snapshot: durable,
+    });
+    expect(state).toMatchObject({
+      consumedUserMessages: [],
+      snapshot: {
+        history: {
+          messages: [
+            { sequence: 1 },
+            { sequence: 2 },
+            { sequence: 3 },
+            { sequence: 4 },
+          ],
+        },
+        queued: [{ messageId: "queued-later" }],
+      },
     });
   });
 

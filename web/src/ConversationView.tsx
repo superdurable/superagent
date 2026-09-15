@@ -99,6 +99,7 @@ export function ConversationView({
     description.plan !== null;
   const timeline = buildConversationTimeline(
     snapshot.history.messages,
+    state.consumedUserMessages,
     state.reasoning,
     state.activities,
     state.assistant,
@@ -267,6 +268,22 @@ export function ConversationView({
                       </span>
                     </div>
                     <RichText value={entry.value.value} />
+                  </article>
+                );
+              }
+              if (entry.kind === "consumed-user") {
+                return (
+                  <article
+                    className="message-bubble user"
+                    key={`consumed-user:${entry.value.messageId}`}
+                  >
+                    <div className="message-meta">
+                      <strong>User</strong>
+                      <time dateTime={entry.value.createdAt}>
+                        {formatTime(entry.value.createdAt)}
+                      </time>
+                    </div>
+                    <p>{entry.value.value.content}</p>
                   </article>
                 );
               }

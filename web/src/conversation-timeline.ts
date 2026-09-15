@@ -10,11 +10,16 @@ import {
   type Sequence,
   type SequencedMessage,
 } from "./api/generated";
-import type { ActivityEntry, ReasoningEntry } from "./conversation-state";
-import type { AssistantEntry } from "./conversation-state";
+import type {
+  ActivityEntry,
+  AssistantEntry,
+  ConsumedUserEntry,
+  ReasoningEntry,
+} from "./conversation-state";
 
 export type ConversationTimelineEntry =
   | { kind: "message"; value: SequencedMessage }
+  | { kind: "consumed-user"; value: ConsumedUserEntry }
   | { kind: "reasoning"; value: ReasoningEntry }
   | { kind: "activity"; value: ActivityEntry }
   | { kind: "assistant"; value: AssistantEntry };
@@ -26,6 +31,7 @@ interface ModelWindow {
 
 export function buildConversationTimeline(
   messages: readonly SequencedMessage[],
+  consumedUserMessages: readonly ConsumedUserEntry[],
   reasoning: readonly ReasoningEntry[],
   activities: readonly ActivityEntry[],
   assistant: AssistantEntry | null,
@@ -34,6 +40,10 @@ export function buildConversationTimeline(
   const modelWindows = completedModelWindows(activities);
   const entries: ConversationTimelineEntry[] = [
     ...messages.map((value) => ({ kind: "message" as const, value })),
+    ...consumedUserMessages.map((value) => ({
+      kind: "consumed-user" as const,
+      value,
+    })),
     ...reasoning.map((value) => ({ kind: "reasoning" as const, value })),
     ...activities.map((value) => ({ kind: "activity" as const, value })),
   ];
@@ -134,6 +144,8 @@ function entryRank(entry: ConversationTimelineEntry): number {
   switch (entry.kind) {
     case "message":
       return entry.value.message.role === MessageRole.ASSISTANT ? 3 : 0;
+    case "consumed-user":
+      return 0;
     case "activity":
       return 1;
     case "reasoning":
@@ -147,6 +159,8 @@ function entryIdentity(entry: ConversationTimelineEntry): string {
   switch (entry.kind) {
     case "message":
       return `message:${String(entry.value.sequence).padStart(16, "0")}`;
+    case "consumed-user":
+      return `consumed-user:${entry.value.messageId}`;
     case "activity":
       return `activity:${entry.value.resumeToken}`;
     case "reasoning":
