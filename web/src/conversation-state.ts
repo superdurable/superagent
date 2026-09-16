@@ -836,6 +836,13 @@ function applyInputConsumption(
   const projectedIDs = new Set(
     state.consumedUserMessages.map((message) => message.messageId),
   );
+  const consumedAfterSequence = state.activities.reduce(
+    (latestSequence, activity) =>
+      activity.value.messageSequence === null
+        ? latestSequence
+        : Math.max(latestSequence, activity.value.messageSequence),
+    state.snapshot.description.lastSequence,
+  );
   const newlyConsumedUserMessages = [...consumedIDs]
     .filter((messageID) => !projectedIDs.has(messageID))
     .flatMap((messageID): ConsumedUserEntry[] => {
@@ -847,7 +854,7 @@ function applyInputConsumption(
               messageId: messageID,
               value: pending.value,
               createdAt: update.createdAt,
-              consumedAfterSequence: state.snapshot.description.lastSequence,
+              consumedAfterSequence,
             },
           ];
     });

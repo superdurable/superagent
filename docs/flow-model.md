@@ -14,7 +14,7 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK `v0.7.1` and Server `v0.7.0`. Each
+The implementation requires Dex Go SDK and Server `v0.8.0`. Each
 `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
@@ -86,8 +86,8 @@ history, and makes the model replan.
 | `RecoverToolExecution` | none                                                                                | Record one unknown result after exhausted Dex retries, then let the Agent continue                                                                         |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
 
-Dex Server `v0.7.0` supplies Channel size metadata to the Worker, and Dex Go SDK
-`v0.7.1` exposes it in `WaitFor` and `Execute`. `AwaitUser.WaitFor` reads the
+Dex Server and Go SDK `v0.8.0` expose Channel size metadata in `WaitFor` and
+`Execute`. `AwaitUser.WaitFor` reads the
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
 `WaitingInputRound` only when the selected Channel set is empty and the Step
@@ -169,9 +169,10 @@ sequence, but not the answer text. The browser correlates it with the locally
 submitted answer for immediate display and requests Snapshot for authoritative
 reconciliation.
 
-Approval and Timer setup write a `snapshot_required` control event after their
-durable payload is committed. The browser hides this event and requests one
-non-blocking Snapshot. These waits do not advance `WaitingInputRound`.
+The approval and Timer target `WaitFor` methods write a `snapshot_required`
+control event after `RouteTool` commits their durable payload. The browser hides
+this event and requests one non-blocking Snapshot. These waits do not advance
+`WaitingInputRound`.
 
 ## Snapshot and history
 

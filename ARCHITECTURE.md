@@ -172,10 +172,14 @@ bubbles. Replays are idempotent and cannot remove messages that arrived later.
 A later authoritative Snapshot at a real waiting boundary reopens the gate.
 Stream loss is corrected by Snapshot.
 
-Approval and Timer setup emit a hidden `snapshot_required` Activity control
-event after their durable payload is committed. It requests one non-blocking
-Snapshot so waits that intentionally do not advance `WaitingInputRound` remain
-visible without polling.
+Consumed user bubbles are anchored after the latest explicit message sequence
+seen in the Activity stream. This preserves causal ordering while Snapshot is
+temporarily behind the Stream.
+
+The approval and Timer target Steps emit a hidden `snapshot_required` Activity
+control from `WaitFor`, after `RouteTool` commits their durable payload. It
+requests one non-blocking Snapshot so waits that intentionally do not advance
+`WaitingInputRound` remain visible without polling.
 
 Every mutation result immediately requests another Snapshot. Mutation controls
 remain disabled until that Snapshot succeeds. Server errors and explicit

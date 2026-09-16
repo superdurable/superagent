@@ -76,7 +76,7 @@ and resource model.
 
 - Go matching [`go.mod`](go.mod)
 - Node.js and npm compatible with [`web/package-lock.json`](web/package-lock.json)
-- A Dex `v0.7.0` server
+- A Dex `v0.8.0` server
 - A writable directory for disposable Dex BlobCache data
 
 ## Quick start

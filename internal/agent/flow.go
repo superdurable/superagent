@@ -2076,9 +2076,6 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}); err != nil {
 			return nil, err
 		}
-		if err := step.flow.writeSnapshotRequired(ctx); err != nil {
-			return nil, err
-		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueDurableWait), nil
 	}
 	if call.Name == ToolNameRequestUserInput {
@@ -2155,9 +2152,6 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}); err != nil {
 			return nil, err
 		}
-		if err := step.flow.writeSnapshotRequired(ctx); err != nil {
-			return nil, err
-		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueAwaitToolApproval), nil
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteToolRetry), nil
@@ -2180,6 +2174,9 @@ func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wai
 		return nil, err
 	}
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForToolApproval); err != nil {
+		return nil, err
+	}
+	if err := step.flow.writeSnapshotRequired(ctx); err != nil {
 		return nil, err
 	}
 	return dex.AnyOf(
@@ -2477,6 +2474,9 @@ func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, err
 		return nil, err
 	}
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForTimer); err != nil {
+		return nil, err
+	}
+	if err := step.flow.writeSnapshotRequired(ctx); err != nil {
 		return nil, err
 	}
 	return dex.AnyOf(

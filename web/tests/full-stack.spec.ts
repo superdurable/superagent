@@ -124,6 +124,7 @@ test("renders chronological transient activity and durable queue interactions", 
     exact: true,
   });
   await expect(reasoningCard).toBeVisible();
+  await expect(composer).toBeFocused();
   if (!(await reasoningText.isVisible())) {
     await reasoningCard.locator("summary").click();
   }
@@ -140,7 +141,6 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toHaveCount(1);
   await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(3);
-  await expect(composer).toBeFocused();
   await expect(
     history
       .locator(".activity-entry")
