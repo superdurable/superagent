@@ -12,9 +12,11 @@ against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
 Snapshot, Stream, Channel size snapshot, and Attribute wait code target Dex Go
-SDK and Server `v0.8.0`. Recheck the installed SDK source and the
-installed skill before changing resource projection or errors. Never infer an
-API from a design screenshot or unreleased branch.
+SDK and Server `v0.9.0`. Version `v0.9.0` Workers negotiate the Server protocol
+before binding, so deployments upgrade the Server before the Worker. Recheck
+the installed SDK source and the installed skill before changing resource
+projection or errors. Never infer an API from a design screenshot or unreleased
+branch.
 
 ## Deployment boundary
 

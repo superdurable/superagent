@@ -304,8 +304,9 @@ Runtime metadata therefore remains stable for the logical call.
 
 `internal/app` owns every long-lived resource. Startup validates configuration,
 discovers MCP, constructs providers, opens BlobCache, starts the Worker, waits
-for its listener, marks readiness, and then serves the API. Any startup failure
-closes everything already constructed.
+for its listener, marks readiness, and then serves the API. The Dex `v0.9.0`
+Worker negotiates a compatible Server protocol before synchronizing indexes or
+binding. Any startup failure closes everything already constructed.
 
 On cancellation or an unexpected Worker/HTTP exit, readiness is cleared. The
 HTTP server and Worker receive bounded shutdown contexts, their goroutines are

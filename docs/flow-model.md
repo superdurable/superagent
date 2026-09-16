@@ -14,10 +14,15 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK and Server `v0.8.0`. Each
+The implementation requires Dex Go SDK and Server `v0.9.0`. Each
 `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
+
+The `v0.9.0` Worker negotiates the highest common protocol with the Server before
+Attribute index synchronization or Worker binding. Deploy the Server before the
+Worker. Startup fails when `GetServerInfo` is missing, either interval is
+invalid, or the intervals do not overlap.
 
 Renewable sandbox credentials are not an Agent Flow resource. A future,
 separately designed `SandboxLifecycleFlow` will own that lifecycle.
@@ -86,7 +91,7 @@ history, and makes the model replan.
 | `RecoverToolExecution` | none                                                                                | Record one unknown result after exhausted Dex retries, then let the Agent continue                                                                         |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
 
-Dex Server and Go SDK `v0.8.0` expose Channel size metadata in `WaitFor` and
+Dex Server and Go SDK `v0.9.0` expose Channel size metadata in `WaitFor` and
 `Execute`. `AwaitUser.WaitFor` reads the
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
