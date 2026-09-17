@@ -202,6 +202,8 @@ export function Conversation({
           dispatch({ type: "stream-update", update });
           if (shouldReconcileAfter(update)) {
             requestSnapshot({ blocking: false });
+            // Stream visibility can precede the durable wait commit.
+            requestSnapshot({ blocking: false });
           }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;

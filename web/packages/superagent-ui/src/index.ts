@@ -25,3 +25,12 @@ export {
   type PendingMessageQueueItem,
   type PendingMessageQueueProps,
 } from "./PendingMessageQueue.js";
+export {
+  ToolRecoveryPanel,
+  type PendingToolRecovery,
+  type ToolRecoveryAction,
+  type ToolRecoveryCall,
+  type ToolRecoveryDecision,
+  type ToolRecoveryPanelProps,
+  type ToolRecoveryResolution,
+} from "./ToolRecoveryPanel.js";

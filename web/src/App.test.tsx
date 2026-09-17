@@ -945,7 +945,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
+      expect(getAgentSnapshot).toHaveBeenCalledTimes(3);
     });
     expect(
       screen.queryByText("Durable interaction state changed."),

@@ -83,6 +83,18 @@ func TestParallelToolMovementsSplitAtConfiguredLimit(t *testing.T) {
 	}
 }
 
+func TestToolDefinitionsExposeFailureSimulationOnlyToLocalMock(t *testing.T) {
+	flow := &Flow{tools: staticToolRegistryForTestOnly{}}
+	config := NewAgentConfig()
+	if !hasToolDefinitionForTestOnly(flow.toolDefinitions(config), ToolNameSimulateFailure) {
+		t.Fatal("local mock definitions omit simulate_tool_failure")
+	}
+	config.Model = "openai/gpt-5-mini"
+	if hasToolDefinitionForTestOnly(flow.toolDefinitions(config), ToolNameSimulateFailure) {
+		t.Fatal("real provider definitions include simulate_tool_failure")
+	}
+}
+
 func TestValidateToolRecoveryResolutionRequiresAtomicCompleteDecision(t *testing.T) {
 	pending := PendingToolRecovery{
 		RecoveryID: "recovery-1",
@@ -150,6 +162,15 @@ func parallelDefinitionForTestOnly(name ToolName) ToolDefinition {
 
 func toolCallForTestOnly(id CallID, name ToolName) ToolCall {
 	return ToolCall{ID: id, Name: name, Arguments: MustJSONObject(`{}`)}
+}
+
+func hasToolDefinitionForTestOnly(definitions []ToolDefinition, name ToolName) bool {
+	for _, definition := range definitions {
+		if definition.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 type staticToolRegistryForTestOnly struct {

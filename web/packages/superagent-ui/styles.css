@@ -419,6 +419,109 @@
   justify-content: flex-end;
 }
 
+.sa-tool-recovery {
+  padding: 18px;
+  border: 1px solid var(--sa-recovery-border, #e7b3ad);
+  border-radius: 18px;
+  background: var(--sa-recovery-background, #fff8f7);
+  box-shadow: 0 12px 36px rgb(34 45 66 / 7%);
+}
+
+.sa-tool-recovery h2 {
+  margin: 3px 0 0;
+  font-size: 17px;
+}
+
+.sa-tool-recovery-eyebrow {
+  margin: 0;
+  color: var(--sa-subtle-color, #667085);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sa-tool-recovery-warning {
+  color: var(--sa-recovery-warning-color, #7f312b);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sa-tool-recovery-calls {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.sa-tool-recovery-call {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border-color: var(--sa-recovery-border, #e7b3ad);
+  background: var(--sa-surface-color, white);
+}
+
+.sa-tool-recovery-call legend {
+  padding: 0 5px;
+  font-weight: 700;
+}
+
+.sa-tool-recovery-call label {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+}
+
+.sa-tool-recovery-call pre {
+  max-width: 100%;
+  margin: 9px 0 0;
+  padding: 10px;
+  border-radius: 9px;
+  color: var(--sa-code-block-color, #ecf0f6);
+  background: var(--sa-code-block-background, #171a21);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.sa-tool-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.sa-tool-recovery-actions button {
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--sa-button-text-color, white);
+  background: var(--sa-button-background, #4757d6);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sa-tool-recovery-actions .sa-tool-recovery-stop {
+  color: var(--sa-danger-color, #9b2c25);
+  background: var(--sa-danger-background, #fff0ee);
+}
+
+.sa-tool-recovery input:focus-visible,
+.sa-tool-recovery summary:focus-visible,
+.sa-tool-recovery button:focus-visible {
+  outline: 3px solid var(--sa-focus-color, rgb(71 87 214 / 24%));
+  outline-offset: 2px;
+}
+
+.sa-tool-recovery button:disabled,
+.sa-tool-recovery input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 @media (max-width: 620px) {
   .sa-conversation-composer textarea {
     min-height: 60px;
@@ -435,6 +538,10 @@
   .sa-question-option {
     width: 100%;
     padding: 8px 10px;
+  }
+
+  .sa-tool-recovery-actions button {
+    width: 100%;
   }
 }
 
