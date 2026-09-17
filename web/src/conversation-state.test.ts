@@ -353,6 +353,58 @@ describe("conversationReducer", () => {
     });
   });
 
+  it("anchors consumed input after the latest streamed message sequence", () => {
+    let state = conversationReducer(initialConversationState(), {
+      type: "snapshot-loaded",
+      snapshot: snapshot("run-1", "queued-1", "first"),
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "activity",
+        resumeToken: "model-completed-1",
+        source: "model-call-1",
+        createdAt: "2026-09-03T00:00:01Z",
+        value: {
+          kind: EventKind.MODEL_COMPLETED,
+          message: "Model response completed.",
+          callId: null,
+          toolName: null,
+          messageSequence: 3,
+          inputConsumption: null,
+        },
+      },
+    });
+    state = conversationReducer(state, {
+      type: "stream-update",
+      update: {
+        kind: "activity",
+        resumeToken: "input-consumed-1",
+        source: "check-steered-1",
+        createdAt: "2026-09-03T00:00:02Z",
+        value: {
+          kind: EventKind.INPUT_CONSUMED,
+          message: "Consumed 1 queued user message.",
+          callId: null,
+          toolName: null,
+          messageSequence: null,
+          inputConsumption: {
+            queuedMessageIds: ["queued-1"],
+            steeredMessageIds: [],
+            planExecutionRevision: null,
+          },
+        },
+      },
+    });
+
+    expect(state).toMatchObject({
+      kind: "ready",
+      consumedUserMessages: [
+        { messageId: "queued-1", consumedAfterSequence: 3 },
+      ],
+    });
+  });
+
   it("applies a matching Plan task hint until Snapshot reconciliation", () => {
     const initial = withPlan(
       snapshotWithStatus(AgentStatus.CALLING_MODEL),

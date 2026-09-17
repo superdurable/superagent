@@ -49,10 +49,10 @@ request, writes an `input_consumed` Activity event. The structured payload
 contains exact message IDs and nullable Plan revision, while display text
 contains only counts or revision. The frontend applies it idempotently and
 closes Plan actions until Snapshot confirms the next real waiting boundary.
-Approval and Timer setup write a hidden `snapshot_required` Activity control
-after their durable payload is committed. The browser uses it for one
-non-blocking Snapshot because those waits intentionally do not advance the
-watermark.
+The approval and Timer target `WaitFor` methods write a hidden
+`snapshot_required` Activity control after `RouteTool` commits their durable
+payload. The browser uses it for one non-blocking Snapshot because those waits
+intentionally do not advance the watermark.
 
 `AnswerQuestions` durably publishes a validated answer to its dedicated
 Channel. `AwaitUser.Execute` appends it to application history and writes a
@@ -74,7 +74,8 @@ Consumed IDs suppress stale queue data until durable history replaces the
 temporary projection. Snapshot remains the only authoritative durable
 reconciliation model.
 
-Deployments must use Dex Server `v0.7.0`, Dex Go SDK `v0.7.1`, and the matching
-Worker and browser behavior together. They must stop or clear Agent Flows
-created with the removed schema before rollout; there is no old-Attribute or
-Runtime Lease compatibility shim.
+Deployments must use Dex Server and Go SDK `v0.9.0`, and the matching Worker and
+browser behavior together. The Server must be upgraded first because `v0.9.0`
+Workers reject Servers without protocol negotiation. Deployments must stop or
+clear Agent Flows created with the removed schema before rollout; there is no
+old-Attribute or Runtime Lease compatibility shim.

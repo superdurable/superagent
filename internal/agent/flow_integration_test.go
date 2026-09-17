@@ -166,13 +166,17 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
 	}
-	approval := waitForPendingApproval(t, environment, flowID)
-	if approval.ToolName != integrationToolName {
-		t.Fatalf("pending tool = %q", approval.ToolName)
-	}
 	snapshotRequired := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
 		return event.Kind == EventKindSnapshotRequired
 	})
+	approvalSnapshot := readSnapshot(t, environment, flowID)
+	if approvalSnapshot.Description == nil || approvalSnapshot.Description.PendingApproval == nil {
+		t.Fatalf("Snapshot after approval control = %#v", approvalSnapshot)
+	}
+	approval := *approvalSnapshot.Description.PendingApproval
+	if approval.ToolName != integrationToolName {
+		t.Fatalf("pending tool = %q", approval.ToolName)
+	}
 	if snapshotRequired.Activity.Message != "Durable interaction state changed." ||
 		snapshotRequired.Activity.InputConsumption != nil {
 		t.Fatalf("Snapshot control Activity = %#v", snapshotRequired.Activity)
@@ -342,6 +346,27 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		if snapshot := readSnapshot(t, environment, flowID); snapshot.Description == nil {
 			t.Fatalf("Snapshot after trimmed archive read = %#v", snapshot)
 		}
+	}
+}
+
+func TestAgentTimerSnapshotNotificationIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-timer-snapshot-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
+		t.Fatal(err)
+	}
+	readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+		return event.Kind == EventKindSnapshotRequired
+	})
+	snapshot := readSnapshot(t, environment, flowID)
+	if snapshot.Description == nil || snapshot.Description.PendingTimer == nil {
+		t.Fatalf("Snapshot after timer control = %#v", snapshot)
 	}
 }
 
