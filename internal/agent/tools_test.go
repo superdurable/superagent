@@ -18,6 +18,19 @@ package agent
 
 import "testing"
 
+func TestSequenceKeyUsesUnpaddedDecimal(t *testing.T) {
+	tests := map[Sequence]string{
+		1:                     "1",
+		11:                    "11",
+		9_007_199_254_740_993: "9007199254740993",
+	}
+	for sequence, expected := range tests {
+		if actual := sequenceKey(sequence); actual != expected {
+			t.Fatalf("sequenceKey(%d) = %q, want %q", sequence, actual, expected)
+		}
+	}
+}
+
 func TestToolSafeCompactionCutoffKeepsCallWithItsResult(t *testing.T) {
 	callID := CallID("call-1")
 	messages := []AgentMessage{
