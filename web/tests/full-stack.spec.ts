@@ -1573,11 +1573,8 @@ test("persists manual tool recovery and resumes only after a user decision", asy
   test.setTimeout(120_000);
   await startAgent(page);
   const composer = page.getByRole("textbox", { name: "Message" });
-  await composer.fill('/tool fixture__echo {"value":"always fail"}');
+  await composer.fill("/tool-failure");
   await page.getByRole("button", { name: "Send" }).click();
-  const approval = page.locator(".approval-card");
-  await expect(approval.getByText("Approval required")).toBeVisible();
-  await approval.getByRole("button", { name: "Approve" }).click();
 
   let recovery = page.locator(".recovery-card");
   await expect(
@@ -1597,6 +1594,12 @@ test("persists manual tool recovery and resumes only after a user decision", asy
   await expect(recoveryHeading).toBeFocused();
   await expect(
     recovery.getByText("Error type:", { exact: false }),
+  ).toBeVisible();
+  await expect(recovery).not.toContainText("simulated local tool failure");
+  await expect(
+    page
+      .locator(".activity-entry")
+      .filter({ hasText: "Calling simulate_tool_failure (attempt 2)." }),
   ).toBeVisible();
 
   await recovery

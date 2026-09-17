@@ -694,6 +694,9 @@ func (flow *Flow) toolDefinitions(config AgentConfig) []ToolDefinition {
 		definitions = append(definitions, flow.tools.Definitions(config.EnabledMCPServers, config.EnabledTools)...)
 	}
 	definitions = append(definitions, durableWaitDefinition(), requestUserInputDefinition())
+	if config.Model == DefaultModel {
+		definitions = append(definitions, simulateFailureDefinition())
+	}
 	return definitions
 }
 
@@ -718,6 +721,13 @@ func (flow *Flow) invocationToolDefinition(config AgentConfig, state AgentState,
 		}
 	}
 	return ToolDefinition{}, fmt.Errorf("unknown or disabled tool %q", name)
+}
+
+func (flow *Flow) executeTool(ctx dex.Context, invocation ToolInvocation) (ToolExecutionResult, error) {
+	if invocation.Name == ToolNameSimulateFailure {
+		return ToolExecutionResult{}, simulatedToolFailureError{}
+	}
+	return flow.tools.Execute(ctx, invocation)
 }
 
 func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) (Sequence, error) {
@@ -2539,7 +2549,7 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, metadataErr
 	}
 	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
-	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
+	result, executeErr := step.flow.executeTool(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
 		Name:            call.Name,
@@ -2705,7 +2715,7 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	if writeErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", call.Name, ctx.Attempt())); writeErr != nil {
 		return nil, writeErr
 	}
-	result, err := step.flow.tools.Execute(ctx, ToolInvocation{
+	result, err := step.flow.executeTool(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
 		Name:            call.Name,
@@ -2834,7 +2844,7 @@ func (step executeParallelToolStep) Execute(
 	if progressErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", input.Call.Name, ctx.Attempt())); progressErr != nil {
 		return nil, progressErr
 	}
-	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
+	result, executeErr := step.flow.executeTool(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
 		Name:            input.Call.Name,

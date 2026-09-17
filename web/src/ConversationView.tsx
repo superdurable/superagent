@@ -17,6 +17,7 @@ import {
   ConversationComposer,
   PendingMessageQueue,
   PendingQuestionBatch,
+  ToolRecoveryPanel,
   type PendingMessageQueueItem,
   type PendingQuestion,
   type PendingQuestionAnswer,
@@ -28,14 +29,13 @@ import {
   MessageRole,
   PlanStatus,
   TaskStatus,
-  ToolRecoveryAction,
-  ToolRecoveryResolution,
+  ToolRecoveryAction as TransportToolRecoveryAction,
+  ToolRecoveryResolution as TransportToolRecoveryResolution,
   type AgentEvent,
   type CallId,
   type FlowId,
   type PendingUserMessage,
   type PendingUserInput,
-  type PendingToolRecovery,
   type ToolRecoveryDecision,
   type ToolRecoveryResolution as ToolRecoveryResolutionValue,
   type ToolName,
@@ -387,7 +387,29 @@ export function ConversationView({
                 recovery={description.pendingToolRecovery}
                 disabled={areMutationsDisabled}
                 isSubmitting={state.pendingCommand?.command.kind === "recover"}
-                onResolve={onResolveToolRecovery}
+                onResolve={(recoveryId, recoveryResolution) => {
+                  if (recoveryResolution.resolution === "stop") {
+                    onResolveToolRecovery(
+                      recoveryId,
+                      TransportToolRecoveryResolution.STOP,
+                      [],
+                    );
+                    return;
+                  }
+                  onResolveToolRecovery(
+                    recoveryId,
+                    TransportToolRecoveryResolution.RESUME,
+                    recoveryResolution.decisions.map(
+                      (decision): ToolRecoveryDecision => ({
+                        callId: decision.callId,
+                        action:
+                          decision.action === "retry"
+                            ? TransportToolRecoveryAction.RETRY
+                            : TransportToolRecoveryAction.CONTINUE_WITH_UNKNOWN,
+                      }),
+                    ),
+                  );
+                }}
               />
             )}
 
@@ -488,120 +510,6 @@ export function ConversationView({
         </div>
       </section>
     </main>
-  );
-}
-
-interface ToolRecoveryPanelProps {
-  recovery: PendingToolRecovery;
-  disabled: boolean;
-  isSubmitting: boolean;
-  onResolve: (
-    recoveryId: string,
-    resolution: ToolRecoveryResolutionValue,
-    decisions: ToolRecoveryDecision[],
-  ) => void;
-}
-
-function ToolRecoveryPanel({
-  recovery,
-  disabled,
-  isSubmitting,
-  onResolve,
-}: ToolRecoveryPanelProps) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const [selections, setSelections] = useState<
-    Record<string, ToolRecoveryAction>
-  >(() => {
-    const initial: Record<string, ToolRecoveryAction> = {};
-    for (const call of recovery.calls) {
-      initial[call.callId] = ToolRecoveryAction.RETRY;
-    }
-    return initial;
-  });
-  useEffect(() => {
-    headingRef.current?.focus();
-  }, []);
-  const submitResume = () => {
-    const decisions = recovery.calls.map((call): ToolRecoveryDecision => ({
-      callId: call.callId,
-      action: selections[call.callId] ?? ToolRecoveryAction.RETRY,
-    }));
-    onResolve(recovery.recoveryId, ToolRecoveryResolution.RESUME, decisions);
-  };
-  return (
-    <section
-      className="side-card recovery-card"
-      aria-labelledby="tool-recovery-title"
-    >
-      <p className="eyebrow">Tool recovery required</p>
-      <h2 id="tool-recovery-title" ref={headingRef} tabIndex={-1}>
-        Execution outcome is unknown
-      </h2>
-      <p className="recovery-warning">
-        These operations may already have produced external effects. Retrying
-        keeps the same call ID, but the MCP server may not deduplicate it.
-      </p>
-      <div className="recovery-calls">
-        {recovery.calls.map((call) => (
-          <fieldset className="recovery-call" key={call.callId}>
-            <legend>{call.toolName}</legend>
-            <small>Error type: {call.errorType}</small>
-            <details onToggle={revealOpenedDetails}>
-              <summary>Arguments</summary>
-              <pre>{call.argumentsJson}</pre>
-            </details>
-            <label>
-              <input
-                type="radio"
-                name={`recovery-${call.callId}`}
-                checked={selections[call.callId] === ToolRecoveryAction.RETRY}
-                disabled={disabled}
-                onChange={() => {
-                  setSelections((current) => ({
-                    ...current,
-                    [call.callId]: ToolRecoveryAction.RETRY,
-                  }));
-                }}
-              />{" "}
-              Retry
-            </label>
-            <label>
-              <input
-                type="radio"
-                name={`recovery-${call.callId}`}
-                checked={
-                  selections[call.callId] ===
-                  ToolRecoveryAction.CONTINUE_WITH_UNKNOWN
-                }
-                disabled={disabled}
-                onChange={() => {
-                  setSelections((current) => ({
-                    ...current,
-                    [call.callId]: ToolRecoveryAction.CONTINUE_WITH_UNKNOWN,
-                  }));
-                }}
-              />{" "}
-              Continue with unknown result
-            </label>
-          </fieldset>
-        ))}
-      </div>
-      <div className="button-row">
-        <button type="button" disabled={disabled} onClick={submitResume}>
-          {isSubmitting ? "Submitting…" : "Apply recovery decisions"}
-        </button>
-        <button
-          type="button"
-          className="danger-button"
-          disabled={disabled}
-          onClick={() => {
-            onResolve(recovery.recoveryId, ToolRecoveryResolution.STOP, []);
-          }}
-        >
-          Stop current tool sequence
-        </button>
-      </div>
-    </section>
   );
 }
 

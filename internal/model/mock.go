@@ -229,6 +229,15 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 			}
 		case lastMessage.Role == agent.MessageRoleTool:
 			content = "The tool finished with this result: " + lastMessage.Content
+		case lastMessage.Role == agent.MessageRoleUser &&
+			strings.EqualFold(userRequest, "/tool-failure") &&
+			hasTool(available, agent.ToolNameSimulateFailure):
+			return calls.toolReply(
+				"I will run the deterministic recovery check.",
+				agent.ToolNameSimulateFailure,
+				agent.MustJSONObject(`{}`),
+				request.WriteActivity,
+			)
 		case strings.HasPrefix(strings.ToLower(userRequest), "/wait "):
 			parts := strings.SplitN(userRequest, " ", 3)
 			if len(parts) < 2 {

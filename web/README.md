@@ -54,6 +54,11 @@ Serve `index.html` with `Cache-Control: no-cache`, hashed assets as immutable,
 and `config.json` with `Cache-Control: no-store`. Configure the static host's
 Content Security Policy to allow connections only to the selected API origin.
 
+With the default `mock/dex` model, send `/tool-failure` to run a deterministic
+two-attempt tool failure. The Agent then waits durably in the shared manual
+recovery panel until Retry, Continue with unknown result, Stop, or steering is
+chosen. This diagnostic tool is not exposed to real providers.
+
 ## Durable and live state
 
 One reducer action atomically replaces application history, Agent description,
@@ -68,7 +73,9 @@ mutation request so browser connection limits cannot delay durable acceptance.
 `input_consumed` activity removes only exact stable message IDs or the matching
 Plan revision and closes the Plan gate until a later waiting Snapshot. Replayed
 events are idempotent. Hidden `snapshot_required` activity reconciles committed
-approval and Timer payloads without advancing the waiting-input watermark.
+approval, recovery, and Timer payloads without advancing the waiting-input
+watermark. The browser performs one trailing confirmation read because a Stream
+frame can become visible immediately before its durable Wait commit.
 Queue mutations optimistically update by stable message ID and then reconcile.
 The timeline follows the latest content until the user scrolls upward. The
 queue starts expanded as a height-bounded list of truncated one-line messages

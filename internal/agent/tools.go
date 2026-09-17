@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/superdurable/superagent/internal/toolcontract"
@@ -41,6 +42,8 @@ const (
 	ToolNameDurableWait ToolName = "durable_wait"
 	// ToolNameRequestUserInput creates a durable user question.
 	ToolNameRequestUserInput ToolName = "request_user_input"
+	// ToolNameSimulateFailure exercises manual recovery with the local mock model.
+	ToolNameSimulateFailure ToolName = "simulate_tool_failure"
 )
 
 const (
@@ -114,6 +117,24 @@ func requestUserInputDefinition() ToolDefinition {
 		InputSchema:     MustJSONObject(toolcontract.RequestUserInput.InputSchema()),
 		MaximumAttempts: 1,
 	}
+}
+
+func simulateFailureDefinition() ToolDefinition {
+	return ToolDefinition{
+		Name:                  ToolNameSimulateFailure,
+		Description:           "Fail deterministically to exercise manual tool recovery in the local mock.",
+		InputSchema:           MustJSONObject(`{"type":"object","additionalProperties":false}`),
+		AttemptTimeout:        5 * time.Second,
+		MaximumAttempts:       2,
+		RetryTotalDuration:    5 * time.Second,
+		RetryExhaustionPolicy: ToolRetryExhaustionPolicyManualRecovery,
+	}
+}
+
+type simulatedToolFailureError struct{}
+
+func (simulatedToolFailureError) Error() string {
+	return "simulated local tool failure"
 }
 
 func planTasks(call ToolCall) ([]PlanTask, error) {

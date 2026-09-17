@@ -226,6 +226,8 @@ every completed Snapshot read. Hidden pages pause the timer and live reads.
 ## External effects and recovery
 
 - Tool execution policy is copied from `ToolDefinition` into Dex StepOptions.
+- The `mock/dex` model alone exposes `simulate_tool_failure`; `/tool-failure`
+  uses it to verify retry exhaustion and the manual recovery surface locally.
 - Known business failures return a normal tool result. Transient or ambiguous
   errors use Dex retry. A returned unknown does not retry. Unknown outcomes and
   retry exhaustion wait for manual recovery unless trusted per-tool policy

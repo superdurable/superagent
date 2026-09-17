@@ -30,6 +30,7 @@ import {
   MarkdownContent,
   PendingMessageQueue,
   PendingQuestionBatch,
+  ToolRecoveryPanel,
 } from "@superdurable/superagent-ui";
 import "@superdurable/superagent-ui/styles.css";
 ```
@@ -44,6 +45,11 @@ free-form answers, local draft review, and one atomic ordered `onSubmit` call.
 The application keeps ownership of the durable call ID and transport request.
 Key the component by that stable batch identity when replacing one pending batch
 with another so React resets its local drafts.
+
+`ToolRecoveryPanel` renders one complete manual recovery batch, manages the
+per-call retry or continue selections, moves focus to the recovery heading, and
+reports one atomic resume or stop decision. The application maps that semantic
+decision to its generated transport types and reconciles from its Snapshot.
 
 All owned selectors use the `sa-` prefix. Consumers can theme the components
 with the documented `--sa-*` custom properties in `styles.css`. A few legacy

@@ -52,6 +52,12 @@ func TestMockClientPlansAndWaitsDeterministically(t *testing.T) {
 			tools:    []agent.ToolDefinition{{Name: agent.ToolNameRequestUserInput}},
 			wantTool: agent.ToolNameRequestUserInput,
 		},
+		{
+			name:     "manual recovery check",
+			request:  "/tool-failure",
+			tools:    []agent.ToolDefinition{{Name: agent.ToolNameSimulateFailure}},
+			wantTool: agent.ToolNameSimulateFailure,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -98,6 +104,30 @@ func TestMockClientProducesStableCallIDsForRetries(t *testing.T) {
 	}
 	if first.ToolCalls[0].ID != second.ToolCalls[0].ID {
 		t.Fatalf("call IDs differ: %q != %q", first.ToolCalls[0].ID, second.ToolCalls[0].ID)
+	}
+}
+
+func TestMockClientDoesNotRepeatFailureCommandAfterToolResult(t *testing.T) {
+	toolName := agent.ToolNameSimulateFailure
+	callID := agent.CallID("call-1")
+	reply, err := NewMockClient().Complete(context.Background(), agent.ModelRequest{
+		Config: agent.NewAgentConfig(),
+		Messages: []agent.AgentMessage{
+			{Role: agent.MessageRoleUser, Content: "/tool-failure"},
+			{Role: agent.MessageRoleAssistant, ToolCalls: []agent.ToolCall{{ID: callID, Name: toolName, Arguments: agent.MustJSONObject(`{}`)}}},
+			{Role: agent.MessageRoleTool, Content: `{"outcome":"unknown"}`, ToolCallID: &callID, ToolName: &toolName},
+		},
+		Tools:          []agent.ToolDefinition{{Name: toolName}},
+		WriteAssistant: discardText,
+		WriteReasoning: discardText,
+		WriteActivity:  discardActivity,
+		FlowID:         agent.FlowID("flow-recovered"),
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if len(reply.ToolCalls) != 0 || !strings.Contains(reply.Content, "The tool finished with this result") {
+		t.Fatalf("reply = %+v", reply)
 	}
 }
 
