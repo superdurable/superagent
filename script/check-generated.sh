@@ -10,11 +10,13 @@ scratch_directory=$(mktemp -d "${TMPDIR:-/tmp}/superagent-generated.XXXXXX")
 trap 'rm -r "$scratch_directory"' EXIT HUP INT TERM
 
 cp -R "$repository_root/internal/api/generated" "$scratch_directory/go"
+cp -R "$repository_root/internal/toolcontract/generated" "$scratch_directory/toolcontract"
 cp -R "$repository_root/web/src/api/generated" "$scratch_directory/typescript"
 
 GOCACHE="$repository_root/.cache/go-build" GOWORK=off \
-  go generate "$repository_root/internal/api"
+  go generate "$repository_root/internal/api" "$repository_root/internal/toolcontract"
 npm --prefix "$repository_root/web" run generate:api >/dev/null
 
 diff -ru "$scratch_directory/go" "$repository_root/internal/api/generated"
+diff -ru "$scratch_directory/toolcontract" "$repository_root/internal/toolcontract/generated"
 diff -ru "$scratch_directory/typescript" "$repository_root/web/src/api/generated"

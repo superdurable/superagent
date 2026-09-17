@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "duration_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": ["duration_seconds", "reason"],
+  "additionalProperties": false
+}

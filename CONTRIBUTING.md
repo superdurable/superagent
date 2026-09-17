@@ -41,6 +41,11 @@ OpenAPI is the HTTP contract source. Change `api/openapi.yaml`, regenerate both
 Go and TypeScript output, and run the zero-drift check. Do not edit generated
 files or duplicate generated transport models by hand.
 
+Built-in model tool contracts use the native JSON Schemas in
+`internal/toolcontract/schema`. After changing one, regenerate the committed Go
+DTO, decoder, and validator. `make check-generated` verifies both HTTP and tool
+contract output. MCP schemas remain runtime-defined and are not generated.
+
 ```bash
 make generate
 make check-generated

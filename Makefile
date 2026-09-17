@@ -29,7 +29,7 @@ build-web:
 generate: generate-go generate-web
 
 generate-go:
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go generate ./internal/api
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go generate ./internal/api ./internal/toolcontract
 
 generate-web:
 	@npm --prefix web run generate:api

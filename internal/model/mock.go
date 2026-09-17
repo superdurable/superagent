@@ -60,6 +60,14 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 		if userRequest == "" {
 			userRequest = "the requested objective"
 		}
+		if strings.EqualFold(userRequest, "/invalid-write-todos") {
+			return calls.toolReply(
+				"I will attempt to replace the plan.",
+				agent.ToolNameWriteTodos,
+				agent.MustJSONObject(`{}`),
+				request.WriteActivity,
+			)
+		}
 		tasks := []agent.PlanTask{}
 		if strings.ToLower(userRequest) != "/plan-clear" {
 			tasks = []agent.PlanTask{
@@ -211,9 +219,12 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 	if lastMessage != nil {
 		switch {
 		case lastMessage.Role == agent.MessageRoleTool && pointerValue(lastMessage.ToolName) == agent.ToolNameWriteTodos:
-			if planStatus(request.Messages) == agent.PlanStatusCompleted {
+			switch {
+			case strings.Contains(lastMessage.Content, `"status":"failed"`):
+				content = "The plan update was rejected, so no plan was created."
+			case planStatus(request.Messages) == agent.PlanStatusCompleted:
 				content = "I completed the approved plan."
-			} else {
+			default:
 				content = "The plan is ready for review."
 			}
 		case lastMessage.Role == agent.MessageRoleTool:

@@ -93,6 +93,34 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 	})
 }
 
+func TestAgentRejectsInvalidWriteTodosIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-invalid-write-todos-" + randomLocalID(t))
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{
+		Content: "/invalid-write-todos", PlanMode: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil &&
+			snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			historyContainsText(snapshot.History.Messages, string(toolErrorInvalidPlan)) &&
+			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration tool result acknowledged")
+	})
+	if snapshot.Description.Plan != nil {
+		t.Fatalf("invalid write_todos created plan %#v", snapshot.Description.Plan)
+	}
+	if !historyContainsText(snapshot.History.Messages, `"status":"failed"`) {
+		t.Fatalf("invalid write_todos known failure is missing: %#v", snapshot.History.Messages)
+	}
+}
+
 func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	modelClient := integrationModel{}
 	toolRegistry := newIntegrationToolRegistry()
@@ -1753,6 +1781,9 @@ func (integrationModel) Complete(ctx context.Context, request ModelRequest) (Mod
 		return ModelReply{}, err
 	}
 	if request.ForcedTool == ToolNameWriteTodos {
+		if integrationLastUserContent(request.Messages) == "/invalid-write-todos" {
+			return integrationToolReply(request, ToolNameWriteTodos, MustJSONObject(`{}`), "writing invalid plan")
+		}
 		arguments := integrationPlanArguments(request.Messages, TaskStatusPending)
 		return integrationToolReply(request, ToolNameWriteTodos, arguments, "drafted plan")
 	}
@@ -2028,7 +2059,9 @@ func integrationPlanArguments(messages []AgentMessage, status TaskStatus) JSONOb
 	if strings.EqualFold(content, "/plan-clear") {
 		tasks = []PlanTask{}
 	}
-	encoded, err := json.Marshal(writeTodosArguments{Todos: tasks})
+	encoded, err := json.Marshal(struct {
+		Todos []PlanTask `json:"todos"`
+	}{Todos: tasks})
 	if err != nil {
 		panic(err)
 	}
