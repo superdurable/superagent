@@ -28,11 +28,16 @@ import {
   MessageRole,
   PlanStatus,
   TaskStatus,
+  ToolRecoveryAction,
+  ToolRecoveryResolution,
   type AgentEvent,
   type CallId,
   type FlowId,
   type PendingUserMessage,
   type PendingUserInput,
+  type PendingToolRecovery,
+  type ToolRecoveryDecision,
+  type ToolRecoveryResolution as ToolRecoveryResolutionValue,
   type ToolName,
   type UserInputAnswer,
 } from "./api/generated";
@@ -63,6 +68,11 @@ interface ConversationViewProps {
   onSubmitAnswers: (callId: CallId, answers: UserInputAnswer[]) => void;
   onExecutePlan: (revision: number) => void;
   onApproveTool: (callId: CallId, approved: boolean) => void;
+  onResolveToolRecovery: (
+    recoveryId: string,
+    resolution: ToolRecoveryResolutionValue,
+    decisions: ToolRecoveryDecision[],
+  ) => void;
   onMutateQueue: (
     message: PendingUserMessage,
     action: QueueCommandAction,
@@ -82,6 +92,7 @@ export function ConversationView({
   onSubmitAnswers,
   onExecutePlan,
   onApproveTool,
+  onResolveToolRecovery,
   onMutateQueue,
   onStartAnother,
 }: ConversationViewProps) {
@@ -95,6 +106,7 @@ export function ConversationView({
   const builtInToolNames = new Set(builtInTools);
   const hasSidebar =
     description.pendingApproval !== null ||
+    description.pendingToolRecovery !== null ||
     description.pendingTimer !== null ||
     description.plan !== null;
   const timeline = buildConversationTimeline(
@@ -369,6 +381,16 @@ export function ConversationView({
               </section>
             )}
 
+            {description.pendingToolRecovery !== null && (
+              <ToolRecoveryPanel
+                key={description.pendingToolRecovery.recoveryId}
+                recovery={description.pendingToolRecovery}
+                disabled={areMutationsDisabled}
+                isSubmitting={state.pendingCommand?.command.kind === "recover"}
+                onResolve={onResolveToolRecovery}
+              />
+            )}
+
             {description.pendingTimer !== null && (
               <section className="side-card timer-card">
                 <p className="eyebrow">Durable timer</p>
@@ -466,6 +488,120 @@ export function ConversationView({
         </div>
       </section>
     </main>
+  );
+}
+
+interface ToolRecoveryPanelProps {
+  recovery: PendingToolRecovery;
+  disabled: boolean;
+  isSubmitting: boolean;
+  onResolve: (
+    recoveryId: string,
+    resolution: ToolRecoveryResolutionValue,
+    decisions: ToolRecoveryDecision[],
+  ) => void;
+}
+
+function ToolRecoveryPanel({
+  recovery,
+  disabled,
+  isSubmitting,
+  onResolve,
+}: ToolRecoveryPanelProps) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [selections, setSelections] = useState<
+    Record<string, ToolRecoveryAction>
+  >(() => {
+    const initial: Record<string, ToolRecoveryAction> = {};
+    for (const call of recovery.calls) {
+      initial[call.callId] = ToolRecoveryAction.RETRY;
+    }
+    return initial;
+  });
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+  const submitResume = () => {
+    const decisions = recovery.calls.map((call): ToolRecoveryDecision => ({
+      callId: call.callId,
+      action: selections[call.callId] ?? ToolRecoveryAction.RETRY,
+    }));
+    onResolve(recovery.recoveryId, ToolRecoveryResolution.RESUME, decisions);
+  };
+  return (
+    <section
+      className="side-card recovery-card"
+      aria-labelledby="tool-recovery-title"
+    >
+      <p className="eyebrow">Tool recovery required</p>
+      <h2 id="tool-recovery-title" ref={headingRef} tabIndex={-1}>
+        Execution outcome is unknown
+      </h2>
+      <p className="recovery-warning">
+        These operations may already have produced external effects. Retrying
+        keeps the same call ID, but the MCP server may not deduplicate it.
+      </p>
+      <div className="recovery-calls">
+        {recovery.calls.map((call) => (
+          <fieldset className="recovery-call" key={call.callId}>
+            <legend>{call.toolName}</legend>
+            <small>Error type: {call.errorType}</small>
+            <details onToggle={revealOpenedDetails}>
+              <summary>Arguments</summary>
+              <pre>{call.argumentsJson}</pre>
+            </details>
+            <label>
+              <input
+                type="radio"
+                name={`recovery-${call.callId}`}
+                checked={selections[call.callId] === ToolRecoveryAction.RETRY}
+                disabled={disabled}
+                onChange={() => {
+                  setSelections((current) => ({
+                    ...current,
+                    [call.callId]: ToolRecoveryAction.RETRY,
+                  }));
+                }}
+              />{" "}
+              Retry
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`recovery-${call.callId}`}
+                checked={
+                  selections[call.callId] ===
+                  ToolRecoveryAction.CONTINUE_WITH_UNKNOWN
+                }
+                disabled={disabled}
+                onChange={() => {
+                  setSelections((current) => ({
+                    ...current,
+                    [call.callId]: ToolRecoveryAction.CONTINUE_WITH_UNKNOWN,
+                  }));
+                }}
+              />{" "}
+              Continue with unknown result
+            </label>
+          </fieldset>
+        ))}
+      </div>
+      <div className="button-row">
+        <button type="button" disabled={disabled} onClick={submitResume}>
+          {isSubmitting ? "Submitting…" : "Apply recovery decisions"}
+        </button>
+        <button
+          type="button"
+          className="danger-button"
+          disabled={disabled}
+          onClick={() => {
+            onResolve(recovery.recoveryId, ToolRecoveryResolution.STOP, []);
+          }}
+        >
+          Stop current tool sequence
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -675,6 +811,13 @@ function planActionPresentation(
       label: "Resolve approval first",
       isDisabled: true,
       reason: "Approve or reject the pending tool before continuing this Plan.",
+    };
+  }
+  if (description.pendingToolRecovery !== null) {
+    return {
+      label: "Resolve tool recovery",
+      isDisabled: true,
+      reason: "Resolve the unknown tool outcomes before continuing this Plan.",
     };
   }
   if (description.pendingTimer !== null) {
@@ -926,6 +1069,8 @@ function activityIcon(kind: AgentEvent["kind"]): string {
     case EventKind.TOOL_PROGRESS:
     case EventKind.TOOL_FAILED:
     case EventKind.TOOL_COMPLETED:
+    case EventKind.TOOL_RECOVERY_REQUIRED:
+    case EventKind.TOOL_RECOVERY_RESOLVED:
       return "⚙";
     case EventKind.USER_INPUT_REQUESTED:
       return "?";

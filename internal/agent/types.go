@@ -45,6 +45,10 @@ const (
 	DefaultContextTokens = 32_000
 	// DefaultMessageRetention bounds retained summarized messages.
 	DefaultMessageRetention = 1_000
+	// DefaultMaxParallelToolCalls bounds one parallel read-only tool wave.
+	DefaultMaxParallelToolCalls = 4
+	// MaximumParallelToolCalls is the largest supported per-Agent tool wave.
+	MaximumParallelToolCalls = 32
 	// DefaultSystemPrompt is used when callers omit a custom prompt.
 	DefaultSystemPrompt = "You are a helpful durable AI agent. Use tools when they help, explain important actions, and never claim a tool succeeded unless its result says so."
 )
@@ -137,6 +141,7 @@ const (
 	AgentStatusCallingModel           AgentStatus = "calling_model"
 	AgentStatusRoutingTool            AgentStatus = "routing_tool"
 	AgentStatusWaitingForToolApproval AgentStatus = "waiting_for_tool_approval"
+	AgentStatusWaitingForToolRecovery AgentStatus = "waiting_for_tool_recovery"
 	AgentStatusExecutingTool          AgentStatus = "executing_tool"
 	AgentStatusWaitingForTimer        AgentStatus = "waiting_for_timer"
 	AgentStatusApplyingSteering       AgentStatus = "applying_steering"
@@ -151,6 +156,7 @@ func (status AgentStatus) Validate() error {
 		AgentStatusCallingModel,
 		AgentStatusRoutingTool,
 		AgentStatusWaitingForToolApproval,
+		AgentStatusWaitingForToolRecovery,
 		AgentStatusExecutingTool,
 		AgentStatusWaitingForTimer,
 		AgentStatusApplyingSteering:
@@ -333,23 +339,25 @@ func (role *MessageRole) UnmarshalJSON(data []byte) error {
 type EventKind string
 
 const (
-	EventKindPlanStarted        EventKind = "plan_started"
-	EventKindPlanUpdated        EventKind = "plan_updated"
-	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
-	EventKindInputConsumed      EventKind = "input_consumed"
-	EventKindUserInputAnswered  EventKind = "user_input_answered"
-	EventKindSnapshotRequired   EventKind = "snapshot_required"
-	EventKindSteeringApplied    EventKind = "steering_applied"
-	EventKindCompactionFailed   EventKind = "compaction_failed"
-	EventKindCompacted          EventKind = "compacted"
-	EventKindModelStarted       EventKind = "model_started"
-	EventKindModelFailed        EventKind = "model_failed"
-	EventKindModelCompleted     EventKind = "model_completed"
-	EventKindModelToolCall      EventKind = "model_tool_call"
-	EventKindUserInputRequested EventKind = "user_input_requested"
-	EventKindToolProgress       EventKind = "tool_progress"
-	EventKindToolFailed         EventKind = "tool_failed"
-	EventKindToolCompleted      EventKind = "tool_completed"
+	EventKindPlanStarted          EventKind = "plan_started"
+	EventKindPlanUpdated          EventKind = "plan_updated"
+	EventKindPlanTaskUpdated      EventKind = "plan_task_updated"
+	EventKindInputConsumed        EventKind = "input_consumed"
+	EventKindUserInputAnswered    EventKind = "user_input_answered"
+	EventKindSnapshotRequired     EventKind = "snapshot_required"
+	EventKindSteeringApplied      EventKind = "steering_applied"
+	EventKindCompactionFailed     EventKind = "compaction_failed"
+	EventKindCompacted            EventKind = "compacted"
+	EventKindModelStarted         EventKind = "model_started"
+	EventKindModelFailed          EventKind = "model_failed"
+	EventKindModelCompleted       EventKind = "model_completed"
+	EventKindModelToolCall        EventKind = "model_tool_call"
+	EventKindUserInputRequested   EventKind = "user_input_requested"
+	EventKindToolProgress         EventKind = "tool_progress"
+	EventKindToolFailed           EventKind = "tool_failed"
+	EventKindToolCompleted        EventKind = "tool_completed"
+	EventKindToolRecoveryRequired EventKind = "tool_recovery_required"
+	EventKindToolRecoveryResolved EventKind = "tool_recovery_resolved"
 )
 
 // Validate rejects unknown event kinds.
@@ -371,7 +379,9 @@ func (kind EventKind) Validate() error {
 		EventKindUserInputRequested,
 		EventKindToolProgress,
 		EventKindToolFailed,
-		EventKindToolCompleted:
+		EventKindToolCompleted,
+		EventKindToolRecoveryRequired,
+		EventKindToolRecoveryResolved:
 		return nil
 	default:
 		return newEnumValidationError("EventKind", string(kind))
@@ -431,6 +441,38 @@ func (outcome ToolOutcome) Validate() error {
 // UnmarshalJSON decodes and validates a tool outcome.
 func (outcome *ToolOutcome) UnmarshalJSON(data []byte) error {
 	return decodeEnum(data, outcome, ToolOutcome.Validate)
+}
+
+// ToolRetryExhaustionPolicy controls what happens after a tool's Dex retries are exhausted.
+type ToolRetryExhaustionPolicy string
+
+const (
+	ToolRetryExhaustionPolicyManualRecovery      ToolRetryExhaustionPolicy = "manual_recovery"
+	ToolRetryExhaustionPolicyContinueWithUnknown ToolRetryExhaustionPolicy = "continue_with_unknown"
+)
+
+// Validate rejects unknown tool retry-exhaustion policies.
+func (policy ToolRetryExhaustionPolicy) Validate() error {
+	switch policy {
+	case ToolRetryExhaustionPolicyManualRecovery,
+		ToolRetryExhaustionPolicyContinueWithUnknown:
+		return nil
+	default:
+		return newEnumValidationError("ToolRetryExhaustionPolicy", string(policy))
+	}
+}
+
+// Effective returns the safe default for an omitted internal policy.
+func (policy ToolRetryExhaustionPolicy) Effective() ToolRetryExhaustionPolicy {
+	if policy == "" {
+		return ToolRetryExhaustionPolicyManualRecovery
+	}
+	return policy
+}
+
+// UnmarshalJSON decodes and validates a retry-exhaustion policy.
+func (policy *ToolRetryExhaustionPolicy) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, policy, ToolRetryExhaustionPolicy.Validate)
 }
 
 // EnumValidationError identifies one unknown external enum value.
@@ -543,6 +585,8 @@ type AgentConfig struct {
 	CompactionKeepFraction float64 `json:"compaction_keep_fraction"`
 	// MessageRetentionLimit defaults to 1000 and must be a multiple of ten.
 	MessageRetentionLimit int `json:"message_retention_limit"`
+	// MaxParallelToolCalls defaults to four and bounds one safe read-only wave.
+	MaxParallelToolCalls int `json:"max_parallel_tool_calls"`
 	// MCPEnabled defaults true and controls trusted MCP visibility.
 	MCPEnabled bool `json:"mcp_enabled"`
 	// EnabledMCPServers restricts MCP servers; empty selects all configured servers.
@@ -566,6 +610,7 @@ func NewAgentConfig() AgentConfig {
 		CompactionTriggerFraction: 0.85,
 		CompactionKeepFraction:    0.10,
 		MessageRetentionLimit:     DefaultMessageRetention,
+		MaxParallelToolCalls:      DefaultMaxParallelToolCalls,
 		MCPEnabled:                true,
 		EnabledMCPServers:         []string{},
 		EnabledTools:              []ToolName{},
@@ -595,9 +640,19 @@ func (config AgentConfig) Validate() error {
 		return errors.New("compaction fractions must satisfy 0 < keep < trigger < 1")
 	case config.MessageRetentionLimit < currentMessageLimit || config.MessageRetentionLimit%archiveMessageChunkSize != 0:
 		return fmt.Errorf("message_retention_limit must be at least %d and a multiple of %d", currentMessageLimit, archiveMessageChunkSize)
+	case config.MaxParallelToolCalls < 0 || config.MaxParallelToolCalls > MaximumParallelToolCalls:
+		return fmt.Errorf("max_parallel_tool_calls must be between 1 and %d when set", MaximumParallelToolCalls)
 	default:
 		return nil
 	}
+}
+
+// EffectiveMaxParallelToolCalls returns the configured bound or its durable default.
+func (config AgentConfig) EffectiveMaxParallelToolCalls() int {
+	if config.MaxParallelToolCalls == 0 {
+		return DefaultMaxParallelToolCalls
+	}
+	return config.MaxParallelToolCalls
 }
 
 // Provider returns Model's validated provider prefix.
@@ -698,22 +753,23 @@ type PendingUserMessage struct {
 
 // AgentDescription is the durable application state needed to render a conversation.
 type AgentDescription struct {
-	Status                     AgentStatus       `json:"status"`
-	WaitingInputRound          WaitingInputRound `json:"waiting_input_round"`
-	Model                      Model             `json:"model"`
-	SystemPrompt               string            `json:"system_prompt"`
-	FirstRetainedSequence      Sequence          `json:"first_retained_sequence"`
-	LastSequence               Sequence          `json:"last_sequence"`
-	SummarizedThroughSequence  Sequence          `json:"summarized_through_sequence"`
-	PendingApproval            *PendingApproval  `json:"pending_approval,omitempty"`
-	PendingTimer               *PendingTimer     `json:"pending_timer,omitempty"`
-	PendingUserInput           *PendingUserInput `json:"pending_user_input,omitempty"`
-	Plan                       *AgentPlan        `json:"plan,omitempty"`
-	IsPlanExecutionRequested   bool              `json:"is_plan_execution_requested"`
-	PendingQueuedMessageCount  int               `json:"pending_queued_message_count"`
-	PendingSteeredMessageCount int               `json:"pending_steered_message_count"`
-	AvailableMCPServers        []string          `json:"available_mcp_servers"`
-	AvailableTools             []ToolName        `json:"available_tools"`
+	Status                     AgentStatus          `json:"status"`
+	WaitingInputRound          WaitingInputRound    `json:"waiting_input_round"`
+	Model                      Model                `json:"model"`
+	SystemPrompt               string               `json:"system_prompt"`
+	FirstRetainedSequence      Sequence             `json:"first_retained_sequence"`
+	LastSequence               Sequence             `json:"last_sequence"`
+	SummarizedThroughSequence  Sequence             `json:"summarized_through_sequence"`
+	PendingApproval            *PendingApproval     `json:"pending_approval,omitempty"`
+	PendingToolRecovery        *PendingToolRecovery `json:"pending_tool_recovery,omitempty"`
+	PendingTimer               *PendingTimer        `json:"pending_timer,omitempty"`
+	PendingUserInput           *PendingUserInput    `json:"pending_user_input,omitempty"`
+	Plan                       *AgentPlan           `json:"plan,omitempty"`
+	IsPlanExecutionRequested   bool                 `json:"is_plan_execution_requested"`
+	PendingQueuedMessageCount  int                  `json:"pending_queued_message_count"`
+	PendingSteeredMessageCount int                  `json:"pending_steered_message_count"`
+	AvailableMCPServers        []string             `json:"available_mcp_servers"`
+	AvailableTools             []ToolName           `json:"available_tools"`
 }
 
 // AgentSnapshot is one atomic durable application view.
@@ -793,6 +849,82 @@ type PendingApproval struct {
 	CallID    CallID     `json:"call_id"`
 	ToolName  ToolName   `json:"tool_name"`
 	Arguments JSONObject `json:"arguments"`
+}
+
+// RecoveryID identifies one exact pending manual tool-recovery revision.
+type RecoveryID string
+
+// ToolRecoveryResolution chooses whether to resolve or stop one recovery batch.
+type ToolRecoveryResolution string
+
+const (
+	ToolRecoveryResolutionResume ToolRecoveryResolution = "resume"
+	ToolRecoveryResolutionStop   ToolRecoveryResolution = "stop"
+)
+
+// Validate rejects unknown recovery resolutions.
+func (resolution ToolRecoveryResolution) Validate() error {
+	switch resolution {
+	case ToolRecoveryResolutionResume, ToolRecoveryResolutionStop:
+		return nil
+	default:
+		return newEnumValidationError("ToolRecoveryResolution", string(resolution))
+	}
+}
+
+// UnmarshalJSON decodes and validates a recovery resolution.
+func (resolution *ToolRecoveryResolution) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, resolution, ToolRecoveryResolution.Validate)
+}
+
+// ToolRecoveryAction resolves one exhausted tool call.
+type ToolRecoveryAction string
+
+const (
+	ToolRecoveryActionRetry               ToolRecoveryAction = "retry"
+	ToolRecoveryActionContinueWithUnknown ToolRecoveryAction = "continue_with_unknown"
+)
+
+// Validate rejects unknown recovery actions.
+func (action ToolRecoveryAction) Validate() error {
+	switch action {
+	case ToolRecoveryActionRetry, ToolRecoveryActionContinueWithUnknown:
+		return nil
+	default:
+		return newEnumValidationError("ToolRecoveryAction", string(action))
+	}
+}
+
+// UnmarshalJSON decodes and validates a recovery action.
+func (action *ToolRecoveryAction) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, action, ToolRecoveryAction.Validate)
+}
+
+// ToolRecoveryDecision resolves one exact exhausted tool call.
+type ToolRecoveryDecision struct {
+	CallID CallID             `json:"call_id"`
+	Action ToolRecoveryAction `json:"action"`
+}
+
+// ResolveToolRecoveryRequest resolves one exact pending recovery revision.
+type ResolveToolRecoveryRequest struct {
+	RecoveryID RecoveryID             `json:"recovery_id"`
+	Resolution ToolRecoveryResolution `json:"resolution"`
+	Decisions  []ToolRecoveryDecision `json:"decisions"`
+}
+
+// PendingToolRecoveryCall is one exhausted call awaiting a user decision.
+type PendingToolRecoveryCall struct {
+	CallID    CallID     `json:"call_id"`
+	ToolName  ToolName   `json:"tool_name"`
+	Arguments JSONObject `json:"arguments"`
+	ErrorType string     `json:"error_type"`
+}
+
+// PendingToolRecovery is the durable user-facing manual recovery state.
+type PendingToolRecovery struct {
+	RecoveryID RecoveryID                `json:"recovery_id"`
+	Calls      []PendingToolRecoveryCall `json:"calls"`
 }
 
 // PendingTimer describes a durable model-requested wait.
@@ -880,11 +1012,12 @@ type StreamEvent struct {
 type Command string
 
 const (
-	CommandSendMessage     Command = "send_message"
-	CommandAnswerQuestions Command = "answer_questions"
-	CommandSteer           Command = "steer_message"
-	CommandApproveTool     Command = "approve_tool"
-	CommandExecutePlan     Command = "execute_plan"
+	CommandSendMessage         Command = "send_message"
+	CommandAnswerQuestions     Command = "answer_questions"
+	CommandSteer               Command = "steer_message"
+	CommandApproveTool         Command = "approve_tool"
+	CommandResolveToolRecovery Command = "resolve_tool_recovery"
+	CommandExecutePlan         Command = "execute_plan"
 )
 
 // CommandRejectedError reports a valid command that does not match current durable state.
@@ -994,13 +1127,15 @@ type ModelReply struct {
 
 // ToolDefinition is one provider-neutral function schema and execution policy.
 type ToolDefinition struct {
-	Name               ToolName
-	Description        string
-	InputSchema        JSONObject
-	RequiresApproval   bool
-	AttemptTimeout     time.Duration
-	MaximumAttempts    int
-	RetryTotalDuration time.Duration
+	Name                      ToolName
+	Description               string
+	InputSchema               JSONObject
+	RequiresApproval          bool
+	AttemptTimeout            time.Duration
+	MaximumAttempts           int
+	RetryTotalDuration        time.Duration
+	SupportsParallelExecution bool
+	RetryExhaustionPolicy     ToolRetryExhaustionPolicy
 }
 
 // ToolExecutionResult stores one provider-neutral tool result.

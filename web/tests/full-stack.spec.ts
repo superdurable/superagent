@@ -1493,6 +1493,7 @@ test("keeps narrow queue actions visible and restores keyboard focus", async ({
   await expect(composer).toBeFocused();
   await expect(editRow).toHaveCount(0);
   await composer.fill("narrow edited replacement");
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   await composer.press("Control+Enter");
   await expect(queue.getByText("narrow edited replacement")).toBeVisible();
 
@@ -1538,6 +1539,72 @@ test("retries an external tool through Dex without requesting approval twice", a
     activity.filter({ hasText: "Calling fixture__echo (attempt 2)." }),
   ).toBeVisible();
   await expect(page.getByText("Approval required")).toHaveCount(0);
+});
+
+test("persists manual tool recovery and resumes only after a user decision", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await composer.fill('/tool fixture__echo {"value":"always fail"}');
+  await page.getByRole("button", { name: "Send" }).click();
+  const approval = page.locator(".approval-card");
+  await expect(approval.getByText("Approval required")).toBeVisible();
+  await approval.getByRole("button", { name: "Approve" }).click();
+
+  let recovery = page.locator(".recovery-card");
+  await expect(
+    recovery.getByRole("heading", { name: "Execution outcome is unknown" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".message-bubble.tool")).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Agent status" })).toContainText(
+    "Waiting For Tool Recovery",
+  );
+
+  await page.reload();
+  recovery = page.locator(".recovery-card");
+  const recoveryHeading = recovery.getByRole("heading", {
+    name: "Execution outcome is unknown",
+  });
+  await expect(recoveryHeading).toBeVisible();
+  await expect(recoveryHeading).toBeFocused();
+  await expect(
+    recovery.getByText("Error type:", { exact: false }),
+  ).toBeVisible();
+
+  await recovery
+    .getByRole("button", { name: "Apply recovery decisions" })
+    .click();
+  await expect(
+    page
+      .locator(".activity-entry")
+      .filter({ hasText: "Manual recovery is required" }),
+  ).toHaveCount(2, { timeout: 30_000 });
+
+  recovery = page.locator(".recovery-card");
+  const continueUnknown = recovery.getByRole("radio", {
+    name: "Continue with unknown result",
+  });
+  await continueUnknown.focus();
+  await expect(continueUnknown).toBeFocused();
+  await continueUnknown.check();
+  await recovery
+    .getByRole("button", { name: "Apply recovery decisions" })
+    .click();
+
+  await expect(recovery).toHaveCount(0, { timeout: 30_000 });
+  await expect(
+    page.locator(".message-bubble.tool").filter({
+      hasText: '"outcome":"unknown"',
+    }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".activity-entry")
+      .filter({ hasText: "completed with an unknown outcome" }),
+  ).toHaveCount(1);
+  await expectAgentWaitingForMessage(page);
 });
 
 async function startAgent(page: Page): Promise<void> {

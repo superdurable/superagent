@@ -938,6 +938,7 @@ function snapshot(
       lastSequence: 1,
       summarizedThroughSequence: 0,
       pendingApproval: null,
+      pendingToolRecovery: null,
       pendingTimer: null,
       pendingUserInput: null,
       plan: null,

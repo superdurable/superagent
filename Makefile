@@ -80,7 +80,7 @@ check-flow-definition: install-dexcli
 			sed -n '/"diagnostics"/,$$p' "$${flow_definition}" >&2; \
 			exit 1; \
 		fi; \
-		for channel in answeredUserInputsChannel queuedUserMessagesChannel steeredUserMessagesChannel toolApprovalsChannel planExecutionsChannel; do \
+		for channel in answeredUserInputsChannel queuedUserMessagesChannel steeredUserMessagesChannel toolApprovalsChannel toolRecoveryDecisionsChannel parallelToolResultsChannel planExecutionsChannel; do \
 			if ! grep -Fq "\"id\": \"resource:channel:$${channel}\"" "$${flow_definition}" || \
 				! grep -Fq "\"resourceId\": \"resource:channel:$${channel}\"" "$${flow_definition}"; then \
 				echo "Flow definition must render Channel $${channel} and its WaitFor edge" >&2; \

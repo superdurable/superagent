@@ -12,6 +12,8 @@ servers:
         timeout_seconds: 30
         maximum_attempts: 3
         retry_total_seconds: 120
+        # Defaults to manual_recovery. Use this only when automatic progress is safe.
+        retry_exhaustion_policy: manual_recovery
 
   - name: slack
     transport: streamable_http

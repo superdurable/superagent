@@ -39,12 +39,15 @@ var (
 	archivedMessagesAttribute     = dex.DefineAttributeMap[ArchivedMessageChunk]("ArchivedMessages")
 	agentPlanAttribute            = dex.DefineAttribute[AgentPlan]("AgentPlan")
 	pendingApprovalAttribute      = dex.DefineAttribute[PendingApproval]("PendingApproval")
+	pendingToolRecoveryAttribute  = dex.DefineAttribute[PendingToolRecovery]("PendingToolRecovery")
 	pendingTimerAttribute         = dex.DefineAttribute[PendingTimer]("PendingTimer")
 	pendingUserInputAttribute     = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
 	answeredUserInputsChannel     = dex.DefineChannel[AnsweredUserInput]("AnsweredUserInputs")
 	queuedUserMessagesChannel     = dex.DefineChannel[PendingUserMessage]("QueuedUserMessages")
 	steeredUserMessagesChannel    = dex.DefineChannel[PendingUserMessage]("SteeredUserMessages")
 	toolApprovalsChannel          = dex.DefineChannelMap[ToolApproval]("ToolApprovals")
+	toolRecoveryDecisionsChannel  = dex.DefineChannelMap[ResolveToolRecoveryRequest]("ToolRecoveryDecisions")
+	parallelToolResultsChannel    = dex.DefineChannelMap[parallelToolResult]("ParallelToolResults")
 	planExecutionsChannel         = dex.DefineChannelMap[PlanExecutionRequest]("PlanExecutions")
 	reasoningSummaryStream        = dex.DefineStream[string]("ReasoningSummary", 10<<20)
 	assistantTextStream           = dex.DefineStream[string]("AssistantText", 10<<20)
@@ -91,6 +94,11 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(executeToolStep{flow: flow}),
 		dex.DefineStep(executeToolWithRetryStep{flow: flow}),
 		dex.DefineStep(recoverToolExecutionStep{flow: flow}),
+		dex.DefineStep(executeParallelToolStep{flow: flow}),
+		dex.DefineStep(recoverParallelToolExecutionStep{flow: flow}),
+		dex.DefineStep(awaitParallelToolResultsStep{flow: flow}),
+		dex.DefineStep(prepareManualToolRecoveryStep{flow: flow}),
+		dex.DefineStep(awaitManualToolRecoveryStep{flow: flow}),
 		dex.DefineStep(durableWaitStep{flow: flow}),
 	}
 }
@@ -108,6 +116,7 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 			archivedMessagesAttribute,
 			agentPlanAttribute,
 			pendingApprovalAttribute,
+			pendingToolRecoveryAttribute,
 			pendingTimerAttribute,
 			pendingUserInputAttribute,
 		},
@@ -116,6 +125,8 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 			queuedUserMessagesChannel,
 			steeredUserMessagesChannel,
 			toolApprovalsChannel,
+			toolRecoveryDecisionsChannel,
+			parallelToolResultsChannel,
 			planExecutionsChannel,
 		},
 		Streams: []dex.StreamDef{
@@ -188,6 +199,22 @@ func (*Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCR
 	message, found := findPendingUserMessage(messages, input.MessageID)
 	if !found {
 		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if state.Status == AgentStatusWaitingForToolRecovery {
+		pending, pendingErr := getPendingToolRecovery(ctx)
+		if pendingErr != nil {
+			return nil, pendingErr
+		}
+		if pending == nil {
+			return &dex.RPCResult[bool]{Output: false}, nil
+		}
+		if deleteErr := pendingToolRecoveryAttribute.Delete(ctx); deleteErr != nil {
+			return nil, deleteErr
+		}
 	}
 	if err := queuedUserMessagesChannel.Delete(ctx, message.MessageID); err != nil {
 		return nil, err
@@ -321,6 +348,30 @@ func (*Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCRe
 	return &dex.RPCResult[bool]{Output: true}, nil
 }
 
+// ResolveToolRecovery publishes one complete decision for the exact pending recovery revision.
+func (*Flow) ResolveToolRecovery(
+	ctx dex.Context,
+	input ResolveToolRecoveryRequest,
+) (*dex.RPCResult[bool], error) {
+	pending, err := getPendingToolRecovery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pending == nil || pending.RecoveryID != input.RecoveryID {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if !isValidToolRecoveryResolution(*pending, input) {
+		return &dex.RPCResult[bool]{Output: false}, nil
+	}
+	if err := pendingToolRecoveryAttribute.Delete(ctx); err != nil {
+		return nil, err
+	}
+	if err := toolRecoveryDecisionsChannel.Publish(ctx, string(input.RecoveryID), input); err != nil {
+		return nil, err
+	}
+	return &dex.RPCResult[bool]{Output: true}, nil
+}
+
 // ExecutePlan schedules an exact waiting draft or active plan revision.
 func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCResult[bool], error) {
 	state, err := agentStateAttribute.Get(ctx)
@@ -339,6 +390,10 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 	if err != nil {
 		return nil, err
 	}
+	pendingToolRecovery, err := getPendingToolRecovery(ctx)
+	if err != nil {
+		return nil, err
+	}
 	pendingTimer, err := getPendingTimer(ctx)
 	if err != nil {
 		return nil, err
@@ -348,6 +403,7 @@ func (*Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCR
 		state.PendingPlanExecutionRevision == nil &&
 		pendingInput == nil &&
 		pendingApproval == nil &&
+		pendingToolRecovery == nil &&
 		pendingTimer == nil &&
 		queuedUserMessagesChannel.Size(ctx) == 0 &&
 		steeredUserMessagesChannel.Size(ctx) == 0 &&
@@ -376,6 +432,10 @@ func (flow *Flow) describe(
 	steeredMessageCount int,
 ) (AgentDescription, error) {
 	pendingApproval, err := getPendingApproval(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
+	pendingToolRecovery, err := getPendingToolRecovery(ctx)
 	if err != nil {
 		return AgentDescription{}, err
 	}
@@ -410,6 +470,7 @@ func (flow *Flow) describe(
 		LastSequence:               state.LastSequence,
 		SummarizedThroughSequence:  state.SummarizedThroughSequence,
 		PendingApproval:            pendingApproval,
+		PendingToolRecovery:        pendingToolRecovery,
 		PendingTimer:               pendingTimer,
 		PendingUserInput:           pendingUserInput,
 		Plan:                       plan,
@@ -494,6 +555,7 @@ func (flow *Flow) validateConfig(config AgentConfig) error {
 }
 
 func validateToolExecutionPolicy(definition ToolDefinition) error {
+	policy := definition.RetryExhaustionPolicy.Effective()
 	switch {
 	case definition.MaximumAttempts <= 0:
 		return errors.New("maximum attempts must be positive")
@@ -504,7 +566,7 @@ func validateToolExecutionPolicy(definition ToolDefinition) error {
 	case definition.RetryTotalDuration < 0:
 		return errors.New("retry total duration must not be negative")
 	default:
-		return nil
+		return policy.Validate()
 	}
 }
 
@@ -532,6 +594,16 @@ func (flow *Flow) currentToolStepOptions(ctx dex.Context) (*dex.StepOptions, err
 }
 
 func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
+	failureStep := dex.ProceedToOnExecuteFailure(
+		recoverToolExecutionStep{flow: flow},
+		messageMutationStepOptions,
+	)
+	if definition.RetryExhaustionPolicy.Effective() == ToolRetryExhaustionPolicyManualRecovery {
+		failureStep = dex.ProceedToOnExecuteFailure(
+			prepareManualToolRecoveryStep{flow: flow},
+			manualToolRecoveryStepOptions,
+		)
+	}
 	return &dex.StepOptions{
 		ExecuteMethodTimeout:     definition.AttemptTimeout,
 		HeartbeatTimeout:         toolStepOptions.HeartbeatTimeout,
@@ -541,11 +613,79 @@ func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
 			MaximumAttempts: int32(definition.MaximumAttempts),
 			TotalDuration:   definition.RetryTotalDuration,
 		},
+		ExecuteFailure: failureStep,
+	}
+}
+
+func (flow *Flow) parallelToolStepOptions(definition ToolDefinition) *dex.StepOptions {
+	return &dex.StepOptions{
+		ExecuteMethodTimeout: definition.AttemptTimeout,
+		HeartbeatTimeout:     toolStepOptions.HeartbeatTimeout,
+		ExecuteRetry: &dex.RetryPolicy{
+			MaximumAttempts: int32(definition.MaximumAttempts), // #nosec G115 -- validated before scheduling.
+			TotalDuration:   definition.RetryTotalDuration,
+		},
 		ExecuteFailure: dex.ProceedToOnExecuteFailure(
-			recoverToolExecutionStep{flow: flow},
-			messageMutationStepOptions,
+			recoverParallelToolExecutionStep{flow: flow},
+			nil,
 		),
 	}
+}
+
+func (flow *Flow) parallelToolMovements(
+	config AgentConfig,
+	state AgentState,
+) ([]dex.StepMovement, bool, error) {
+	limit := config.EffectiveMaxParallelToolCalls()
+	if limit <= 1 {
+		return nil, false, nil
+	}
+	start := state.PendingToolIndex
+	records := make([]toolBatchRecord, 0, limit)
+	definitions := make([]ToolDefinition, 0, limit)
+	for index := start; index < len(state.PendingToolCalls) && len(records) < limit; index++ {
+		call := state.PendingToolCalls[index]
+		definition, err := flow.invocationToolDefinition(config, state, call.Name)
+		if err != nil || definition.RequiresApproval || !definition.SupportsParallelExecution {
+			break
+		}
+		if err := validateToolExecutionPolicy(definition); err != nil {
+			return nil, false, fmt.Errorf("tool %q: %w", definition.Name, err)
+		}
+		records = append(records, toolBatchRecord{
+			Index:                 index,
+			Call:                  call,
+			RetryExhaustionPolicy: definition.RetryExhaustionPolicy.Effective(),
+		})
+		definitions = append(definitions, definition)
+	}
+	if len(records) < 2 {
+		return nil, false, nil
+	}
+	batchID := fmt.Sprintf("tool-batch-%d-%d", state.LastSequence, start)
+	batch := toolBatchState{BatchID: batchID, FirstIndex: start, Records: records}
+	movements := make([]dex.StepMovement, 0, len(records)+1)
+	movements = append(movements, dex.MovementOf(
+		awaitParallelToolResultsStep{flow: flow},
+		awaitParallelToolResultsInput{
+			Batch:          batch,
+			ResultInstance: batchID,
+			ExpectedCount:  len(records),
+		},
+	))
+	for index, record := range records {
+		movements = append(movements, dex.MovementOf(
+			executeParallelToolStep{flow: flow},
+			parallelToolExecutionInput{
+				ResultInstance:        batchID,
+				Index:                 record.Index,
+				Call:                  record.Call,
+				RetryExhaustionPolicy: record.RetryExhaustionPolicy,
+			},
+			dex.WithStepOptions(flow.parallelToolStepOptions(definitions[index])),
+		))
+	}
+	return movements, true, nil
 }
 
 func (flow *Flow) toolDefinitions(config AgentConfig) []ToolDefinition {
@@ -638,6 +778,9 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessag
 		return err
 	}
 	if err := deletePendingApproval(ctx); err != nil {
+		return err
+	}
+	if err := deletePendingToolRecovery(ctx); err != nil {
 		return err
 	}
 	if err := deletePendingTimer(ctx); err != nil {
@@ -1258,6 +1401,17 @@ func getPendingApproval(ctx dex.Context) (*PendingApproval, error) {
 	return &value, nil
 }
 
+func getPendingToolRecovery(ctx dex.Context) (*PendingToolRecovery, error) {
+	value, err := pendingToolRecoveryAttribute.Get(ctx)
+	if isAttributeNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
 func getPendingTimer(ctx dex.Context) (*PendingTimer, error) {
 	value, err := pendingTimerAttribute.Get(ctx)
 	if isAttributeNotFound(err) {
@@ -1317,6 +1471,14 @@ func deletePendingApproval(ctx dex.Context) error {
 	return pendingApprovalAttribute.Delete(ctx)
 }
 
+func deletePendingToolRecovery(ctx dex.Context) error {
+	value, err := getPendingToolRecovery(ctx)
+	if err != nil || value == nil {
+		return err
+	}
+	return pendingToolRecoveryAttribute.Delete(ctx)
+}
+
 func deletePendingTimer(ctx dex.Context) error {
 	value, err := getPendingTimer(ctx)
 	if err != nil || value == nil {
@@ -1349,6 +1511,46 @@ func difference[T ~string](values []T, allowed []T) []T {
 	return result
 }
 
+func validateToolRecoveryResolution(
+	pending PendingToolRecovery,
+	request ResolveToolRecoveryRequest,
+) error {
+	if err := request.Resolution.Validate(); err != nil {
+		return err
+	}
+	if request.Resolution == ToolRecoveryResolutionStop {
+		if len(request.Decisions) != 0 {
+			return errors.New("stop recovery must not include decisions")
+		}
+		return nil
+	}
+	if len(request.Decisions) != len(pending.Calls) {
+		return errors.New("resume recovery must decide every pending call")
+	}
+	pendingIDs := make(map[CallID]struct{}, len(pending.Calls))
+	for _, call := range pending.Calls {
+		pendingIDs[call.CallID] = struct{}{}
+	}
+	seen := make(map[CallID]struct{}, len(request.Decisions))
+	for _, decision := range request.Decisions {
+		if err := decision.Action.Validate(); err != nil {
+			return err
+		}
+		if _, found := pendingIDs[decision.CallID]; !found {
+			return fmt.Errorf("tool call %q is not pending recovery", decision.CallID)
+		}
+		if _, duplicate := seen[decision.CallID]; duplicate {
+			return fmt.Errorf("tool call %q has duplicate recovery decisions", decision.CallID)
+		}
+		seen[decision.CallID] = struct{}{}
+	}
+	return nil
+}
+
+func isValidToolRecoveryResolution(pending PendingToolRecovery, request ResolveToolRecoveryRequest) bool {
+	return validateToolRecoveryResolution(pending, request) == nil
+}
+
 func allTasksCompleted(tasks []PlanTask) bool {
 	for _, task := range tasks {
 		if task.Status != TaskStatusCompleted {
@@ -1368,18 +1570,23 @@ const (
 	continueExecuteToolRetry  continuation = "execute_tool_with_retry"
 	continueDurableWait       continuation = "durable_wait"
 
-	stepTypeInit           stepType = "Init"
-	stepTypeAwaitUser      stepType = "AwaitUser"
-	stepTypeAnsweredInput  stepType = "AnsweredInput"
-	stepTypeCompactContext stepType = "CompactContext"
-	stepTypeCallModel      stepType = "CallModel"
-	stepTypeCheckSteered   stepType = "CheckSteered"
-	stepTypeRouteTool      stepType = "RouteTool"
-	stepTypeAwaitApproval  stepType = "AwaitToolApproval"
-	stepTypeExecuteTool    stepType = "ExecuteTool"
-	stepTypeExecuteRetry   stepType = "ExecuteToolWithRetry"
-	stepTypeRecoverTool    stepType = "RecoverToolExecution"
-	stepTypeDurableWait    stepType = "DurableWait"
+	stepTypeInit                  stepType = "Init"
+	stepTypeAwaitUser             stepType = "AwaitUser"
+	stepTypeAnsweredInput         stepType = "AnsweredInput"
+	stepTypeCompactContext        stepType = "CompactContext"
+	stepTypeCallModel             stepType = "CallModel"
+	stepTypeCheckSteered          stepType = "CheckSteered"
+	stepTypeRouteTool             stepType = "RouteTool"
+	stepTypeAwaitApproval         stepType = "AwaitToolApproval"
+	stepTypeExecuteTool           stepType = "ExecuteTool"
+	stepTypeExecuteRetry          stepType = "ExecuteToolWithRetry"
+	stepTypeRecoverTool           stepType = "RecoverToolExecution"
+	stepTypeExecuteParallel       stepType = "ExecuteParallelTool"
+	stepTypeRecoverParallel       stepType = "RecoverParallelToolExecution"
+	stepTypeAwaitParallel         stepType = "AwaitParallelToolResults"
+	stepTypePrepareManualRecovery stepType = "PrepareManualToolRecovery"
+	stepTypeAwaitManualRecovery   stepType = "AwaitManualToolRecovery"
+	stepTypeDurableWait           stepType = "DurableWait"
 
 	maximumSteeringMessageCount       = 2_147_483_647
 	maximumAutomaticPlanRecoveryCount = 1
@@ -1413,12 +1620,50 @@ type toolHeartbeat struct {
 	ToolName ToolName       `json:"tool_name"`
 }
 
+type parallelToolExecutionInput struct {
+	ResultInstance        string                    `json:"result_instance"`
+	Index                 int                       `json:"index"`
+	Call                  ToolCall                  `json:"call"`
+	RetryExhaustionPolicy ToolRetryExhaustionPolicy `json:"retry_exhaustion_policy"`
+}
+
+type parallelToolResult struct {
+	Index                 int                       `json:"index"`
+	Call                  ToolCall                  `json:"call"`
+	Result                ToolExecutionResult       `json:"result"`
+	ErrorType             string                    `json:"error_type,omitempty"`
+	RetryExhaustionPolicy ToolRetryExhaustionPolicy `json:"retry_exhaustion_policy"`
+}
+
+type toolBatchRecord struct {
+	Index                 int                       `json:"index"`
+	Call                  ToolCall                  `json:"call"`
+	Result                *ToolExecutionResult      `json:"result,omitempty"`
+	HasResult             bool                      `json:"has_result"`
+	ErrorType             string                    `json:"error_type,omitempty"`
+	RetryExhaustionPolicy ToolRetryExhaustionPolicy `json:"retry_exhaustion_policy"`
+}
+
+type toolBatchState struct {
+	BatchID          string            `json:"batch_id"`
+	FirstIndex       int               `json:"first_index"`
+	Records          []toolBatchRecord `json:"records"`
+	RecoveryRevision int               `json:"recovery_revision"`
+}
+
+type awaitParallelToolResultsInput struct {
+	Batch          toolBatchState `json:"batch"`
+	ResultInstance string         `json:"result_instance"`
+	ExpectedCount  int            `json:"expected_count"`
+}
+
 var (
 	messageMutationStepOptions = &dex.StepOptions{
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
 		ExecuteLockAttributes: []dex.AttributeLock{
 			dex.LockAttribute(pendingUserInputAttribute),
 			dex.LockAttribute(pendingApprovalAttribute),
+			dex.LockAttribute(pendingToolRecoveryAttribute),
 		},
 	}
 	awaitUserStepOptions = &dex.StepOptions{
@@ -1428,6 +1673,7 @@ var (
 		ExecuteLockAttributes: []dex.AttributeLock{
 			dex.LockAttribute(pendingUserInputAttribute),
 			dex.LockAttribute(pendingApprovalAttribute),
+			dex.LockAttribute(pendingToolRecoveryAttribute),
 		},
 	}
 	messageContextStepOptions = &dex.StepOptions{
@@ -1435,7 +1681,10 @@ var (
 			currentMessagesAttribute,
 			archivedMessagesAttribute,
 		},
-		ExecuteLockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+		ExecuteLockAttributes: []dex.AttributeLock{
+			dex.LockAttribute(pendingUserInputAttribute),
+			dex.LockAttribute(pendingToolRecoveryAttribute),
+		},
 	}
 	modelStepOptions = &dex.StepOptions{
 		ExecuteMethodTimeout:     10 * time.Minute,
@@ -1452,6 +1701,12 @@ var (
 		ExecuteLoadAttributeMaps: messageMutationStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: 1,
+		},
+	}
+	manualToolRecoveryStepOptions = &dex.StepOptions{
+		ExecuteLoadAttributeMaps: messageMutationStepOptions.ExecuteLoadAttributeMaps,
+		ExecuteLockAttributes: []dex.AttributeLock{
+			dex.LockAttribute(pendingToolRecoveryAttribute),
 		},
 	}
 )
@@ -1970,20 +2225,20 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	if err := step.flow.updateStatus(ctx, AgentStatusRoutingTool); err != nil {
 		return nil, err
 	}
-	call, err := step.flow.currentToolCall(ctx)
-	if err != nil {
-		return nil, err
+	call, callErr := step.flow.currentToolCall(ctx)
+	if callErr != nil {
+		return nil, callErr
 	}
-	config, err := agentConfigAttribute.Get(ctx)
-	if err != nil {
-		return nil, err
+	config, configErr := agentConfigAttribute.Get(ctx)
+	if configErr != nil {
+		return nil, configErr
 	}
-	state, err := agentStateAttribute.Get(ctx)
-	if err != nil {
-		return nil, err
+	state, stateErr := agentStateAttribute.Get(ctx)
+	if stateErr != nil {
+		return nil, stateErr
 	}
-	definition, err := step.flow.invocationToolDefinition(config, state, call.Name)
-	if err != nil {
+	definition, definitionErr := step.flow.invocationToolDefinition(config, state, call.Name)
+	if definitionErr != nil {
 		result, encodeErr := encodeToolResult(toolResultPayload{
 			Status: toolResultStatusFailed,
 			Error:  toolErrorUnknownOrDisabled,
@@ -2144,6 +2399,16 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
 	}
+	movements, isParallel, err := step.flow.parallelToolMovements(config, state)
+	if err != nil {
+		return nil, err
+	}
+	if isParallel {
+		if err := step.flow.updateStatus(ctx, AgentStatusExecutingTool); err != nil {
+			return nil, err
+		}
+		return dex.GoToMany(movements...), nil
+	}
 	if definition.RequiresApproval {
 		if err := pendingApprovalAttribute.Set(ctx, PendingApproval{
 			CallID:    call.ID,
@@ -2281,16 +2546,6 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		FirstAttemptAt:  ctx.FirstAttemptAt(),
 	})
 	if executeErr != nil {
-		callID := call.ID
-		toolName := call.Name
-		if activityErr := step.flow.writeActivity(ctx, AgentEvent{
-			Kind:     EventKindToolFailed,
-			Message:  fmt.Sprintf("%s failed with %s.", call.Name, errorTypeName(executeErr)),
-			CallID:   &callID,
-			ToolName: &toolName,
-		}); activityErr != nil {
-			return nil, errors.Join(executeErr, activityErr)
-		}
 		failureResult, encodeErr := encodeToolResult(toolResultPayload{
 			Status:    toolResultStatusFailed,
 			Outcome:   ToolOutcomeUnknown,
@@ -2313,30 +2568,89 @@ func (flow *Flow) finishToolExecution(
 	call ToolCall,
 	result ToolExecutionResult,
 ) (continuation, error) {
-	if err := flow.appendToolResult(ctx, call, result); err != nil {
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
 		return "", err
 	}
+	resultCopy := result
+	return flow.finishToolBatch(ctx, toolBatchState{
+		FirstIndex: state.PendingToolIndex,
+		Records: []toolBatchRecord{{
+			Index:     state.PendingToolIndex,
+			Call:      call,
+			Result:    &resultCopy,
+			HasResult: true,
+		}},
+	})
+}
+
+func (flow *Flow) appendToolBatchResults(ctx dex.Context, batch toolBatchState) error {
+	records := append([]toolBatchRecord(nil), batch.Records...)
+	slices.SortFunc(records, func(left toolBatchRecord, right toolBatchRecord) int {
+		return left.Index - right.Index
+	})
+	for offset, record := range records {
+		if !record.HasResult || record.Result == nil || record.Index != batch.FirstIndex+offset {
+			return errors.New("tool batch results are incomplete or out of order")
+		}
+		if err := record.Result.Outcome.Validate(); err != nil {
+			return fmt.Errorf("tool %q outcome: %w", record.Call.Name, err)
+		}
+		if err := flow.appendToolResult(ctx, record.Call, *record.Result); err != nil {
+			return err
+		}
+		if err := flow.writeToolTerminalActivity(ctx, record.Call, *record.Result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (flow *Flow) writeToolTerminalActivity(
+	ctx dex.Context,
+	call ToolCall,
+	result ToolExecutionResult,
+) error {
 	callID := call.ID
 	toolName := call.Name
-	if err := flow.writeActivity(ctx, AgentEvent{
-		Kind:     EventKindToolCompleted,
-		Message:  fmt.Sprintf("Completed %s.", call.Name),
+	kind := EventKindToolCompleted
+	message := fmt.Sprintf("Completed %s.", call.Name)
+	if result.Outcome != ToolOutcomeSucceeded {
+		kind = EventKindToolFailed
+		message = fmt.Sprintf("%s returned a known failure.", call.Name)
+		if result.Outcome == ToolOutcomeUnknown {
+			message = fmt.Sprintf("%s completed with an unknown outcome.", call.Name)
+		}
+	}
+	return flow.writeActivity(ctx, AgentEvent{
+		Kind:     kind,
+		Message:  message,
 		CallID:   &callID,
 		ToolName: &toolName,
-	}); err != nil {
+	})
+}
+
+func (flow *Flow) finishToolBatch(ctx dex.Context, batch toolBatchState) (continuation, error) {
+	if err := flow.appendToolBatchResults(ctx, batch); err != nil {
 		return "", err
 	}
-	hasNext, nextErr := flow.hasNextToolCall(ctx)
-	if nextErr != nil {
-		return "", nextErr
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return "", err
 	}
-	if hasNext {
-		if advanceErr := flow.advanceTool(ctx); advanceErr != nil {
-			return "", advanceErr
+	if state.PendingToolIndex != batch.FirstIndex {
+		return "", errors.New("tool batch no longer matches the pending cursor")
+	}
+	state.PendingToolIndex += len(batch.Records)
+	if state.PendingToolIndex < len(state.PendingToolCalls) {
+		if err := agentStateAttribute.Set(ctx, state); err != nil {
+			return "", err
 		}
 		return continueRouteTool, nil
 	}
-	if err := flow.clearPendingToolCalls(ctx); err != nil {
+	state.PendingToolCalls = []ToolCall{}
+	state.PendingToolIndex = 0
+	if err := agentStateAttribute.Set(ctx, state); err != nil {
 		return "", err
 	}
 	return continueCompactContext, nil
@@ -2358,8 +2672,8 @@ func (step executeToolWithRetryStep) GetStepOptions() *dex.StepOptions {
 		ExecuteLoadAttributeMaps: toolStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry:             toolStepOptions.ExecuteRetry,
 		ExecuteFailure: dex.ProceedToOnExecuteFailure(
-			recoverToolExecutionStep{flow: step.flow},
-			messageMutationStepOptions,
+			prepareManualToolRecoveryStep{flow: step.flow},
+			manualToolRecoveryStepOptions,
 		),
 	}
 }
@@ -2403,6 +2717,35 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	if validationErr := result.Outcome.Validate(); validationErr != nil {
 		return nil, fmt.Errorf("tool %q outcome: %w", call.Name, validationErr)
 	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	definition, err := step.flow.invocationToolDefinition(config, state, call.Name)
+	if err != nil {
+		return nil, err
+	}
+	if result.Outcome == ToolOutcomeUnknown &&
+		definition.RetryExhaustionPolicy.Effective() == ToolRetryExhaustionPolicyManualRecovery {
+		resultCopy := result
+		batch := toolBatchState{
+			BatchID:          fmt.Sprintf("tool-batch-%d-%d", state.LastSequence, state.PendingToolIndex),
+			FirstIndex:       state.PendingToolIndex,
+			RecoveryRevision: 1,
+			Records: []toolBatchRecord{{
+				Index:                 state.PendingToolIndex,
+				Call:                  call,
+				Result:                &resultCopy,
+				HasResult:             true,
+				ErrorType:             "tool_reported_unknown",
+				RetryExhaustionPolicy: ToolRetryExhaustionPolicyManualRecovery,
+			}},
+		}
+		return dex.GoTo(awaitManualToolRecoveryStep{flow: step.flow}, batch), nil
+	}
+	if result.Outcome == ToolOutcomeUnknown {
+		return dex.GoTo(recoverToolExecutionStep{flow: step.flow}, nil), nil
+	}
 	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
 	if finishErr != nil {
 		return nil, finishErr
@@ -2428,33 +2771,495 @@ func (step recoverToolExecutionStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	if err != nil {
 		return nil, err
 	}
-	failure := ctx.RecoveryError()
-	if failure == nil {
-		return nil, errors.New("tool recovery is missing the exhausted failure")
+	errorType := "tool_reported_unknown"
+	if failure := ctx.RecoveryError(); failure != nil {
+		errorType = failure.ErrorType
 	}
 	result, err := encodeToolResult(toolResultPayload{
 		Status:    toolResultStatusFailed,
 		Outcome:   ToolOutcomeUnknown,
-		ErrorType: failure.ErrorType,
+		ErrorType: errorType,
 	}, ToolOutcomeUnknown, true)
 	if err != nil {
 		return nil, err
-	}
-	callID := call.ID
-	toolName := call.Name
-	if activityErr := step.flow.writeActivity(ctx, AgentEvent{
-		Kind:     EventKindToolFailed,
-		Message:  fmt.Sprintf("%s failed after its retry policy was exhausted.", call.Name),
-		CallID:   &callID,
-		ToolName: &toolName,
-	}); activityErr != nil {
-		return nil, activityErr
 	}
 	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
 	if finishErr != nil {
 		return nil, finishErr
 	}
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+}
+
+type executeParallelToolStep struct {
+	dex.StepDefaultsNoWaitFor[parallelToolExecutionInput]
+	flow *Flow
+}
+
+var _ dex.Step[parallelToolExecutionInput] = executeParallelToolStep{}
+
+func (executeParallelToolStep) GetStepType() string { return string(stepTypeExecuteParallel) }
+
+func (step executeParallelToolStep) GetStepOptions() *dex.StepOptions {
+	return &dex.StepOptions{
+		ExecuteMethodTimeout: toolStepOptions.ExecuteMethodTimeout,
+		HeartbeatTimeout:     toolStepOptions.HeartbeatTimeout,
+		ExecuteRetry:         toolStepOptions.ExecuteRetry,
+		ExecuteFailure: dex.ProceedToOnExecuteFailure(
+			recoverParallelToolExecutionStep{flow: step.flow},
+			nil,
+		),
+	}
+}
+
+func (step executeParallelToolStep) Execute(
+	ctx dex.Context,
+	input parallelToolExecutionInput,
+) (*dex.StepDecision, error) {
+	config, configErr := agentConfigAttribute.Get(ctx)
+	if configErr != nil {
+		return nil, configErr
+	}
+	runtimeMetadata, metadataErr := agentRuntimeMetadataAttribute.Get(ctx)
+	if isAttributeNotFound(metadataErr) {
+		runtimeMetadata = MustJSONObject(`{}`)
+	} else if metadataErr != nil {
+		return nil, metadataErr
+	}
+	progress := toolProgress{ctx: ctx, flow: step.flow, call: input.Call}
+	if progressErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", input.Call.Name, ctx.Attempt())); progressErr != nil {
+		return nil, progressErr
+	}
+	result, executeErr := step.flow.tools.Execute(ctx, ToolInvocation{
+		FlowID:          FlowID(ctx.FlowID()),
+		RuntimeMetadata: runtimeMetadata,
+		Name:            input.Call.Name,
+		Arguments:       input.Call.Arguments,
+		EnabledServers:  config.EnabledMCPServers,
+		WriteProgress:   progress.write,
+		CallID:          input.Call.ID,
+		Attempt:         ctx.Attempt(),
+		FirstAttemptAt:  ctx.FirstAttemptAt(),
+	})
+	if executeErr != nil {
+		return nil, fmt.Errorf("execute tool %q: %w", input.Call.Name, executeErr)
+	}
+	if err := result.Outcome.Validate(); err != nil {
+		return nil, fmt.Errorf("tool %q outcome: %w", input.Call.Name, err)
+	}
+	errorType := ""
+	if result.Outcome == ToolOutcomeUnknown {
+		errorType = "tool_reported_unknown"
+	}
+	if err := parallelToolResultsChannel.Publish(ctx, input.ResultInstance, parallelToolResult{
+		Index:                 input.Index,
+		Call:                  input.Call,
+		Result:                result,
+		ErrorType:             errorType,
+		RetryExhaustionPolicy: input.RetryExhaustionPolicy.Effective(),
+	}); err != nil {
+		return nil, err
+	}
+	return dex.DeadEnd(), nil
+}
+
+type recoverParallelToolExecutionStep struct {
+	dex.StepDefaultsNoWaitFor[parallelToolExecutionInput]
+	flow *Flow
+}
+
+var _ dex.Step[parallelToolExecutionInput] = recoverParallelToolExecutionStep{}
+
+func (recoverParallelToolExecutionStep) GetStepType() string {
+	return string(stepTypeRecoverParallel)
+}
+
+func (recoverParallelToolExecutionStep) GetStepOptions() *dex.StepOptions { return nil }
+
+func (recoverParallelToolExecutionStep) Execute(
+	ctx dex.Context,
+	input parallelToolExecutionInput,
+) (*dex.StepDecision, error) {
+	failure := ctx.RecoveryError()
+	if failure == nil {
+		return nil, errors.New("parallel tool recovery is missing the exhausted failure")
+	}
+	result, err := unknownToolResult(failure.ErrorType)
+	if err != nil {
+		return nil, err
+	}
+	if err := parallelToolResultsChannel.Publish(ctx, input.ResultInstance, parallelToolResult{
+		Index:                 input.Index,
+		Call:                  input.Call,
+		Result:                result,
+		ErrorType:             failure.ErrorType,
+		RetryExhaustionPolicy: input.RetryExhaustionPolicy.Effective(),
+	}); err != nil {
+		return nil, err
+	}
+	return dex.DeadEnd(), nil
+}
+
+type awaitParallelToolResultsStep struct {
+	dex.StepDefaults
+	flow *Flow
+}
+
+var _ dex.Step[awaitParallelToolResultsInput] = awaitParallelToolResultsStep{}
+
+func (awaitParallelToolResultsStep) GetStepType() string { return string(stepTypeAwaitParallel) }
+
+func (awaitParallelToolResultsStep) GetStepOptions() *dex.StepOptions {
+	return messageMutationStepOptions
+}
+
+func (awaitParallelToolResultsStep) WaitFor(
+	_ dex.Context,
+	input awaitParallelToolResultsInput,
+) (*dex.Wait, error) {
+	return dex.Until(parallelToolResultsChannel.ForN(input.ResultInstance, input.ExpectedCount)), nil
+}
+
+func (step awaitParallelToolResultsStep) Execute(
+	ctx dex.Context,
+	input awaitParallelToolResultsInput,
+) (*dex.StepDecision, error) {
+	results, err := parallelToolResultsChannel.GetConditionResults(ctx, input.ResultInstance)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) != input.ExpectedCount {
+		return nil, errors.New("parallel tool wait completed without every result")
+	}
+	batch := input.Batch
+	seen := make(map[int]struct{}, len(results))
+	for _, result := range results {
+		if _, duplicate := seen[result.Index]; duplicate {
+			return nil, fmt.Errorf("parallel tool result index %d is duplicated", result.Index)
+		}
+		seen[result.Index] = struct{}{}
+		found := false
+		for index := range batch.Records {
+			if batch.Records[index].Index != result.Index || batch.Records[index].Call.ID != result.Call.ID {
+				continue
+			}
+			resultCopy := result.Result
+			batch.Records[index].Result = &resultCopy
+			batch.Records[index].HasResult = true
+			batch.Records[index].ErrorType = result.ErrorType
+			batch.Records[index].RetryExhaustionPolicy = result.RetryExhaustionPolicy.Effective()
+			found = true
+			break
+		}
+		if !found {
+			return nil, fmt.Errorf("unexpected parallel tool result for call %q", result.Call.ID)
+		}
+	}
+	if batchNeedsManualRecovery(batch) {
+		if batch.RecoveryRevision == 0 {
+			batch.RecoveryRevision = 1
+		}
+		return dex.GoTo(awaitManualToolRecoveryStep{flow: step.flow}, batch), nil
+	}
+	next, err := step.flow.finishToolBatch(ctx, batch)
+	if err != nil {
+		return nil, err
+	}
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+}
+
+type prepareManualToolRecoveryStep struct {
+	dex.StepDefaultsNoWaitFor[dex.None]
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = prepareManualToolRecoveryStep{}
+
+func (prepareManualToolRecoveryStep) GetStepType() string {
+	return string(stepTypePrepareManualRecovery)
+}
+
+func (prepareManualToolRecoveryStep) GetStepOptions() *dex.StepOptions {
+	return manualToolRecoveryStepOptions
+}
+
+func (step prepareManualToolRecoveryStep) Execute(
+	ctx dex.Context,
+	_ dex.None,
+) (*dex.StepDecision, error) {
+	failure := ctx.RecoveryError()
+	if failure == nil {
+		return nil, errors.New("manual tool recovery is missing the exhausted failure")
+	}
+	call, err := step.flow.currentToolCall(ctx)
+	if err != nil {
+		return nil, err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unknownToolResult(failure.ErrorType)
+	if err != nil {
+		return nil, err
+	}
+	resultCopy := result
+	batch := toolBatchState{
+		BatchID:          fmt.Sprintf("tool-batch-%d-%d", state.LastSequence, state.PendingToolIndex),
+		FirstIndex:       state.PendingToolIndex,
+		RecoveryRevision: 1,
+		Records: []toolBatchRecord{{
+			Index:                 state.PendingToolIndex,
+			Call:                  call,
+			Result:                &resultCopy,
+			HasResult:             true,
+			ErrorType:             failure.ErrorType,
+			RetryExhaustionPolicy: ToolRetryExhaustionPolicyManualRecovery,
+		}},
+	}
+	return dex.GoTo(awaitManualToolRecoveryStep{flow: step.flow}, batch), nil
+}
+
+type awaitManualToolRecoveryStep struct {
+	dex.StepDefaults
+	flow *Flow
+}
+
+var _ dex.Step[toolBatchState] = awaitManualToolRecoveryStep{}
+
+func (awaitManualToolRecoveryStep) GetStepType() string {
+	return string(stepTypeAwaitManualRecovery)
+}
+
+func (awaitManualToolRecoveryStep) GetStepOptions() *dex.StepOptions {
+	return manualToolRecoveryStepOptions
+}
+
+func (step awaitManualToolRecoveryStep) WaitFor(
+	ctx dex.Context,
+	batch toolBatchState,
+) (*dex.Wait, error) {
+	pending := pendingToolRecovery(batch)
+	if len(pending.Calls) == 0 {
+		return nil, errors.New("manual tool recovery has no unresolved calls")
+	}
+	if err := pendingToolRecoveryAttribute.Set(ctx, pending); err != nil {
+		return nil, err
+	}
+	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForToolRecovery); err != nil {
+		return nil, err
+	}
+	if err := step.flow.writeActivity(ctx, AgentEvent{
+		Kind:    EventKindToolRecoveryRequired,
+		Message: fmt.Sprintf("Manual recovery is required for %d tool call(s).", len(pending.Calls)),
+	}); err != nil {
+		return nil, err
+	}
+	if err := step.flow.writeSnapshotRequired(ctx); err != nil {
+		return nil, err
+	}
+	return dex.AnyOf(
+		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+		toolRecoveryDecisionsChannel.ForOne(string(pending.RecoveryID)),
+	), nil
+}
+
+func (step awaitManualToolRecoveryStep) Execute(
+	ctx dex.Context,
+	batch toolBatchState,
+) (*dex.StepDecision, error) {
+	steered, conditionErr := steeredUserMessagesChannel.GetConditionResults(ctx)
+	if conditionErr != nil {
+		return nil, conditionErr
+	}
+	if len(steered) > 0 {
+		if err := deletePendingToolRecovery(ctx); err != nil {
+			return nil, err
+		}
+		if err := step.flow.appendToolBatchResults(ctx, batch); err != nil {
+			return nil, err
+		}
+		state, err := agentStateAttribute.Get(ctx)
+		if err != nil {
+			return nil, err
+		}
+		state.PendingToolIndex = batch.FirstIndex + len(batch.Records)
+		if err := agentStateAttribute.Set(ctx, state); err != nil {
+			return nil, err
+		}
+		if err := step.flow.beginSteeredTurn(ctx, steered); err != nil {
+			return nil, err
+		}
+		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
+	}
+	recoveryID := recoveryIDFor(batch)
+	requests, decisionErr := toolRecoveryDecisionsChannel.GetConditionResults(ctx, string(recoveryID))
+	if decisionErr != nil {
+		return nil, decisionErr
+	}
+	if len(requests) != 1 {
+		return nil, errors.New("manual recovery wait completed without one decision")
+	}
+	request := requests[0]
+	if err := validateToolRecoveryResolution(pendingToolRecovery(batch), request); err != nil {
+		return nil, err
+	}
+	if err := step.flow.writeActivity(ctx, AgentEvent{
+		Kind:    EventKindToolRecoveryResolved,
+		Message: fmt.Sprintf("Resolved manual tool recovery %s.", request.Resolution),
+	}); err != nil {
+		return nil, err
+	}
+	if request.Resolution == ToolRecoveryResolutionStop {
+		if err := step.flow.stopToolSequenceAfterBatch(ctx, batch); err != nil {
+			return nil, err
+		}
+		return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
+	}
+	decisions := make(map[CallID]ToolRecoveryAction, len(request.Decisions))
+	for _, decision := range request.Decisions {
+		decisions[decision.CallID] = decision.Action
+	}
+	retryRecords := make([]toolBatchRecord, 0, len(request.Decisions))
+	for index := range batch.Records {
+		record := &batch.Records[index]
+		if !recordNeedsManualRecovery(*record) {
+			continue
+		}
+		if decisions[record.Call.ID] == ToolRecoveryActionRetry {
+			record.HasResult = false
+			record.Result = nil
+			record.ErrorType = ""
+			retryRecords = append(retryRecords, *record)
+		} else {
+			record.RetryExhaustionPolicy = ToolRetryExhaustionPolicyContinueWithUnknown
+		}
+	}
+	if len(retryRecords) == 0 {
+		next, err := step.flow.finishToolBatch(ctx, batch)
+		if err != nil {
+			return nil, err
+		}
+		return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+	}
+	batch.RecoveryRevision++
+	resultInstance := fmt.Sprintf("%s-retry-%d", batch.BatchID, batch.RecoveryRevision)
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	movements := make([]dex.StepMovement, 0, len(retryRecords)+1)
+	movements = append(movements, dex.MovementOf(
+		awaitParallelToolResultsStep{flow: step.flow},
+		awaitParallelToolResultsInput{
+			Batch:          batch,
+			ResultInstance: resultInstance,
+			ExpectedCount:  len(retryRecords),
+		},
+	))
+	for _, record := range retryRecords {
+		definition, err := step.flow.invocationToolDefinition(config, state, record.Call.Name)
+		if err != nil {
+			return nil, err
+		}
+		movements = append(movements, dex.MovementOf(
+			executeParallelToolStep{flow: step.flow},
+			parallelToolExecutionInput{
+				ResultInstance:        resultInstance,
+				Index:                 record.Index,
+				Call:                  record.Call,
+				RetryExhaustionPolicy: ToolRetryExhaustionPolicyManualRecovery,
+			},
+			dex.WithStepOptions(step.flow.parallelToolStepOptions(definition)),
+		))
+	}
+	if err := step.flow.updateStatus(ctx, AgentStatusExecutingTool); err != nil {
+		return nil, err
+	}
+	return dex.GoToMany(movements...), nil
+}
+
+func unknownToolResult(errorType string) (ToolExecutionResult, error) {
+	return encodeToolResult(toolResultPayload{
+		Status:    toolResultStatusFailed,
+		Outcome:   ToolOutcomeUnknown,
+		ErrorType: errorType,
+	}, ToolOutcomeUnknown, true)
+}
+
+func recoveryIDFor(batch toolBatchState) RecoveryID {
+	return RecoveryID(fmt.Sprintf("%s-recovery-%d", batch.BatchID, batch.RecoveryRevision))
+}
+
+func recordNeedsManualRecovery(record toolBatchRecord) bool {
+	return record.HasResult &&
+		record.Result != nil &&
+		record.Result.Outcome == ToolOutcomeUnknown &&
+		record.RetryExhaustionPolicy.Effective() == ToolRetryExhaustionPolicyManualRecovery
+}
+
+func batchNeedsManualRecovery(batch toolBatchState) bool {
+	for _, record := range batch.Records {
+		if recordNeedsManualRecovery(record) {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingToolRecovery(batch toolBatchState) PendingToolRecovery {
+	pending := PendingToolRecovery{RecoveryID: recoveryIDFor(batch), Calls: []PendingToolRecoveryCall{}}
+	for _, record := range batch.Records {
+		if !recordNeedsManualRecovery(record) {
+			continue
+		}
+		pending.Calls = append(pending.Calls, PendingToolRecoveryCall{
+			CallID:    record.Call.ID,
+			ToolName:  record.Call.Name,
+			Arguments: record.Call.Arguments,
+			ErrorType: record.ErrorType,
+		})
+	}
+	return pending
+}
+
+func (flow *Flow) stopToolSequenceAfterBatch(ctx dex.Context, batch toolBatchState) error {
+	if err := flow.appendToolBatchResults(ctx, batch); err != nil {
+		return err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return err
+	}
+	start := batch.FirstIndex + len(batch.Records)
+	if start < 0 || start > len(state.PendingToolCalls) {
+		return errors.New("manual recovery batch exceeds pending tool calls")
+	}
+	remaining := append([]ToolCall(nil), state.PendingToolCalls[start:]...)
+	state.PendingToolCalls = []ToolCall{}
+	state.PendingToolIndex = 0
+	if err := agentStateAttribute.Set(ctx, state); err != nil {
+		return err
+	}
+	for _, call := range remaining {
+		result, err := encodeToolResult(toolResultPayload{
+			Status: toolResultStatusInterrupted,
+			Error:  toolErrorStoppedByRecovery,
+		}, ToolOutcomeKnownFailure, true)
+		if err != nil {
+			return err
+		}
+		if err := flow.appendToolResult(ctx, call, result); err != nil {
+			return err
+		}
+		if err := flow.writeToolTerminalActivity(ctx, call, result); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type durableWaitStep struct {

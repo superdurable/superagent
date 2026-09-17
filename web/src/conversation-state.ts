@@ -45,6 +45,7 @@ export type Command =
   | SendCommand
   | AnswerCommand
   | { kind: "approve" }
+  | { kind: "recover" }
   | { kind: "execute-plan" }
   | {
       kind: "queue";
@@ -560,6 +561,20 @@ function completeCommand(
         description: {
           ...state.snapshot.description,
           pendingApproval: null,
+        },
+      },
+      error: null,
+    };
+  }
+  if (command.kind === "recover") {
+    return {
+      ...state,
+      pendingCommand: null,
+      snapshot: {
+        ...state.snapshot,
+        description: {
+          ...state.snapshot.description,
+          pendingToolRecovery: null,
         },
       },
       error: null,

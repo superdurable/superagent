@@ -33,6 +33,10 @@ const (
 	DefaultContextTokens = agentinternal.DefaultContextTokens
 	// DefaultMessageRetention bounds retained summarized messages.
 	DefaultMessageRetention = agentinternal.DefaultMessageRetention
+	// DefaultMaxParallelToolCalls bounds one safe parallel tool wave.
+	DefaultMaxParallelToolCalls = agentinternal.DefaultMaxParallelToolCalls
+	// MaximumParallelToolCalls is the accepted safe parallel tool-call limit.
+	MaximumParallelToolCalls = agentinternal.MaximumParallelToolCalls
 	// MaximumUserMessageContentBytes bounds one user-message body.
 	MaximumUserMessageContentBytes = agentinternal.MaximumUserMessageContentBytes
 	// MaximumRuntimeMetadataBytes bounds trusted metadata persisted for one Agent.
@@ -69,6 +73,7 @@ const (
 	AgentStatusCallingModel           = agentinternal.AgentStatusCallingModel
 	AgentStatusRoutingTool            = agentinternal.AgentStatusRoutingTool
 	AgentStatusWaitingForToolApproval = agentinternal.AgentStatusWaitingForToolApproval
+	AgentStatusWaitingForToolRecovery = agentinternal.AgentStatusWaitingForToolRecovery
 	AgentStatusExecutingTool          = agentinternal.AgentStatusExecutingTool
 	AgentStatusWaitingForTimer        = agentinternal.AgentStatusWaitingForTimer
 	AgentStatusApplyingSteering       = agentinternal.AgentStatusApplyingSteering
@@ -119,31 +124,42 @@ const (
 	ToolOutcomeSucceeded    = agentinternal.ToolOutcomeSucceeded
 	ToolOutcomeKnownFailure = agentinternal.ToolOutcomeKnownFailure
 	ToolOutcomeUnknown      = agentinternal.ToolOutcomeUnknown
+
+	ToolRetryExhaustionPolicyManualRecovery      = agentinternal.ToolRetryExhaustionPolicyManualRecovery
+	ToolRetryExhaustionPolicyContinueWithUnknown = agentinternal.ToolRetryExhaustionPolicyContinueWithUnknown
+
+	ToolRecoveryResolutionResume          = agentinternal.ToolRecoveryResolutionResume
+	ToolRecoveryResolutionStop            = agentinternal.ToolRecoveryResolutionStop
+	ToolRecoveryActionRetry               = agentinternal.ToolRecoveryActionRetry
+	ToolRecoveryActionContinueWithUnknown = agentinternal.ToolRecoveryActionContinueWithUnknown
 )
 
 const (
-	EventKindPlanStarted        = agentinternal.EventKindPlanStarted
-	EventKindPlanUpdated        = agentinternal.EventKindPlanUpdated
-	EventKindPlanTaskUpdated    = agentinternal.EventKindPlanTaskUpdated
-	EventKindInputConsumed      = agentinternal.EventKindInputConsumed
-	EventKindSnapshotRequired   = agentinternal.EventKindSnapshotRequired
-	EventKindSteeringApplied    = agentinternal.EventKindSteeringApplied
-	EventKindCompactionFailed   = agentinternal.EventKindCompactionFailed
-	EventKindCompacted          = agentinternal.EventKindCompacted
-	EventKindModelStarted       = agentinternal.EventKindModelStarted
-	EventKindModelFailed        = agentinternal.EventKindModelFailed
-	EventKindModelCompleted     = agentinternal.EventKindModelCompleted
-	EventKindModelToolCall      = agentinternal.EventKindModelToolCall
-	EventKindUserInputRequested = agentinternal.EventKindUserInputRequested
-	EventKindToolProgress       = agentinternal.EventKindToolProgress
-	EventKindToolFailed         = agentinternal.EventKindToolFailed
-	EventKindToolCompleted      = agentinternal.EventKindToolCompleted
+	EventKindPlanStarted          = agentinternal.EventKindPlanStarted
+	EventKindPlanUpdated          = agentinternal.EventKindPlanUpdated
+	EventKindPlanTaskUpdated      = agentinternal.EventKindPlanTaskUpdated
+	EventKindInputConsumed        = agentinternal.EventKindInputConsumed
+	EventKindSnapshotRequired     = agentinternal.EventKindSnapshotRequired
+	EventKindSteeringApplied      = agentinternal.EventKindSteeringApplied
+	EventKindCompactionFailed     = agentinternal.EventKindCompactionFailed
+	EventKindCompacted            = agentinternal.EventKindCompacted
+	EventKindModelStarted         = agentinternal.EventKindModelStarted
+	EventKindModelFailed          = agentinternal.EventKindModelFailed
+	EventKindModelCompleted       = agentinternal.EventKindModelCompleted
+	EventKindModelToolCall        = agentinternal.EventKindModelToolCall
+	EventKindUserInputRequested   = agentinternal.EventKindUserInputRequested
+	EventKindToolProgress         = agentinternal.EventKindToolProgress
+	EventKindToolFailed           = agentinternal.EventKindToolFailed
+	EventKindToolCompleted        = agentinternal.EventKindToolCompleted
+	EventKindToolRecoveryRequired = agentinternal.EventKindToolRecoveryRequired
+	EventKindToolRecoveryResolved = agentinternal.EventKindToolRecoveryResolved
 
-	CommandSendMessage     = agentinternal.CommandSendMessage
-	CommandAnswerQuestions = agentinternal.CommandAnswerQuestions
-	CommandSteer           = agentinternal.CommandSteer
-	CommandApproveTool     = agentinternal.CommandApproveTool
-	CommandExecutePlan     = agentinternal.CommandExecutePlan
+	CommandSendMessage         = agentinternal.CommandSendMessage
+	CommandAnswerQuestions     = agentinternal.CommandAnswerQuestions
+	CommandSteer               = agentinternal.CommandSteer
+	CommandApproveTool         = agentinternal.CommandApproveTool
+	CommandExecutePlan         = agentinternal.CommandExecutePlan
+	CommandResolveToolRecovery = agentinternal.CommandResolveToolRecovery
 )
 
 // Public types intentionally alias the implementation's stable application boundary.
@@ -167,18 +183,21 @@ type (
 	Model           = agentinternal.Model
 	ToolName        = agentinternal.ToolName
 
-	AgentStatus       = agentinternal.AgentStatus
-	WaitingInputRound = agentinternal.WaitingInputRound
-	FlowStatus        = agentinternal.FlowStatus
-	FlowErrorType     = agentinternal.FlowErrorType
-	InteractionMode   = agentinternal.InteractionMode
-	PlanStatus        = agentinternal.PlanStatus
-	TaskStatus        = agentinternal.TaskStatus
-	MessageRole       = agentinternal.MessageRole
-	EventKind         = agentinternal.EventKind
-	Provider          = agentinternal.Provider
-	ToolOutcome       = agentinternal.ToolOutcome
-	Command           = agentinternal.Command
+	AgentStatus               = agentinternal.AgentStatus
+	WaitingInputRound         = agentinternal.WaitingInputRound
+	FlowStatus                = agentinternal.FlowStatus
+	FlowErrorType             = agentinternal.FlowErrorType
+	InteractionMode           = agentinternal.InteractionMode
+	PlanStatus                = agentinternal.PlanStatus
+	TaskStatus                = agentinternal.TaskStatus
+	MessageRole               = agentinternal.MessageRole
+	EventKind                 = agentinternal.EventKind
+	Provider                  = agentinternal.Provider
+	ToolOutcome               = agentinternal.ToolOutcome
+	ToolRetryExhaustionPolicy = agentinternal.ToolRetryExhaustionPolicy
+	ToolRecoveryResolution    = agentinternal.ToolRecoveryResolution
+	ToolRecoveryAction        = agentinternal.ToolRecoveryAction
+	Command                   = agentinternal.Command
 
 	EnumValidationError           = agentinternal.EnumValidationError
 	CommandRejectedError          = agentinternal.CommandRejectedError
@@ -203,6 +222,11 @@ type (
 	PlanExecutionRequest          = agentinternal.PlanExecutionRequest
 	ToolApprovalRequest           = agentinternal.ToolApprovalRequest
 	PendingApproval               = agentinternal.PendingApproval
+	PendingToolRecovery           = agentinternal.PendingToolRecovery
+	PendingToolRecoveryCall       = agentinternal.PendingToolRecoveryCall
+	ResolveToolRecoveryRequest    = agentinternal.ResolveToolRecoveryRequest
+	ToolRecoveryDecision          = agentinternal.ToolRecoveryDecision
+	RecoveryID                    = agentinternal.RecoveryID
 	PendingTimer                  = agentinternal.PendingTimer
 	PendingUserInput              = agentinternal.PendingUserInput
 	AnswerQuestionsRequest        = agentinternal.AnswerQuestionsRequest

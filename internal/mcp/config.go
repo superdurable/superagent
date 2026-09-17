@@ -85,6 +85,38 @@ func (err *TransportValidationError) Error() string {
 	return fmt.Sprintf("unsupported MCP transport %q", err.Value)
 }
 
+// RetryExhaustionPolicy controls what the Agent does after Dex exhausts tool retries.
+type RetryExhaustionPolicy string
+
+const (
+	RetryExhaustionPolicyManualRecovery      RetryExhaustionPolicy = "manual_recovery"
+	RetryExhaustionPolicyContinueWithUnknown RetryExhaustionPolicy = "continue_with_unknown"
+)
+
+// Validate rejects unknown retry-exhaustion policies.
+func (policy RetryExhaustionPolicy) Validate() error {
+	switch policy {
+	case RetryExhaustionPolicyManualRecovery, RetryExhaustionPolicyContinueWithUnknown:
+		return nil
+	default:
+		return fmt.Errorf("unsupported retry exhaustion policy %q", policy)
+	}
+}
+
+// UnmarshalYAML decodes and validates one retry-exhaustion policy.
+func (policy *RetryExhaustionPolicy) UnmarshalYAML(node *yaml.Node) error {
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	decoded := RetryExhaustionPolicy(value)
+	if err := decoded.Validate(); err != nil {
+		return err
+	}
+	*policy = decoded
+	return nil
+}
+
 // ToolPolicy configures safety and bounded retries for one tool.
 type ToolPolicy struct {
 	// ReadOnly overrides the tool annotation; nil means unknown.
@@ -95,6 +127,8 @@ type ToolPolicy struct {
 	MaximumAttempts *int `yaml:"maximum_attempts"`
 	// RetryTotalSeconds defaults to 300 and bounds all attempts.
 	RetryTotalSeconds float64 `yaml:"retry_total_seconds"`
+	// RetryExhaustionPolicy defaults to manual recovery.
+	RetryExhaustionPolicy RetryExhaustionPolicy `yaml:"retry_exhaustion_policy"`
 }
 
 // ServerConfig is one trusted Worker-side MCP connection.
@@ -183,6 +217,9 @@ func applyDefaults(server *ServerConfig) {
 		if policy.RetryTotalSeconds == 0 {
 			policy.RetryTotalSeconds = 300
 		}
+		if policy.RetryExhaustionPolicy == "" {
+			policy.RetryExhaustionPolicy = RetryExhaustionPolicyManualRecovery
+		}
 		server.Tools[name] = policy
 	}
 }
@@ -236,6 +273,9 @@ func validateServer(server ServerConfig) error {
 		}
 		if policy.MaximumAttempts != nil && (*policy.MaximumAttempts <= 0 || *policy.MaximumAttempts > maximumToolAttempts) {
 			return fmt.Errorf("maximum_attempts for %q must be between 1 and %d", name, maximumToolAttempts)
+		}
+		if err := policy.RetryExhaustionPolicy.Validate(); err != nil {
+			return fmt.Errorf("retry_exhaustion_policy for %q: %w", name, err)
 		}
 	}
 	return nil

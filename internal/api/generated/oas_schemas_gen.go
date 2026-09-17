@@ -24,10 +24,11 @@ func (s *Accepted) SetAccepted(val AcceptedAccepted) {
 	s.Accepted = val
 }
 
-func (*Accepted) answerQuestionsRes() {}
-func (*Accepted) approveToolRes()     {}
-func (*Accepted) executePlanRes()     {}
-func (*Accepted) sendMessageRes()     {}
+func (*Accepted) answerQuestionsRes()     {}
+func (*Accepted) approveToolRes()         {}
+func (*Accepted) executePlanRes()         {}
+func (*Accepted) resolveToolRecoveryRes() {}
+func (*Accepted) sendMessageRes()         {}
 
 type AcceptedAccepted bool
 
@@ -137,22 +138,23 @@ func (s *ActivityStreamEventKind) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/AgentDescription
 type AgentDescription struct {
-	Status                     AgentStatus         `json:"status"`
-	WaitingInputRound          WaitingInputRound   `json:"waitingInputRound"`
-	Model                      string              `json:"model"`
-	SystemPrompt               string              `json:"systemPrompt"`
-	FirstRetainedSequence      int64               `json:"firstRetainedSequence"`
-	LastSequence               int64               `json:"lastSequence"`
-	SummarizedThroughSequence  int64               `json:"summarizedThroughSequence"`
-	PendingApproval            NilPendingApproval  `json:"pendingApproval"`
-	PendingTimer               NilPendingTimer     `json:"pendingTimer"`
-	PendingUserInput           NilPendingUserInput `json:"pendingUserInput"`
-	Plan                       NilAgentPlan        `json:"plan"`
-	IsPlanExecutionRequested   bool                `json:"isPlanExecutionRequested"`
-	PendingQueuedMessageCount  int                 `json:"pendingQueuedMessageCount"`
-	PendingSteeredMessageCount int                 `json:"pendingSteeredMessageCount"`
-	AvailableMcpServers        []string            `json:"availableMcpServers"`
-	AvailableTools             []ToolName          `json:"availableTools"`
+	Status                     AgentStatus            `json:"status"`
+	WaitingInputRound          WaitingInputRound      `json:"waitingInputRound"`
+	Model                      string                 `json:"model"`
+	SystemPrompt               string                 `json:"systemPrompt"`
+	FirstRetainedSequence      int64                  `json:"firstRetainedSequence"`
+	LastSequence               int64                  `json:"lastSequence"`
+	SummarizedThroughSequence  int64                  `json:"summarizedThroughSequence"`
+	PendingApproval            NilPendingApproval     `json:"pendingApproval"`
+	PendingToolRecovery        NilPendingToolRecovery `json:"pendingToolRecovery"`
+	PendingTimer               NilPendingTimer        `json:"pendingTimer"`
+	PendingUserInput           NilPendingUserInput    `json:"pendingUserInput"`
+	Plan                       NilAgentPlan           `json:"plan"`
+	IsPlanExecutionRequested   bool                   `json:"isPlanExecutionRequested"`
+	PendingQueuedMessageCount  int                    `json:"pendingQueuedMessageCount"`
+	PendingSteeredMessageCount int                    `json:"pendingSteeredMessageCount"`
+	AvailableMcpServers        []string               `json:"availableMcpServers"`
+	AvailableTools             []ToolName             `json:"availableTools"`
 }
 
 // GetStatus returns the value of Status.
@@ -193,6 +195,11 @@ func (s *AgentDescription) GetSummarizedThroughSequence() int64 {
 // GetPendingApproval returns the value of PendingApproval.
 func (s *AgentDescription) GetPendingApproval() NilPendingApproval {
 	return s.PendingApproval
+}
+
+// GetPendingToolRecovery returns the value of PendingToolRecovery.
+func (s *AgentDescription) GetPendingToolRecovery() NilPendingToolRecovery {
+	return s.PendingToolRecovery
 }
 
 // GetPendingTimer returns the value of PendingTimer.
@@ -273,6 +280,11 @@ func (s *AgentDescription) SetSummarizedThroughSequence(val int64) {
 // SetPendingApproval sets the value of PendingApproval.
 func (s *AgentDescription) SetPendingApproval(val NilPendingApproval) {
 	s.PendingApproval = val
+}
+
+// SetPendingToolRecovery sets the value of PendingToolRecovery.
+func (s *AgentDescription) SetPendingToolRecovery(val NilPendingToolRecovery) {
+	s.PendingToolRecovery = val
 }
 
 // SetPendingTimer sets the value of PendingTimer.
@@ -672,6 +684,7 @@ const (
 	AgentStatusCallingModel           AgentStatus = "calling_model"
 	AgentStatusRoutingTool            AgentStatus = "routing_tool"
 	AgentStatusWaitingForToolApproval AgentStatus = "waiting_for_tool_approval"
+	AgentStatusWaitingForToolRecovery AgentStatus = "waiting_for_tool_recovery"
 	AgentStatusExecutingTool          AgentStatus = "executing_tool"
 	AgentStatusWaitingForTimer        AgentStatus = "waiting_for_timer"
 	AgentStatusApplyingSteering       AgentStatus = "applying_steering"
@@ -686,6 +699,7 @@ func (AgentStatus) AllValues() []AgentStatus {
 		AgentStatusCallingModel,
 		AgentStatusRoutingTool,
 		AgentStatusWaitingForToolApproval,
+		AgentStatusWaitingForToolRecovery,
 		AgentStatusExecutingTool,
 		AgentStatusWaitingForTimer,
 		AgentStatusApplyingSteering,
@@ -706,6 +720,8 @@ func (s AgentStatus) MarshalText() ([]byte, error) {
 	case AgentStatusRoutingTool:
 		return []byte(s), nil
 	case AgentStatusWaitingForToolApproval:
+		return []byte(s), nil
+	case AgentStatusWaitingForToolRecovery:
 		return []byte(s), nil
 	case AgentStatusExecutingTool:
 		return []byte(s), nil
@@ -738,6 +754,9 @@ func (s *AgentStatus) UnmarshalText(data []byte) error {
 		return nil
 	case AgentStatusWaitingForToolApproval:
 		*s = AgentStatusWaitingForToolApproval
+		return nil
+	case AgentStatusWaitingForToolRecovery:
+		*s = AgentStatusWaitingForToolRecovery
 		return nil
 	case AgentStatusExecutingTool:
 		*s = AgentStatusExecutingTool
@@ -938,23 +957,25 @@ func (*DeleteQueuedMessageServiceUnavailable) deleteQueuedMessageRes() {}
 type EventKind string
 
 const (
-	EventKindPlanStarted        EventKind = "plan_started"
-	EventKindPlanUpdated        EventKind = "plan_updated"
-	EventKindPlanTaskUpdated    EventKind = "plan_task_updated"
-	EventKindInputConsumed      EventKind = "input_consumed"
-	EventKindUserInputAnswered  EventKind = "user_input_answered"
-	EventKindSnapshotRequired   EventKind = "snapshot_required"
-	EventKindSteeringApplied    EventKind = "steering_applied"
-	EventKindCompactionFailed   EventKind = "compaction_failed"
-	EventKindCompacted          EventKind = "compacted"
-	EventKindModelStarted       EventKind = "model_started"
-	EventKindModelFailed        EventKind = "model_failed"
-	EventKindModelCompleted     EventKind = "model_completed"
-	EventKindModelToolCall      EventKind = "model_tool_call"
-	EventKindUserInputRequested EventKind = "user_input_requested"
-	EventKindToolProgress       EventKind = "tool_progress"
-	EventKindToolFailed         EventKind = "tool_failed"
-	EventKindToolCompleted      EventKind = "tool_completed"
+	EventKindPlanStarted          EventKind = "plan_started"
+	EventKindPlanUpdated          EventKind = "plan_updated"
+	EventKindPlanTaskUpdated      EventKind = "plan_task_updated"
+	EventKindInputConsumed        EventKind = "input_consumed"
+	EventKindUserInputAnswered    EventKind = "user_input_answered"
+	EventKindSnapshotRequired     EventKind = "snapshot_required"
+	EventKindSteeringApplied      EventKind = "steering_applied"
+	EventKindCompactionFailed     EventKind = "compaction_failed"
+	EventKindCompacted            EventKind = "compacted"
+	EventKindModelStarted         EventKind = "model_started"
+	EventKindModelFailed          EventKind = "model_failed"
+	EventKindModelCompleted       EventKind = "model_completed"
+	EventKindModelToolCall        EventKind = "model_tool_call"
+	EventKindUserInputRequested   EventKind = "user_input_requested"
+	EventKindToolProgress         EventKind = "tool_progress"
+	EventKindToolFailed           EventKind = "tool_failed"
+	EventKindToolCompleted        EventKind = "tool_completed"
+	EventKindToolRecoveryRequired EventKind = "tool_recovery_required"
+	EventKindToolRecoveryResolved EventKind = "tool_recovery_resolved"
 )
 
 // AllValues returns all EventKind values.
@@ -977,6 +998,8 @@ func (EventKind) AllValues() []EventKind {
 		EventKindToolProgress,
 		EventKindToolFailed,
 		EventKindToolCompleted,
+		EventKindToolRecoveryRequired,
+		EventKindToolRecoveryResolved,
 	}
 }
 
@@ -1016,6 +1039,10 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindToolFailed:
 		return []byte(s), nil
 	case EventKindToolCompleted:
+		return []byte(s), nil
+	case EventKindToolRecoveryRequired:
+		return []byte(s), nil
+	case EventKindToolRecoveryResolved:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -1075,6 +1102,12 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindToolCompleted:
 		*s = EventKindToolCompleted
+		return nil
+	case EventKindToolRecoveryRequired:
+		*s = EventKindToolRecoveryRequired
+		return nil
+	case EventKindToolRecoveryResolved:
+		*s = EventKindToolRecoveryResolved
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1979,6 +2012,51 @@ func (o NilPendingTimer) Or(d PendingTimer) PendingTimer {
 	return d
 }
 
+// NewNilPendingToolRecovery returns new NilPendingToolRecovery with value set to v.
+func NewNilPendingToolRecovery(v PendingToolRecovery) NilPendingToolRecovery {
+	return NilPendingToolRecovery{
+		Value: v,
+	}
+}
+
+// NilPendingToolRecovery is nullable PendingToolRecovery.
+type NilPendingToolRecovery struct {
+	Value PendingToolRecovery
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilPendingToolRecovery) SetTo(v PendingToolRecovery) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilPendingToolRecovery) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilPendingToolRecovery) SetToNull() {
+	o.Null = true
+	var v PendingToolRecovery
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilPendingToolRecovery) Get() (v PendingToolRecovery, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilPendingToolRecovery) Or(d PendingToolRecovery) PendingToolRecovery {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilPendingUserInput returns new NilPendingUserInput with value set to v.
 func NewNilPendingUserInput(v PendingUserInput) NilPendingUserInput {
 	return NilPendingUserInput{
@@ -2199,6 +2277,52 @@ func (o OptFloat64) Get() (v float64, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptFloat64) Or(d float64) float64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptInt returns new OptInt with value set to v.
+func NewOptInt(v int) OptInt {
+	return OptInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt is optional int.
+type OptInt struct {
+	Value int
+	Set   bool
+}
+
+// IsSet returns true if OptInt was set.
+func (o OptInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt) SetTo(v int) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt) Get() (v int, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt) Or(d int) int {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2641,6 +2765,80 @@ func (s *PendingTimer) SetDurationSeconds(val int64) {
 // SetReason sets the value of Reason.
 func (s *PendingTimer) SetReason(val string) {
 	s.Reason = val
+}
+
+// Ref: #/components/schemas/PendingToolRecovery
+type PendingToolRecovery struct {
+	RecoveryId string                    `json:"recoveryId"`
+	Calls      []PendingToolRecoveryCall `json:"calls"`
+}
+
+// GetRecoveryId returns the value of RecoveryId.
+func (s *PendingToolRecovery) GetRecoveryId() string {
+	return s.RecoveryId
+}
+
+// GetCalls returns the value of Calls.
+func (s *PendingToolRecovery) GetCalls() []PendingToolRecoveryCall {
+	return s.Calls
+}
+
+// SetRecoveryId sets the value of RecoveryId.
+func (s *PendingToolRecovery) SetRecoveryId(val string) {
+	s.RecoveryId = val
+}
+
+// SetCalls sets the value of Calls.
+func (s *PendingToolRecovery) SetCalls(val []PendingToolRecoveryCall) {
+	s.Calls = val
+}
+
+// Ref: #/components/schemas/PendingToolRecoveryCall
+type PendingToolRecoveryCall struct {
+	CallId        CallID   `json:"callId"`
+	ToolName      ToolName `json:"toolName"`
+	ArgumentsJson string   `json:"argumentsJson"`
+	ErrorType     string   `json:"errorType"`
+}
+
+// GetCallId returns the value of CallId.
+func (s *PendingToolRecoveryCall) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetToolName returns the value of ToolName.
+func (s *PendingToolRecoveryCall) GetToolName() ToolName {
+	return s.ToolName
+}
+
+// GetArgumentsJson returns the value of ArgumentsJson.
+func (s *PendingToolRecoveryCall) GetArgumentsJson() string {
+	return s.ArgumentsJson
+}
+
+// GetErrorType returns the value of ErrorType.
+func (s *PendingToolRecoveryCall) GetErrorType() string {
+	return s.ErrorType
+}
+
+// SetCallId sets the value of CallId.
+func (s *PendingToolRecoveryCall) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetToolName sets the value of ToolName.
+func (s *PendingToolRecoveryCall) SetToolName(val ToolName) {
+	s.ToolName = val
+}
+
+// SetArgumentsJson sets the value of ArgumentsJson.
+func (s *PendingToolRecoveryCall) SetArgumentsJson(val string) {
+	s.ArgumentsJson = val
+}
+
+// SetErrorType sets the value of ErrorType.
+func (s *PendingToolRecoveryCall) SetErrorType(val string) {
+	s.ErrorType = val
 }
 
 // Ref: #/components/schemas/PendingUserInput
@@ -3339,6 +3537,70 @@ func (s *RecentEvents) SetEvents(val []StreamEvent) {
 
 func (*RecentEvents) listRecentEventsRes() {}
 
+type ResolveToolRecoveryBadRequest Problem
+
+func (*ResolveToolRecoveryBadRequest) resolveToolRecoveryRes() {}
+
+type ResolveToolRecoveryConflict Problem
+
+func (*ResolveToolRecoveryConflict) resolveToolRecoveryRes() {}
+
+type ResolveToolRecoveryNotFound Problem
+
+func (*ResolveToolRecoveryNotFound) resolveToolRecoveryRes() {}
+
+// Ref: #/components/schemas/ResolveToolRecoveryRequest
+type ResolveToolRecoveryRequest struct {
+	FlowId     FlowID                 `json:"flowId"`
+	RecoveryId string                 `json:"recoveryId"`
+	Resolution ToolRecoveryResolution `json:"resolution"`
+	Decisions  []ToolRecoveryDecision `json:"decisions"`
+}
+
+// GetFlowId returns the value of FlowId.
+func (s *ResolveToolRecoveryRequest) GetFlowId() FlowID {
+	return s.FlowId
+}
+
+// GetRecoveryId returns the value of RecoveryId.
+func (s *ResolveToolRecoveryRequest) GetRecoveryId() string {
+	return s.RecoveryId
+}
+
+// GetResolution returns the value of Resolution.
+func (s *ResolveToolRecoveryRequest) GetResolution() ToolRecoveryResolution {
+	return s.Resolution
+}
+
+// GetDecisions returns the value of Decisions.
+func (s *ResolveToolRecoveryRequest) GetDecisions() []ToolRecoveryDecision {
+	return s.Decisions
+}
+
+// SetFlowId sets the value of FlowId.
+func (s *ResolveToolRecoveryRequest) SetFlowId(val FlowID) {
+	s.FlowId = val
+}
+
+// SetRecoveryId sets the value of RecoveryId.
+func (s *ResolveToolRecoveryRequest) SetRecoveryId(val string) {
+	s.RecoveryId = val
+}
+
+// SetResolution sets the value of Resolution.
+func (s *ResolveToolRecoveryRequest) SetResolution(val ToolRecoveryResolution) {
+	s.Resolution = val
+}
+
+// SetDecisions sets the value of Decisions.
+func (s *ResolveToolRecoveryRequest) SetDecisions(val []ToolRecoveryDecision) {
+	s.Decisions = val
+}
+
+type ResolveToolRecoveryServiceUnavailable Problem
+
+func (*ResolveToolRecoveryServiceUnavailable) resolveToolRecoveryRes() {}
+
 type ResumeToken string
 
 type RunID string
@@ -3443,6 +3705,7 @@ type StartAgentRequest struct {
 	CompactionTriggerFraction OptFloat64   `json:"compactionTriggerFraction"`
 	CompactionKeepFraction    OptFloat64   `json:"compactionKeepFraction"`
 	MessageRetentionLimit     int          `json:"messageRetentionLimit"`
+	MaxParallelToolCalls      OptInt       `json:"maxParallelToolCalls"`
 	McpEnabled                bool         `json:"mcpEnabled"`
 	EnabledMcpServers         []string     `json:"enabledMcpServers"`
 	EnabledTools              []ToolName   `json:"enabledTools"`
@@ -3491,6 +3754,11 @@ func (s *StartAgentRequest) GetCompactionKeepFraction() OptFloat64 {
 // GetMessageRetentionLimit returns the value of MessageRetentionLimit.
 func (s *StartAgentRequest) GetMessageRetentionLimit() int {
 	return s.MessageRetentionLimit
+}
+
+// GetMaxParallelToolCalls returns the value of MaxParallelToolCalls.
+func (s *StartAgentRequest) GetMaxParallelToolCalls() OptInt {
+	return s.MaxParallelToolCalls
 }
 
 // GetMcpEnabled returns the value of McpEnabled.
@@ -3551,6 +3819,11 @@ func (s *StartAgentRequest) SetCompactionKeepFraction(val OptFloat64) {
 // SetMessageRetentionLimit sets the value of MessageRetentionLimit.
 func (s *StartAgentRequest) SetMessageRetentionLimit(val int) {
 	s.MessageRetentionLimit = val
+}
+
+// SetMaxParallelToolCalls sets the value of MaxParallelToolCalls.
+func (s *StartAgentRequest) SetMaxParallelToolCalls(val OptInt) {
+	s.MaxParallelToolCalls = val
 }
 
 // SetMcpEnabled sets the value of McpEnabled.
@@ -3823,6 +4096,116 @@ func (s *ToolCall) SetArgumentsJson(val string) {
 }
 
 type ToolName string
+
+// Ref: #/components/schemas/ToolRecoveryAction
+type ToolRecoveryAction string
+
+const (
+	ToolRecoveryActionRetry               ToolRecoveryAction = "retry"
+	ToolRecoveryActionContinueWithUnknown ToolRecoveryAction = "continue_with_unknown"
+)
+
+// AllValues returns all ToolRecoveryAction values.
+func (ToolRecoveryAction) AllValues() []ToolRecoveryAction {
+	return []ToolRecoveryAction{
+		ToolRecoveryActionRetry,
+		ToolRecoveryActionContinueWithUnknown,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ToolRecoveryAction) MarshalText() ([]byte, error) {
+	switch s {
+	case ToolRecoveryActionRetry:
+		return []byte(s), nil
+	case ToolRecoveryActionContinueWithUnknown:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ToolRecoveryAction) UnmarshalText(data []byte) error {
+	switch ToolRecoveryAction(data) {
+	case ToolRecoveryActionRetry:
+		*s = ToolRecoveryActionRetry
+		return nil
+	case ToolRecoveryActionContinueWithUnknown:
+		*s = ToolRecoveryActionContinueWithUnknown
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ToolRecoveryDecision
+type ToolRecoveryDecision struct {
+	CallId CallID             `json:"callId"`
+	Action ToolRecoveryAction `json:"action"`
+}
+
+// GetCallId returns the value of CallId.
+func (s *ToolRecoveryDecision) GetCallId() CallID {
+	return s.CallId
+}
+
+// GetAction returns the value of Action.
+func (s *ToolRecoveryDecision) GetAction() ToolRecoveryAction {
+	return s.Action
+}
+
+// SetCallId sets the value of CallId.
+func (s *ToolRecoveryDecision) SetCallId(val CallID) {
+	s.CallId = val
+}
+
+// SetAction sets the value of Action.
+func (s *ToolRecoveryDecision) SetAction(val ToolRecoveryAction) {
+	s.Action = val
+}
+
+// Ref: #/components/schemas/ToolRecoveryResolution
+type ToolRecoveryResolution string
+
+const (
+	ToolRecoveryResolutionResume ToolRecoveryResolution = "resume"
+	ToolRecoveryResolutionStop   ToolRecoveryResolution = "stop"
+)
+
+// AllValues returns all ToolRecoveryResolution values.
+func (ToolRecoveryResolution) AllValues() []ToolRecoveryResolution {
+	return []ToolRecoveryResolution{
+		ToolRecoveryResolutionResume,
+		ToolRecoveryResolutionStop,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ToolRecoveryResolution) MarshalText() ([]byte, error) {
+	switch s {
+	case ToolRecoveryResolutionResume:
+		return []byte(s), nil
+	case ToolRecoveryResolutionStop:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ToolRecoveryResolution) UnmarshalText(data []byte) error {
+	switch ToolRecoveryResolution(data) {
+	case ToolRecoveryResolutionResume:
+		*s = ToolRecoveryResolutionResume
+		return nil
+	case ToolRecoveryResolutionStop:
+		*s = ToolRecoveryResolutionStop
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
 
 // Ref: #/components/schemas/UserInputAnswer
 type UserInputAnswer struct {

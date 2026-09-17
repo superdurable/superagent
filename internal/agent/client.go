@@ -175,12 +175,15 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 	if err := validateMessageID(request.MessageID); err != nil {
 		return err
 	}
-	var accepted bool
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, &accepted, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-		LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
-	}); err != nil {
+	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, accepted, dex.InvokeOptions{
+			Timeout:         client.commandTimeout,
+			IsTransactional: true,
+			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
+			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
+		})
+	})
+	if err != nil {
 		return err
 	}
 	if !accepted {
@@ -442,6 +445,48 @@ func (client *Client) ApproveTool(ctx context.Context, flowID FlowID, request To
 		return err
 	}
 	return ensureAccepted(accepted, CommandApproveTool)
+}
+
+// ResolveToolRecovery invokes the durable command for one exact recovery revision.
+func (client *Client) ResolveToolRecovery(
+	ctx context.Context,
+	flowID FlowID,
+	request ResolveToolRecoveryRequest,
+) error {
+	if err := validateFlowID(flowID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(request.RecoveryID)) == "" {
+		return errors.New("recovery ID must not be empty")
+	}
+	if err := request.Resolution.Validate(); err != nil {
+		return err
+	}
+	for _, decision := range request.Decisions {
+		if strings.TrimSpace(string(decision.CallID)) == "" {
+			return errors.New("recovery decision call ID must not be empty")
+		}
+		if err := decision.Action.Validate(); err != nil {
+			return err
+		}
+	}
+	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
+		return client.sdk.InvokeRPC(
+			ctx,
+			string(flowID),
+			client.flow.ResolveToolRecovery,
+			request,
+			accepted,
+			dex.InvokeOptions{
+				Timeout:        client.commandTimeout,
+				LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
+			},
+		)
+	})
+	if err != nil {
+		return err
+	}
+	return ensureAccepted(accepted, CommandResolveToolRecovery)
 }
 
 // ExecutePlan invokes the durable ExecutePlan command.

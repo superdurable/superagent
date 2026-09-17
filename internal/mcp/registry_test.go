@@ -60,7 +60,9 @@ func TestRegisteredToolTrustsReadOnlyAnnotationOnlyWhenConfigured(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !untrusted.Definition.RequiresApproval || trusted.Definition.RequiresApproval || trusted.Definition.MaximumAttempts != 3 {
+	if !untrusted.Definition.RequiresApproval || trusted.Definition.RequiresApproval ||
+		trusted.Definition.MaximumAttempts != 3 || !trusted.Definition.SupportsParallelExecution ||
+		trusted.Definition.RetryExhaustionPolicy != "manual_recovery" {
 		t.Fatalf("untrusted = %+v, trusted = %+v", untrusted.Definition, trusted.Definition)
 	}
 }

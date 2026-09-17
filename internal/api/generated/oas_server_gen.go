@@ -79,6 +79,12 @@ type Handler interface {
 	//
 	// GET /products/ai-agent/events
 	ReadEvent(ctx context.Context, params ReadEventParams) (ReadEventRes, error)
+	// ResolveToolRecovery implements resolveToolRecovery operation.
+	//
+	// Resolve one exact pending manual tool recovery.
+	//
+	// POST /products/ai-agent/tool-recoveries
+	ResolveToolRecovery(ctx context.Context, req *ResolveToolRecoveryRequest) (ResolveToolRecoveryRes, error)
 	// SendMessage implements sendMessage operation.
 	//
 	// Queue a user message.

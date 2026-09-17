@@ -17,6 +17,7 @@ const (
 	GetReadinessOperation             OperationName = "GetReadiness"
 	ListRecentEventsOperation         OperationName = "ListRecentEvents"
 	ReadEventOperation                OperationName = "ReadEvent"
+	ResolveToolRecoveryOperation      OperationName = "ResolveToolRecovery"
 	SendMessageOperation              OperationName = "SendMessage"
 	StartAgentOperation               OperationName = "StartAgent"
 	SteerQueuedMessageOperation       OperationName = "SteerQueuedMessage"

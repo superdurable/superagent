@@ -41,6 +41,10 @@ type ReadEventRes interface {
 	readEventRes()
 }
 
+type ResolveToolRecoveryRes interface {
+	resolveToolRecoveryRes()
+}
+
 type SendMessageRes interface {
 	sendMessageRes()
 }

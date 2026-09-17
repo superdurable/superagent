@@ -42,6 +42,7 @@ type AgentService interface {
 	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
 	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
 	ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error
+	ResolveToolRecovery(context.Context, agent.FlowID, agent.ResolveToolRecoveryRequest) error
 	ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error
 	ReadEvent(context.Context, agent.FlowID, agent.EventStream, agent.ResumeToken) (agent.StreamEvent, error)
 	ListRecentEvents(context.Context, agent.FlowID, agent.EventStream, int) ([]agent.StreamEvent, error)
@@ -168,6 +169,7 @@ func (handler *Handler) StartAgent(ctx context.Context, request *transportapi.St
 	}
 	config.CompactionTriggerFraction = request.CompactionTriggerFraction.Or(config.CompactionTriggerFraction)
 	config.CompactionKeepFraction = request.CompactionKeepFraction.Or(config.CompactionKeepFraction)
+	config.MaxParallelToolCalls = request.MaxParallelToolCalls.Or(config.MaxParallelToolCalls)
 	if request.CompactionModel.IsSet() && !request.CompactionModel.IsNull() {
 		compactionModel, qualifyErr := qualifyModel(provider, request.CompactionModel.Value)
 		if qualifyErr != nil {
@@ -335,6 +337,29 @@ func (handler *Handler) ApproveTool(ctx context.Context, request *transportapi.T
 	})
 	if err != nil {
 		return handler.approveToolError(ctx, agent.FlowID(request.FlowId), err), nil
+	}
+	return accepted(), nil
+}
+
+// ResolveToolRecovery durably resolves one exact pending tool recovery.
+func (handler *Handler) ResolveToolRecovery(
+	ctx context.Context,
+	request *transportapi.ResolveToolRecoveryRequest,
+) (transportapi.ResolveToolRecoveryRes, error) {
+	decisions := make([]agent.ToolRecoveryDecision, 0, len(request.Decisions))
+	for _, decision := range request.Decisions {
+		decisions = append(decisions, agent.ToolRecoveryDecision{
+			CallID: agent.CallID(decision.CallId),
+			Action: agent.ToolRecoveryAction(decision.Action),
+		})
+	}
+	err := handler.agent.ResolveToolRecovery(ctx, agent.FlowID(request.FlowId), agent.ResolveToolRecoveryRequest{
+		RecoveryID: agent.RecoveryID(request.RecoveryId),
+		Resolution: agent.ToolRecoveryResolution(request.Resolution),
+		Decisions:  decisions,
+	})
+	if err != nil {
+		return handler.resolveToolRecoveryError(ctx, agent.FlowID(request.FlowId), err), nil
 	}
 	return accepted(), nil
 }
@@ -648,6 +673,7 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 		LastSequence:               int64(description.LastSequence),
 		SummarizedThroughSequence:  int64(description.SummarizedThroughSequence),
 		PendingApproval:            transportOptionalPendingApproval(description.PendingApproval),
+		PendingToolRecovery:        transportOptionalPendingToolRecovery(description.PendingToolRecovery),
 		PendingTimer:               transportOptionalPendingTimer(description.PendingTimer),
 		PendingUserInput:           transportOptionalPendingUserInput(description.PendingUserInput),
 		Plan:                       plan,
@@ -657,6 +683,28 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 		AvailableMcpServers:        availableMCPServers,
 		AvailableTools:             availableTools,
 	}, nil
+}
+
+func transportOptionalPendingToolRecovery(pending *agent.PendingToolRecovery) transportapi.NilPendingToolRecovery {
+	result := transportapi.NilPendingToolRecovery{}
+	if pending == nil {
+		result.SetToNull()
+		return result
+	}
+	calls := make([]transportapi.PendingToolRecoveryCall, 0, len(pending.Calls))
+	for _, call := range pending.Calls {
+		calls = append(calls, transportapi.PendingToolRecoveryCall{
+			CallId:        transportapi.CallID(call.CallID),
+			ToolName:      transportapi.ToolName(call.ToolName),
+			ArgumentsJson: call.Arguments.String(),
+			ErrorType:     call.ErrorType,
+		})
+	}
+	result.SetTo(transportapi.PendingToolRecovery{
+		RecoveryId: string(pending.RecoveryID),
+		Calls:      calls,
+	})
+	return result
 }
 
 func transportPendingUserMessages(messages []agent.PendingUserMessage) []transportapi.PendingUserMessage {
@@ -808,6 +856,8 @@ func transportAgentStatus(status agent.AgentStatus) (transportapi.AgentStatus, e
 		return transportapi.AgentStatusRoutingTool, nil
 	case agent.AgentStatusWaitingForToolApproval:
 		return transportapi.AgentStatusWaitingForToolApproval, nil
+	case agent.AgentStatusWaitingForToolRecovery:
+		return transportapi.AgentStatusWaitingForToolRecovery, nil
 	case agent.AgentStatusExecutingTool:
 		return transportapi.AgentStatusExecutingTool, nil
 	case agent.AgentStatusWaitingForTimer:
@@ -1002,6 +1052,10 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindToolProgress, nil
 	case agent.EventKindToolFailed:
 		return transportapi.EventKindToolFailed, nil
+	case agent.EventKindToolRecoveryRequired:
+		return transportapi.EventKindToolRecoveryRequired, nil
+	case agent.EventKindToolRecoveryResolved:
+		return transportapi.EventKindToolRecoveryResolved, nil
 	case agent.EventKindToolCompleted:
 		return transportapi.EventKindToolCompleted, nil
 	default:
@@ -1138,6 +1192,23 @@ func (handler *Handler) approveToolError(ctx context.Context, flowID agent.FlowI
 		return (*transportapi.ApproveToolConflict)(&problem)
 	default:
 		return (*transportapi.ApproveToolServiceUnavailable)(&problem)
+	}
+}
+
+func (handler *Handler) resolveToolRecoveryError(
+	ctx context.Context,
+	flowID agent.FlowID,
+	err error,
+) transportapi.ResolveToolRecoveryRes {
+	handler.logFailure(ctx, flowID, err)
+	problem, kind := commandProblem(err)
+	switch kind {
+	case failureNotFound:
+		return (*transportapi.ResolveToolRecoveryNotFound)(&problem)
+	case failureConflict:
+		return (*transportapi.ResolveToolRecoveryConflict)(&problem)
+	default:
+		return (*transportapi.ResolveToolRecoveryServiceUnavailable)(&problem)
 	}
 }
 

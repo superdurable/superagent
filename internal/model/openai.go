@@ -88,7 +88,7 @@ func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelReq
 			Summary: shared.ReasoningSummaryAuto,
 		},
 		Store:             openai.Bool(false),
-		ParallelToolCalls: openai.Bool(false),
+		ParallelToolCalls: openai.Bool(true),
 		Tools:             tools,
 	}
 	if request.ForcedTool != "" {

@@ -376,6 +376,10 @@ func (s *AgentDescription) encodeFields(e *jx.Encoder) {
 		s.PendingApproval.Encode(e)
 	}
 	{
+		e.FieldStart("pendingToolRecovery")
+		s.PendingToolRecovery.Encode(e)
+	}
+	{
 		e.FieldStart("pendingTimer")
 		s.PendingTimer.Encode(e)
 	}
@@ -417,7 +421,7 @@ func (s *AgentDescription) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfAgentDescription = [16]string{
+var jsonFieldsNameOfAgentDescription = [17]string{
 	0:  "status",
 	1:  "waitingInputRound",
 	2:  "model",
@@ -426,14 +430,15 @@ var jsonFieldsNameOfAgentDescription = [16]string{
 	5:  "lastSequence",
 	6:  "summarizedThroughSequence",
 	7:  "pendingApproval",
-	8:  "pendingTimer",
-	9:  "pendingUserInput",
-	10: "plan",
-	11: "isPlanExecutionRequested",
-	12: "pendingQueuedMessageCount",
-	13: "pendingSteeredMessageCount",
-	14: "availableMcpServers",
-	15: "availableTools",
+	8:  "pendingToolRecovery",
+	9:  "pendingTimer",
+	10: "pendingUserInput",
+	11: "plan",
+	12: "isPlanExecutionRequested",
+	13: "pendingQueuedMessageCount",
+	14: "pendingSteeredMessageCount",
+	15: "availableMcpServers",
+	16: "availableTools",
 }
 
 // Decode decodes AgentDescription from json.
@@ -441,7 +446,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode AgentDescription to nil")
 	}
-	var requiredBitSet [2]uint8
+	var requiredBitSet [3]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -535,8 +540,18 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"pendingApproval\"")
 			}
-		case "pendingTimer":
+		case "pendingToolRecovery":
 			requiredBitSet[1] |= 1 << 0
+			if err := func() error {
+				if err := s.PendingToolRecovery.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"pendingToolRecovery\"")
+			}
+		case "pendingTimer":
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				if err := s.PendingTimer.Decode(d); err != nil {
 					return err
@@ -546,7 +561,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"pendingTimer\"")
 			}
 		case "pendingUserInput":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				if err := s.PendingUserInput.Decode(d); err != nil {
 					return err
@@ -556,7 +571,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"pendingUserInput\"")
 			}
 		case "plan":
-			requiredBitSet[1] |= 1 << 2
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				if err := s.Plan.Decode(d); err != nil {
 					return err
@@ -566,7 +581,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"plan\"")
 			}
 		case "isPlanExecutionRequested":
-			requiredBitSet[1] |= 1 << 3
+			requiredBitSet[1] |= 1 << 4
 			if err := func() error {
 				v, err := d.Bool()
 				s.IsPlanExecutionRequested = bool(v)
@@ -578,7 +593,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"isPlanExecutionRequested\"")
 			}
 		case "pendingQueuedMessageCount":
-			requiredBitSet[1] |= 1 << 4
+			requiredBitSet[1] |= 1 << 5
 			if err := func() error {
 				v, err := d.Int()
 				s.PendingQueuedMessageCount = int(v)
@@ -590,7 +605,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"pendingQueuedMessageCount\"")
 			}
 		case "pendingSteeredMessageCount":
-			requiredBitSet[1] |= 1 << 5
+			requiredBitSet[1] |= 1 << 6
 			if err := func() error {
 				v, err := d.Int()
 				s.PendingSteeredMessageCount = int(v)
@@ -602,7 +617,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"pendingSteeredMessageCount\"")
 			}
 		case "availableMcpServers":
-			requiredBitSet[1] |= 1 << 6
+			requiredBitSet[1] |= 1 << 7
 			if err := func() error {
 				s.AvailableMcpServers = make([]string, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -622,7 +637,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"availableMcpServers\"")
 			}
 		case "availableTools":
-			requiredBitSet[1] |= 1 << 7
+			requiredBitSet[2] |= 1 << 0
 			if err := func() error {
 				s.AvailableTools = make([]ToolName, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -648,9 +663,10 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [2]uint8{
+	for i, mask := range [3]uint8{
 		0b11111111,
 		0b11111111,
+		0b00000001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1510,6 +1526,8 @@ func (s *AgentStatus) Decode(d *jx.Decoder) error {
 		*s = AgentStatusRoutingTool
 	case AgentStatusWaitingForToolApproval:
 		*s = AgentStatusWaitingForToolApproval
+	case AgentStatusWaitingForToolRecovery:
+		*s = AgentStatusWaitingForToolRecovery
 	case AgentStatusExecutingTool:
 		*s = AgentStatusExecutingTool
 	case AgentStatusWaitingForTimer:
@@ -2416,6 +2434,10 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindToolFailed
 	case EventKindToolCompleted:
 		*s = EventKindToolCompleted
+	case EventKindToolRecoveryRequired:
+		*s = EventKindToolRecoveryRequired
+	case EventKindToolRecoveryResolved:
+		*s = EventKindToolRecoveryResolved
 	default:
 		*s = EventKind(v)
 	}
@@ -4016,6 +4038,50 @@ func (s *NilPendingTimer) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes PendingToolRecovery as json.
+func (o NilPendingToolRecovery) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes PendingToolRecovery from json.
+func (o *NilPendingToolRecovery) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilPendingToolRecovery to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v PendingToolRecovery
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilPendingToolRecovery) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilPendingToolRecovery) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes PendingUserInput as json.
 func (o NilPendingUserInput) Encode(e *jx.Encoder) {
 	if o.Null {
@@ -4225,6 +4291,41 @@ func (s OptFloat64) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptFloat64) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int as json.
+func (o OptInt) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Int(int(o.Value))
+}
+
+// Decode decodes int from json.
+func (o *OptInt) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptInt to nil")
+	}
+	o.Set = true
+	v, err := d.Int()
+	if err != nil {
+		return err
+	}
+	o.Value = int(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptInt) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptInt) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -4716,6 +4817,272 @@ func (s *PendingTimer) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *PendingTimer) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *PendingToolRecovery) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *PendingToolRecovery) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("recoveryId")
+		e.Str(s.RecoveryId)
+	}
+	{
+		e.FieldStart("calls")
+		e.ArrStart()
+		for _, elem := range s.Calls {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfPendingToolRecovery = [2]string{
+	0: "recoveryId",
+	1: "calls",
+}
+
+// Decode decodes PendingToolRecovery from json.
+func (s *PendingToolRecovery) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode PendingToolRecovery to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "recoveryId":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.RecoveryId = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"recoveryId\"")
+			}
+		case "calls":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Calls = make([]PendingToolRecoveryCall, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem PendingToolRecoveryCall
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Calls = append(s.Calls, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"calls\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode PendingToolRecovery")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfPendingToolRecovery) {
+					name = jsonFieldsNameOfPendingToolRecovery[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *PendingToolRecovery) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *PendingToolRecovery) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *PendingToolRecoveryCall) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *PendingToolRecoveryCall) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("callId")
+		s.CallId.Encode(e)
+	}
+	{
+		e.FieldStart("toolName")
+		s.ToolName.Encode(e)
+	}
+	{
+		e.FieldStart("argumentsJson")
+		e.Str(s.ArgumentsJson)
+	}
+	{
+		e.FieldStart("errorType")
+		e.Str(s.ErrorType)
+	}
+}
+
+var jsonFieldsNameOfPendingToolRecoveryCall = [4]string{
+	0: "callId",
+	1: "toolName",
+	2: "argumentsJson",
+	3: "errorType",
+}
+
+// Decode decodes PendingToolRecoveryCall from json.
+func (s *PendingToolRecoveryCall) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode PendingToolRecoveryCall to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "callId":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.CallId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"callId\"")
+			}
+		case "toolName":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.ToolName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"toolName\"")
+			}
+		case "argumentsJson":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Str()
+				s.ArgumentsJson = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"argumentsJson\"")
+			}
+		case "errorType":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.ErrorType = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"errorType\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode PendingToolRecoveryCall")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfPendingToolRecoveryCall) {
+					name = jsonFieldsNameOfPendingToolRecoveryCall[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *PendingToolRecoveryCall) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *PendingToolRecoveryCall) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -6668,6 +7035,311 @@ func (s *RecentEvents) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ResolveToolRecoveryBadRequest as json.
+func (s *ResolveToolRecoveryBadRequest) Encode(e *jx.Encoder) {
+	unwrapped := (*Problem)(s)
+
+	unwrapped.Encode(e)
+}
+
+// Decode decodes ResolveToolRecoveryBadRequest from json.
+func (s *ResolveToolRecoveryBadRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ResolveToolRecoveryBadRequest to nil")
+	}
+	var unwrapped Problem
+	if err := func() error {
+		if err := unwrapped.Decode(d); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return errors.Wrap(err, "alias")
+	}
+	*s = ResolveToolRecoveryBadRequest(unwrapped)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ResolveToolRecoveryBadRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ResolveToolRecoveryBadRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ResolveToolRecoveryConflict as json.
+func (s *ResolveToolRecoveryConflict) Encode(e *jx.Encoder) {
+	unwrapped := (*Problem)(s)
+
+	unwrapped.Encode(e)
+}
+
+// Decode decodes ResolveToolRecoveryConflict from json.
+func (s *ResolveToolRecoveryConflict) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ResolveToolRecoveryConflict to nil")
+	}
+	var unwrapped Problem
+	if err := func() error {
+		if err := unwrapped.Decode(d); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return errors.Wrap(err, "alias")
+	}
+	*s = ResolveToolRecoveryConflict(unwrapped)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ResolveToolRecoveryConflict) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ResolveToolRecoveryConflict) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ResolveToolRecoveryNotFound as json.
+func (s *ResolveToolRecoveryNotFound) Encode(e *jx.Encoder) {
+	unwrapped := (*Problem)(s)
+
+	unwrapped.Encode(e)
+}
+
+// Decode decodes ResolveToolRecoveryNotFound from json.
+func (s *ResolveToolRecoveryNotFound) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ResolveToolRecoveryNotFound to nil")
+	}
+	var unwrapped Problem
+	if err := func() error {
+		if err := unwrapped.Decode(d); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return errors.Wrap(err, "alias")
+	}
+	*s = ResolveToolRecoveryNotFound(unwrapped)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ResolveToolRecoveryNotFound) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ResolveToolRecoveryNotFound) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ResolveToolRecoveryRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ResolveToolRecoveryRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("flowId")
+		s.FlowId.Encode(e)
+	}
+	{
+		e.FieldStart("recoveryId")
+		e.Str(s.RecoveryId)
+	}
+	{
+		e.FieldStart("resolution")
+		s.Resolution.Encode(e)
+	}
+	{
+		e.FieldStart("decisions")
+		e.ArrStart()
+		for _, elem := range s.Decisions {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfResolveToolRecoveryRequest = [4]string{
+	0: "flowId",
+	1: "recoveryId",
+	2: "resolution",
+	3: "decisions",
+}
+
+// Decode decodes ResolveToolRecoveryRequest from json.
+func (s *ResolveToolRecoveryRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ResolveToolRecoveryRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "flowId":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.FlowId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"flowId\"")
+			}
+		case "recoveryId":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.RecoveryId = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"recoveryId\"")
+			}
+		case "resolution":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Resolution.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"resolution\"")
+			}
+		case "decisions":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				s.Decisions = make([]ToolRecoveryDecision, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem ToolRecoveryDecision
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Decisions = append(s.Decisions, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"decisions\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ResolveToolRecoveryRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfResolveToolRecoveryRequest) {
+					name = jsonFieldsNameOfResolveToolRecoveryRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ResolveToolRecoveryRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ResolveToolRecoveryRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ResolveToolRecoveryServiceUnavailable as json.
+func (s *ResolveToolRecoveryServiceUnavailable) Encode(e *jx.Encoder) {
+	unwrapped := (*Problem)(s)
+
+	unwrapped.Encode(e)
+}
+
+// Decode decodes ResolveToolRecoveryServiceUnavailable from json.
+func (s *ResolveToolRecoveryServiceUnavailable) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ResolveToolRecoveryServiceUnavailable to nil")
+	}
+	var unwrapped Problem
+	if err := func() error {
+		if err := unwrapped.Decode(d); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return errors.Wrap(err, "alias")
+	}
+	*s = ResolveToolRecoveryServiceUnavailable(unwrapped)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ResolveToolRecoveryServiceUnavailable) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ResolveToolRecoveryServiceUnavailable) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ResumeToken as json.
 func (s ResumeToken) Encode(e *jx.Encoder) {
 	unwrapped := string(s)
@@ -7305,6 +7977,12 @@ func (s *StartAgentRequest) encodeFields(e *jx.Encoder) {
 		e.Int(s.MessageRetentionLimit)
 	}
 	{
+		if s.MaxParallelToolCalls.Set {
+			e.FieldStart("maxParallelToolCalls")
+			s.MaxParallelToolCalls.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("mcpEnabled")
 		e.Bool(s.McpEnabled)
 	}
@@ -7326,7 +8004,7 @@ func (s *StartAgentRequest) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfStartAgentRequest = [12]string{
+var jsonFieldsNameOfStartAgentRequest = [13]string{
 	0:  "flowId",
 	1:  "provider",
 	2:  "model",
@@ -7336,9 +8014,10 @@ var jsonFieldsNameOfStartAgentRequest = [12]string{
 	6:  "compactionTriggerFraction",
 	7:  "compactionKeepFraction",
 	8:  "messageRetentionLimit",
-	9:  "mcpEnabled",
-	10: "enabledMcpServers",
-	11: "enabledTools",
+	9:  "maxParallelToolCalls",
+	10: "mcpEnabled",
+	11: "enabledMcpServers",
+	12: "enabledTools",
 }
 
 // Decode decodes StartAgentRequest from json.
@@ -7449,8 +8128,18 @@ func (s *StartAgentRequest) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"messageRetentionLimit\"")
 			}
+		case "maxParallelToolCalls":
+			if err := func() error {
+				s.MaxParallelToolCalls.Reset()
+				if err := s.MaxParallelToolCalls.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"maxParallelToolCalls\"")
+			}
 		case "mcpEnabled":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				v, err := d.Bool()
 				s.McpEnabled = bool(v)
@@ -7462,7 +8151,7 @@ func (s *StartAgentRequest) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"mcpEnabled\"")
 			}
 		case "enabledMcpServers":
-			requiredBitSet[1] |= 1 << 2
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				s.EnabledMcpServers = make([]string, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -7482,7 +8171,7 @@ func (s *StartAgentRequest) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"enabledMcpServers\"")
 			}
 		case "enabledTools":
-			requiredBitSet[1] |= 1 << 3
+			requiredBitSet[1] |= 1 << 4
 			if err := func() error {
 				s.EnabledTools = make([]ToolName, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -7510,7 +8199,7 @@ func (s *StartAgentRequest) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b00101111,
-		0b00001111,
+		0b00011101,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -8325,6 +9014,195 @@ func (s ToolName) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ToolName) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ToolRecoveryAction as json.
+func (s ToolRecoveryAction) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ToolRecoveryAction from json.
+func (s *ToolRecoveryAction) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ToolRecoveryAction to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ToolRecoveryAction(v) {
+	case ToolRecoveryActionRetry:
+		*s = ToolRecoveryActionRetry
+	case ToolRecoveryActionContinueWithUnknown:
+		*s = ToolRecoveryActionContinueWithUnknown
+	default:
+		*s = ToolRecoveryAction(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ToolRecoveryAction) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ToolRecoveryAction) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ToolRecoveryDecision) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ToolRecoveryDecision) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("callId")
+		s.CallId.Encode(e)
+	}
+	{
+		e.FieldStart("action")
+		s.Action.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfToolRecoveryDecision = [2]string{
+	0: "callId",
+	1: "action",
+}
+
+// Decode decodes ToolRecoveryDecision from json.
+func (s *ToolRecoveryDecision) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ToolRecoveryDecision to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "callId":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.CallId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"callId\"")
+			}
+		case "action":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Action.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"action\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ToolRecoveryDecision")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfToolRecoveryDecision) {
+					name = jsonFieldsNameOfToolRecoveryDecision[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ToolRecoveryDecision) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ToolRecoveryDecision) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ToolRecoveryResolution as json.
+func (s ToolRecoveryResolution) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ToolRecoveryResolution from json.
+func (s *ToolRecoveryResolution) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ToolRecoveryResolution to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ToolRecoveryResolution(v) {
+	case ToolRecoveryResolutionResume:
+		*s = ToolRecoveryResolutionResume
+	case ToolRecoveryResolutionStop:
+		*s = ToolRecoveryResolutionStop
+	default:
+		*s = ToolRecoveryResolution(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ToolRecoveryResolution) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ToolRecoveryResolution) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
