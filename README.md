@@ -50,6 +50,11 @@ The optional `github.com/superdurable/superagent/model` package exposes the
 built-in provider router, provider adapters, and process-memory credential
 store. Embedders can use it without importing SuperAgent internals.
 
+The `github.com/superdurable/superagent/toolcontract` package exposes generated
+DTOs, compact schemas, and strict decoders for the built-in tools. Embedding
+applications can consume the exact provider and execution contracts without
+copying their JSON Schema.
+
 Embedding applications start a non-reusable `FlowID` with `Client.Start` and a
 typed `StartRequest`. `RuntimeMetadata` is an optional JSON object of at most
 16 KiB for trusted routing data. It is persisted across Worker replacement and

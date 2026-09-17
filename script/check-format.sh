@@ -10,6 +10,7 @@ unformatted_go=$(gofmt -l \
   "$repository_root/agent" \
   "$repository_root/cmd" \
   "$repository_root/internal" \
+  "$repository_root/toolcontract" \
   "$repository_root/script/testdata/public-api-consumer")
 if [ -n "$unformatted_go" ]; then
   printf '%s\n' "Go files require gofmt:" "$unformatted_go" >&2
