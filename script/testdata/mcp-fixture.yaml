@@ -14,3 +14,4 @@ servers:
         timeout_seconds: 10
         maximum_attempts: 2
         retry_total_seconds: 10
+        retry_exhaustion_policy: manual_recovery

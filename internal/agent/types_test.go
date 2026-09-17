@@ -29,8 +29,13 @@ func TestAgentConfigDefaultsValidate(t *testing.T) {
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if config.Model != DefaultModel || config.MaxContextTokens != 32_000 || config.MessageRetentionLimit != 1_000 {
+	if config.Model != DefaultModel || config.MaxContextTokens != 32_000 ||
+		config.MessageRetentionLimit != 1_000 || config.MaxParallelToolCalls != 4 {
 		t.Fatalf("unexpected defaults: %+v", config)
+	}
+	config.MaxParallelToolCalls = 0
+	if config.EffectiveMaxParallelToolCalls() != DefaultMaxParallelToolCalls {
+		t.Fatalf("zero-value parallel limit = %d", config.EffectiveMaxParallelToolCalls())
 	}
 }
 
@@ -47,6 +52,8 @@ func TestAgentConfigRejectsInvalidValues(t *testing.T) {
 		{"zero retention", func(config *AgentConfig) { config.MessageRetentionLimit = 0 }},
 		{"retention below current window", func(config *AgentConfig) { config.MessageRetentionLimit = 10 }},
 		{"retention not chunk aligned", func(config *AgentConfig) { config.MessageRetentionLimit = 25 }},
+		{"negative parallel calls", func(config *AgentConfig) { config.MaxParallelToolCalls = -1 }},
+		{"too many parallel calls", func(config *AgentConfig) { config.MaxParallelToolCalls = 33 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -634,6 +634,41 @@ pre {
 .timer-card small {
   color: #7a6a3c;
 }
+.recovery-card {
+  border-color: #e7b3ad;
+  background: #fff8f7;
+}
+.recovery-warning {
+  color: #7f312b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.recovery-calls {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.recovery-call {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border-color: #e7b3ad;
+  background: white;
+}
+.recovery-call legend {
+  padding: 0 5px;
+  font-weight: 700;
+}
+.recovery-call label {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+}
+.recovery-call pre {
+  overflow-x: auto;
+}
 .text-button {
   padding: 4px 2px;
   color: #4353c7;

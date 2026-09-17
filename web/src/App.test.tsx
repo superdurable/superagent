@@ -30,6 +30,7 @@ import {
   getPortal,
   listRecentEvents,
   readEvent,
+  resolveToolRecovery,
   sendMessage,
   startAgent,
   steerQueuedMessage,
@@ -53,6 +54,7 @@ vi.mock("./api/generated", async (importOriginal) => {
     getPortal: vi.fn(),
     listRecentEvents: vi.fn(),
     readEvent: vi.fn(),
+    resolveToolRecovery: vi.fn(),
     sendMessage: vi.fn(),
     startAgent: vi.fn(),
     steerQueuedMessage: vi.fn(),
@@ -92,6 +94,7 @@ const activeDescription: AgentDescription = {
   lastSequence: 0,
   summarizedThroughSequence: 0,
   pendingApproval: null,
+  pendingToolRecovery: null,
   pendingTimer: null,
   pendingUserInput: null,
   plan: null,
@@ -147,6 +150,7 @@ describe("App", () => {
     );
     vi.mocked(startAgent).mockResolvedValue({ flowId: "flow-created" });
     vi.mocked(sendMessage).mockResolvedValue({ accepted: true });
+    vi.mocked(resolveToolRecovery).mockResolvedValue({ accepted: true });
     vi.mocked(steerQueuedMessage).mockResolvedValue({
       messageId: "message-1",
       action: "steered",
@@ -301,6 +305,56 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
     expect(window.location.search).toBe("?flowId=flow-created");
+  });
+
+  it("restores manual tool recovery and submits one complete decision", async () => {
+    vi.mocked(getAgentSnapshot)
+      .mockResolvedValueOnce({
+        ...snapshot,
+        description: {
+          ...activeDescription,
+          status: AgentStatus.WAITING_FOR_TOOL_RECOVERY,
+          pendingToolRecovery: {
+            recoveryId: "recovery-2",
+            calls: [
+              {
+                callId: "call-1",
+                toolName: "local-tools.search",
+                argumentsJson: '{"query":"Dex"}',
+                errorType: "timeout",
+              },
+            ],
+          },
+        },
+      })
+      .mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/?flowId=flow-existing");
+
+    render(<App />);
+
+    const heading = await screen.findByRole("heading", {
+      name: "Execution outcome is unknown",
+    });
+    expect(heading).toHaveFocus();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Continue with unknown result" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply recovery decisions" }),
+    );
+
+    await waitFor(() => {
+      expect(resolveToolRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: {
+            flowId: "flow-existing",
+            recoveryId: "recovery-2",
+            resolution: "resume",
+            decisions: [{ callId: "call-1", action: "continue_with_unknown" }],
+          },
+        }),
+      );
+    });
   });
 
   it("steers a queued message by its stable Snapshot ID", async () => {

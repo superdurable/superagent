@@ -41,8 +41,41 @@ func TestLoadConfigAppliesSafeDefaults(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	policy := servers[0].Tools["query"]
-	if policy.TimeoutSeconds != 60 || policy.RetryTotalSeconds != 300 {
+	if policy.TimeoutSeconds != 60 || policy.RetryTotalSeconds != 300 ||
+		policy.RetryExhaustionPolicy != RetryExhaustionPolicyManualRecovery {
 		t.Fatalf("policy defaults = %+v", policy)
+	}
+}
+
+func TestLoadConfigAcceptsAutomaticUnknownRecovery(t *testing.T) {
+	path := writeConfig(t, `servers:
+  - name: search
+    transport: stdio
+    command: search-server
+    tools:
+      query:
+        retry_exhaustion_policy: continue_with_unknown
+`)
+	servers, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := servers[0].Tools["query"].RetryExhaustionPolicy; got != RetryExhaustionPolicyContinueWithUnknown {
+		t.Fatalf("retry exhaustion policy = %q", got)
+	}
+}
+
+func TestLoadConfigRejectsUnknownRetryExhaustionPolicy(t *testing.T) {
+	path := writeConfig(t, `servers:
+  - name: search
+    transport: stdio
+    command: search-server
+    tools:
+      query:
+        retry_exhaustion_policy: guess
+`)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("LoadConfig() error = nil")
 	}
 }
 

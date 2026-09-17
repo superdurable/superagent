@@ -285,6 +285,9 @@ func runStdioHelper(directory string) int {
 		request *mcpsdk.CallToolRequest,
 		input fixtureToolInput,
 	) (*mcpsdk.CallToolResult, fixtureToolOutput, error) {
+		if input.Value == "always fail" {
+			os.Exit(4)
+		}
 		if input.Value == "retry once" {
 			progressToken := fmt.Sprint(request.Params.Meta["progressToken"])
 			marker := filepath.Join(directory, fmt.Sprintf("retry-%x", sha256.Sum256([]byte(progressToken))))

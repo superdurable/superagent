@@ -25,6 +25,7 @@ import {
   getArchivedMessages,
   listRecentEvents,
   readEvent,
+  resolveToolRecovery,
   sendMessage,
   steerQueuedMessage,
   waitForWaitingInputRound,
@@ -426,6 +427,14 @@ export function Conversation({
       onApproveTool={(callId: CallId, approved) => {
         runCommand({ kind: "approve" }, (signal) =>
           approveTool({ body: { flowId, callId, approved }, signal }),
+        );
+      }}
+      onResolveToolRecovery={(recoveryId, resolution, decisions) => {
+        runCommand({ kind: "recover" }, (signal) =>
+          resolveToolRecovery({
+            body: { flowId, recoveryId, resolution, decisions },
+            signal,
+          }),
         );
       }}
       onMutateQueue={mutateQueue}

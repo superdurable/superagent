@@ -15,8 +15,9 @@ could not recover correctly across Worker loss.
 `ToolDefinition` policy is applied to `ExecuteToolWithRetry` through movement
 StepOptions. Each registry call performs one external attempt. Known business
 failures return a normal error result. Transient or ambiguous failures return a
-Go error and use Dex retry. Exhaustion routes to `RecoverToolExecution`, which
-records one unknown outcome and continues the Agent.
+Go error and use Dex retry. Exhaustion follows the tool definition's recovery
+policy. It defaults to the manual boundary introduced by ADR 0013; explicitly
+configured tools may route to `RecoverToolExecution` and continue with unknown.
 
 Approval and CallID remain stable across attempts. External effects promise
 recoverable at-least-once execution, not exactly-once execution.

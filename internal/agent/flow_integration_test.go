@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,6 +72,30 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 		tools.assertAttemptsForTestOnly(t, []int32{1}, ToolOutcomeKnownFailure)
 	})
 
+	t.Run("returned unknown is not retried and waits for recovery", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(0, false)
+		tools.returnedUnknown = true
+		tools.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-returned-unknown-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		pending := waitForPendingToolRecoveryForTestOnly(t, environment, flowID, "")
+		resolveSingleToolRecoveryForTestOnly(
+			t,
+			environment,
+			flowID,
+			pending,
+			ToolRecoveryActionContinueWithUnknown,
+		)
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertAttemptsForTestOnly(t, []int32{1}, ToolOutcomeUnknown)
+	})
+
 	t.Run("retry exhaustion records unknown and continues", func(t *testing.T) {
 		tools := newRetryToolRegistryForTestOnly(10, false)
 		tools.maximumAttempts = 2
@@ -91,6 +116,262 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 			return state.Status == AgentStatusWaitingForMessage && state.LastSequence >= 6
 		})
 	})
+
+	t.Run("retry exhaustion waits for manual recovery by default", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(10, false)
+		tools.maximumAttempts = 2
+		tools.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-manual-recovery-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description != nil &&
+				snapshot.Description.Status == AgentStatusWaitingForToolRecovery &&
+				snapshot.Description.PendingToolRecovery != nil
+		})
+		pending := snapshot.Description.PendingToolRecovery
+		if pending == nil || len(pending.Calls) != 1 {
+			t.Fatalf("pending recovery = %#v", pending)
+		}
+		for _, message := range snapshot.History.Messages {
+			if message.Message.Role == MessageRoleTool {
+				t.Fatalf("tool result committed before recovery: %#v", message)
+			}
+		}
+		if err := environment.agent.ResolveToolRecovery(t.Context(), flowID, ResolveToolRecoveryRequest{
+			RecoveryID: pending.RecoveryID,
+			Resolution: ToolRecoveryResolutionResume,
+			Decisions: []ToolRecoveryDecision{{
+				CallID: pending.Calls[0].CallID,
+				Action: ToolRecoveryActionContinueWithUnknown,
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertAttemptsForTestOnly(t, []int32{1, 2}, ToolOutcomeUnknown)
+	})
+
+	t.Run("manual retry survives replacement and starts a fresh retry execution", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(10, false)
+		tools.maximumAttempts = 2
+		tools.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-manual-retry-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		first := waitForPendingToolRecoveryForTestOnly(t, environment, flowID, "")
+		environment.replaceWorker(t, flowID)
+		resolveSingleToolRecoveryForTestOnly(t, environment, flowID, first, ToolRecoveryActionRetry)
+
+		second := waitForPendingToolRecoveryForTestOnly(t, environment, flowID, first.RecoveryID)
+		if second.Calls[0].CallID != first.Calls[0].CallID {
+			t.Fatalf("retry call ID = %q, want %q", second.Calls[0].CallID, first.Calls[0].CallID)
+		}
+		environment.replaceWorker(t, flowID)
+		tools.setFailuresRemainingForTestOnly(0)
+		resolveSingleToolRecoveryForTestOnly(t, environment, flowID, second, ToolRecoveryActionRetry)
+		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
+		tools.assertManualRetryAttemptsForTestOnly(t, []int32{1, 2, 1, 2, 1})
+	})
+
+	t.Run("manual stop records unknown without another model call", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(10, false)
+		tools.maximumAttempts = 1
+		tools.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-manual-stop-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		pending := waitForPendingToolRecoveryForTestOnly(t, environment, flowID, "")
+		if err := environment.agent.ResolveToolRecovery(t.Context(), flowID, ResolveToolRecoveryRequest{
+			RecoveryID: pending.RecoveryID,
+			Resolution: ToolRecoveryResolutionStop,
+			Decisions:  []ToolRecoveryDecision{},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage && len(state.PendingToolCalls) == 0
+		})
+		if state.LastSequence != 3 {
+			t.Fatalf("last sequence after stop = %d, want 3", state.LastSequence)
+		}
+		tools.assertAttemptsForTestOnly(t, []int32{1}, ToolOutcomeUnknown)
+	})
+
+	t.Run("steering abandons manual recovery and replans", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(10, false)
+		tools.maximumAttempts = 1
+		tools.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-recovery-steering-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		_ = waitForPendingToolRecoveryForTestOnly(t, environment, flowID, "")
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "replan after recovery"}); err != nil {
+			t.Fatal(err)
+		}
+		queued := waitForQueuedMessages(t, environment, flowID, 1)
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+			MessageID: queued[0].Value.MessageID,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description != nil &&
+				snapshot.Description.Status == AgentStatusWaitingForMessage &&
+				snapshot.Description.PendingToolRecovery == nil &&
+				historyHasMessage(
+					snapshot.History.Messages,
+					MessageRoleAssistant,
+					"integration response: replan after recovery",
+				)
+		})
+		if historyToolCountForTestOnly(snapshot) != 1 {
+			t.Fatalf("tool result count after steering = %d, want 1", historyToolCountForTestOnly(snapshot))
+		}
+		tools.assertAttemptsForTestOnly(t, []int32{1}, ToolOutcomeUnknown)
+	})
+
+	t.Run("recovery resolution and steering commit exclusively", func(t *testing.T) {
+		tools := newRetryToolRegistryForTestOnly(10, false)
+		tools.maximumAttempts = 1
+		tools.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+		environment := newAgentIntegrationEnvironment(t, integrationModel{}, tools)
+		flowID := FlowID("agent-tool-recovery-race-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+			t.Fatal(err)
+		}
+		pending := waitForPendingToolRecoveryForTestOnly(t, environment, flowID, "")
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "race replacement"}); err != nil {
+			t.Fatal(err)
+		}
+		queued := waitForQueuedMessages(t, environment, flowID, 1)
+		errorsByCommand := make(chan error, 2)
+		go func() {
+			errorsByCommand <- environment.agent.ResolveToolRecovery(t.Context(), flowID, ResolveToolRecoveryRequest{
+				RecoveryID: pending.RecoveryID,
+				Resolution: ToolRecoveryResolutionResume,
+				Decisions: []ToolRecoveryDecision{{
+					CallID: pending.Calls[0].CallID,
+					Action: ToolRecoveryActionContinueWithUnknown,
+				}},
+			})
+		}()
+		go func() {
+			errorsByCommand <- environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{
+				MessageID: queued[0].Value.MessageID,
+			})
+		}()
+		accepted := 0
+		for range 2 {
+			if err := <-errorsByCommand; err == nil {
+				accepted++
+			}
+		}
+		if accepted != 1 {
+			t.Fatalf("accepted concurrent recovery commands = %d, want 1", accepted)
+		}
+		waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description != nil &&
+				snapshot.Description.Status == AgentStatusWaitingForMessage &&
+				snapshot.Description.PendingToolRecovery == nil
+		})
+	})
+}
+
+func TestAgentParallelToolsIntegration(t *testing.T) {
+	tools := newParallelToolRegistryForTestOnly()
+	environment := newAgentIntegrationEnvironment(t, parallelIntegrationModel{integrationModel{}}, tools)
+	flowID := FlowID("agent-parallel-tools-" + randomLocalID(t))
+	config := NewAgentConfig()
+	config.MaxParallelToolCalls = 2
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/parallel"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForCompletedToolTurnForTestOnly(t, environment, flowID, 5)
+	if tools.maximumActive.Load() < 2 {
+		t.Fatalf("maximum concurrent tools = %d, want at least 2", tools.maximumActive.Load())
+	}
+	snapshot := readSnapshot(t, environment, flowID)
+	toolNames := []ToolName{}
+	for _, message := range snapshot.History.Messages {
+		if message.Message.Role == MessageRoleTool && message.Message.ToolName != nil {
+			toolNames = append(toolNames, *message.Message.ToolName)
+		}
+	}
+	if !slices.Equal(toolNames, []ToolName{"parallel_read_a", "parallel_read_b"}) {
+		t.Fatalf("tool history order = %q", toolNames)
+	}
+}
+
+func TestAgentParallelToolRecoveryIntegration(t *testing.T) {
+	tools := mixedParallelToolRegistryForTestOnly{}
+	environment := newAgentIntegrationEnvironment(t, mixedParallelIntegrationModel{integrationModel{}}, tools)
+	flowID := FlowID("agent-parallel-recovery-" + randomLocalID(t))
+	config := NewAgentConfig()
+	config.MaxParallelToolCalls = 4
+	if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/parallel-recovery"}); err != nil {
+		t.Fatal(err)
+	}
+	pending := waitForPendingToolRecoveryForTestOnly(t, environment, flowID, "")
+	if pending.Calls[0].ToolName != "parallel_manual_unknown" {
+		t.Fatalf("manual recovery calls = %#v", pending.Calls)
+	}
+	if snapshot := readSnapshot(t, environment, flowID); historyToolCountForTestOnly(snapshot) != 0 {
+		t.Fatalf("parallel batch committed before recovery: %#v", snapshot.History.Messages)
+	}
+	resolveSingleToolRecoveryForTestOnly(
+		t,
+		environment,
+		flowID,
+		pending,
+		ToolRecoveryActionContinueWithUnknown,
+	)
+	waitForCompletedToolTurnForTestOnly(t, environment, flowID, 7)
+	snapshot := readSnapshot(t, environment, flowID)
+	toolNames := []ToolName{}
+	for _, message := range snapshot.History.Messages {
+		if message.Message.Role == MessageRoleTool && message.Message.ToolName != nil {
+			toolNames = append(toolNames, *message.Message.ToolName)
+		}
+	}
+	want := []ToolName{
+		"parallel_success",
+		"parallel_known_failure",
+		"parallel_automatic_unknown",
+		"parallel_manual_unknown",
+	}
+	if !slices.Equal(toolNames, want) {
+		t.Fatalf("tool history order = %q, want %q", toolNames, want)
+	}
 }
 
 func TestAgentRejectsInvalidWriteTodosIntegration(t *testing.T) {
@@ -1206,7 +1487,9 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 		t.Fatal("waiting input round remained active after termination")
 	}
 
-	snapshot := readSnapshot(t, environment, flowID)
+	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.FlowStatus == FlowStatusTerminated
+	})
 	if snapshot.RunID != runID || snapshot.FlowStatus != FlowStatusTerminated {
 		t.Fatalf("terminal Snapshot identity = %#v", snapshot)
 	}
@@ -2110,19 +2393,193 @@ func integrationActivePlanTaskStatus(messages []AgentMessage) (TaskStatus, bool)
 }
 
 type retryToolRegistryForTestOnly struct {
-	mutex             sync.Mutex
-	failuresRemaining int
-	knownFailure      bool
-	maximumAttempts   int
-	invocations       []ToolInvocation
-	returnedOutcomes  []ToolOutcome
+	mutex                 sync.Mutex
+	failuresRemaining     int
+	knownFailure          bool
+	returnedUnknown       bool
+	maximumAttempts       int
+	retryExhaustionPolicy ToolRetryExhaustionPolicy
+	invocations           []ToolInvocation
+	returnedOutcomes      []ToolOutcome
+}
+
+type parallelIntegrationModel struct {
+	integrationModel
+}
+
+func (parallelIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	if integrationLastUserContent(request.Messages) != "/parallel" {
+		return integrationModel{}.Complete(ctx, request)
+	}
+	if last := integrationLastConversationMessage(request.Messages); last != nil && last.Role == MessageRoleTool {
+		return integrationModel{}.Complete(ctx, request)
+	}
+	if err := request.WriteAssistant("reading in parallel"); err != nil {
+		return ModelReply{}, err
+	}
+	return ModelReply{
+		Content: "reading in parallel",
+		ToolCalls: []ToolCall{
+			integrationToolCall(request, "parallel_read_a", MustJSONObject(`{}`)),
+			integrationToolCall(request, "parallel_read_b", MustJSONObject(`{}`)),
+		},
+	}, nil
+}
+
+type mixedParallelIntegrationModel struct {
+	integrationModel
+}
+
+func (mixedParallelIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+	if integrationLastUserContent(request.Messages) != "/parallel-recovery" {
+		return integrationModel{}.Complete(ctx, request)
+	}
+	if last := integrationLastConversationMessage(request.Messages); last != nil && last.Role == MessageRoleTool {
+		return integrationModel{}.Complete(ctx, request)
+	}
+	if err := request.WriteAssistant("reading mixed parallel results"); err != nil {
+		return ModelReply{}, err
+	}
+	names := []ToolName{
+		"parallel_success",
+		"parallel_known_failure",
+		"parallel_automatic_unknown",
+		"parallel_manual_unknown",
+	}
+	calls := make([]ToolCall, 0, len(names))
+	for _, name := range names {
+		calls = append(calls, integrationToolCall(request, name, MustJSONObject(`{}`)))
+	}
+	return ModelReply{Content: "reading mixed parallel results", ToolCalls: calls}, nil
+}
+
+type mixedParallelToolRegistryForTestOnly struct{}
+
+func (mixedParallelToolRegistryForTestOnly) ServerNames() []string { return []string{"parallel"} }
+
+func (registry mixedParallelToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
+	definitions := registry.Definitions(nil, nil)
+	result := make([]RegisteredTool, 0, len(definitions))
+	for _, definition := range definitions {
+		result = append(result, RegisteredTool{
+			ServerName: "parallel",
+			RemoteName: string(definition.Name),
+			Definition: definition,
+		})
+	}
+	return result
+}
+
+func (mixedParallelToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
+	names := []ToolName{
+		"parallel_success",
+		"parallel_known_failure",
+		"parallel_automatic_unknown",
+		"parallel_manual_unknown",
+	}
+	definitions := make([]ToolDefinition, 0, len(names))
+	for _, name := range names {
+		definition := parallelDefinitionForTestOnly(name)
+		if name == "parallel_automatic_unknown" {
+			definition.RetryExhaustionPolicy = ToolRetryExhaustionPolicyContinueWithUnknown
+		}
+		definitions = append(definitions, definition)
+	}
+	return definitions
+}
+
+func (mixedParallelToolRegistryForTestOnly) Execute(
+	_ context.Context,
+	invocation ToolInvocation,
+) (ToolExecutionResult, error) {
+	switch invocation.Name {
+	case "parallel_success":
+		return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
+	case "parallel_known_failure":
+		return ToolExecutionResult{
+			Content: `{"ok":false}`,
+			Outcome: ToolOutcomeKnownFailure,
+			IsError: true,
+		}, nil
+	case "parallel_automatic_unknown":
+		return ToolExecutionResult{
+			Content: `{"outcome":"unknown"}`,
+			Outcome: ToolOutcomeUnknown,
+			IsError: true,
+		}, nil
+	case "parallel_manual_unknown":
+		return ToolExecutionResult{}, errors.New("manual unknown fixture")
+	default:
+		return ToolExecutionResult{}, fmt.Errorf("unexpected mixed parallel tool %q", invocation.Name)
+	}
+}
+
+type parallelToolRegistryForTestOnly struct {
+	ready         chan struct{}
+	readyOnce     sync.Once
+	active        atomic.Int32
+	maximumActive atomic.Int32
+}
+
+func newParallelToolRegistryForTestOnly() *parallelToolRegistryForTestOnly {
+	return &parallelToolRegistryForTestOnly{ready: make(chan struct{})}
+}
+
+func (*parallelToolRegistryForTestOnly) ServerNames() []string { return []string{"parallel"} }
+
+func (registry *parallelToolRegistryForTestOnly) RegisteredTools() []RegisteredTool {
+	definitions := registry.Definitions(nil, nil)
+	return []RegisteredTool{
+		{ServerName: "parallel", RemoteName: "read_a", Definition: definitions[0]},
+		{ServerName: "parallel", RemoteName: "read_b", Definition: definitions[1]},
+	}
+}
+
+func (*parallelToolRegistryForTestOnly) Definitions([]string, []ToolName) []ToolDefinition {
+	definition := func(name ToolName) ToolDefinition {
+		return ToolDefinition{
+			Name:                      name,
+			Description:               "Exercise bounded parallel execution.",
+			InputSchema:               MustJSONObject(`{"type":"object","additionalProperties":false}`),
+			AttemptTimeout:            10 * time.Second,
+			MaximumAttempts:           1,
+			RetryTotalDuration:        10 * time.Second,
+			SupportsParallelExecution: true,
+			RetryExhaustionPolicy:     ToolRetryExhaustionPolicyManualRecovery,
+		}
+	}
+	return []ToolDefinition{definition("parallel_read_a"), definition("parallel_read_b")}
+}
+
+func (registry *parallelToolRegistryForTestOnly) Execute(
+	ctx context.Context,
+	_ ToolInvocation,
+) (ToolExecutionResult, error) {
+	active := registry.active.Add(1)
+	defer registry.active.Add(-1)
+	for {
+		maximum := registry.maximumActive.Load()
+		if active <= maximum || registry.maximumActive.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+	if active >= 2 {
+		registry.readyOnce.Do(func() { close(registry.ready) })
+	}
+	select {
+	case <-ctx.Done():
+		return ToolExecutionResult{}, ctx.Err()
+	case <-registry.ready:
+		return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
+	}
 }
 
 func newRetryToolRegistryForTestOnly(failures int, knownFailure bool) *retryToolRegistryForTestOnly {
 	return &retryToolRegistryForTestOnly{
-		failuresRemaining: failures,
-		knownFailure:      knownFailure,
-		maximumAttempts:   3,
+		failuresRemaining:     failures,
+		knownFailure:          knownFailure,
+		maximumAttempts:       3,
+		retryExhaustionPolicy: ToolRetryExhaustionPolicyContinueWithUnknown,
 	}
 }
 
@@ -2142,12 +2599,13 @@ func (registry *retryToolRegistryForTestOnly) Definitions([]string, []ToolName) 
 
 func (registry *retryToolRegistryForTestOnly) definitionForTestOnly() ToolDefinition {
 	return ToolDefinition{
-		Name:               integrationToolName,
-		Description:        "Exercise Dex-owned retries.",
-		InputSchema:        MustJSONObject(`{"type":"object","additionalProperties":false}`),
-		AttemptTimeout:     10 * time.Second,
-		MaximumAttempts:    registry.maximumAttempts,
-		RetryTotalDuration: 20 * time.Second,
+		Name:                  integrationToolName,
+		Description:           "Exercise Dex-owned retries.",
+		InputSchema:           MustJSONObject(`{"type":"object","additionalProperties":false}`),
+		AttemptTimeout:        10 * time.Second,
+		MaximumAttempts:       registry.maximumAttempts,
+		RetryTotalDuration:    20 * time.Second,
+		RetryExhaustionPolicy: registry.retryExhaustionPolicy,
 	}
 }
 
@@ -2166,12 +2624,56 @@ func (registry *retryToolRegistryForTestOnly) Execute(
 			IsError: true,
 		}, nil
 	}
+	if registry.returnedUnknown {
+		registry.returnedOutcomes = append(registry.returnedOutcomes, ToolOutcomeUnknown)
+		return ToolExecutionResult{
+			Content: `{"status":"failed","outcome":"unknown"}`,
+			Outcome: ToolOutcomeUnknown,
+			IsError: true,
+		}, nil
+	}
 	if registry.failuresRemaining > 0 {
 		registry.failuresRemaining--
 		return ToolExecutionResult{}, errors.New("transient fixture failure")
 	}
 	registry.returnedOutcomes = append(registry.returnedOutcomes, ToolOutcomeSucceeded)
 	return ToolExecutionResult{Content: `{"ok":true}`, Outcome: ToolOutcomeSucceeded}, nil
+}
+
+func (registry *retryToolRegistryForTestOnly) setFailuresRemainingForTestOnly(failures int) {
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	registry.failuresRemaining = failures
+}
+
+func (registry *retryToolRegistryForTestOnly) assertManualRetryAttemptsForTestOnly(
+	t *testing.T,
+	attempts []int32,
+) {
+	t.Helper()
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if len(registry.invocations) != len(attempts) {
+		t.Fatalf("tool invocations = %d, want %d", len(registry.invocations), len(attempts))
+	}
+	callID := registry.invocations[0].CallID
+	for index, invocation := range registry.invocations {
+		if invocation.Attempt != attempts[index] {
+			t.Fatalf("attempt %d = %d, want %d", index, invocation.Attempt, attempts[index])
+		}
+		if invocation.CallID != callID {
+			t.Fatalf("manual retry call ID = %q, want %q", invocation.CallID, callID)
+		}
+	}
+	if registry.invocations[0].FirstAttemptAt != registry.invocations[1].FirstAttemptAt ||
+		registry.invocations[2].FirstAttemptAt != registry.invocations[3].FirstAttemptAt ||
+		registry.invocations[0].FirstAttemptAt == registry.invocations[2].FirstAttemptAt ||
+		registry.invocations[2].FirstAttemptAt == registry.invocations[4].FirstAttemptAt {
+		t.Fatalf("manual retry execution timestamps = %#v", registry.invocations)
+	}
+	if !slices.Equal(registry.returnedOutcomes, []ToolOutcome{ToolOutcomeSucceeded}) {
+		t.Fatalf("returned outcomes = %v, want one success", registry.returnedOutcomes)
+	}
 }
 
 func (registry *retryToolRegistryForTestOnly) assertAttemptsForTestOnly(
@@ -2202,8 +2704,9 @@ func (registry *retryToolRegistryForTestOnly) assertAttemptsForTestOnly(
 		t.Fatal("first attempt timestamp is empty")
 	}
 	if outcome == ToolOutcomeUnknown {
-		if len(registry.returnedOutcomes) != 0 {
-			t.Fatalf("returned outcomes = %v, want none", registry.returnedOutcomes)
+		if len(registry.returnedOutcomes) != 0 &&
+			!slices.Equal(registry.returnedOutcomes, []ToolOutcome{ToolOutcomeUnknown}) {
+			t.Fatalf("returned outcomes = %v, want none or one unknown", registry.returnedOutcomes)
 		}
 		return
 	}
@@ -2224,6 +2727,56 @@ func waitForCompletedToolTurnForTestOnly(
 			len(state.PendingToolCalls) == 0 &&
 			state.LastSequence >= minimumSequence
 	})
+}
+
+func waitForPendingToolRecoveryForTestOnly(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	previous RecoveryID,
+) PendingToolRecovery {
+	t.Helper()
+	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+		return snapshot.Description != nil &&
+			snapshot.Description.Status == AgentStatusWaitingForToolRecovery &&
+			snapshot.Description.PendingToolRecovery != nil &&
+			snapshot.Description.PendingToolRecovery.RecoveryID != previous
+	})
+	pending := snapshot.Description.PendingToolRecovery
+	if pending == nil || len(pending.Calls) != 1 {
+		t.Fatalf("pending recovery = %#v", pending)
+	}
+	return *pending
+}
+
+func resolveSingleToolRecoveryForTestOnly(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+	pending PendingToolRecovery,
+	action ToolRecoveryAction,
+) {
+	t.Helper()
+	if err := environment.agent.ResolveToolRecovery(t.Context(), flowID, ResolveToolRecoveryRequest{
+		RecoveryID: pending.RecoveryID,
+		Resolution: ToolRecoveryResolutionResume,
+		Decisions: []ToolRecoveryDecision{{
+			CallID: pending.Calls[0].CallID,
+			Action: action,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func historyToolCountForTestOnly(snapshot AgentSnapshot) int {
+	count := 0
+	for _, message := range snapshot.History.Messages {
+		if message.Message.Role == MessageRoleTool {
+			count++
+		}
+	}
+	return count
 }
 
 func waitForStepCompletionForTestOnly(

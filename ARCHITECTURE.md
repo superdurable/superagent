@@ -176,8 +176,9 @@ Consumed user bubbles are anchored after the latest explicit message sequence
 seen in the Activity stream. This preserves causal ordering while Snapshot is
 temporarily behind the Stream.
 
-The approval and Timer target Steps emit a hidden `snapshot_required` Activity
-control from `WaitFor`, after `RouteTool` commits their durable payload. It
+The approval, manual recovery, and Timer target Steps emit a hidden
+`snapshot_required` Activity control from `WaitFor`, after the preceding Step
+commits their durable payload. It
 requests one non-blocking Snapshot so waits that intentionally do not advance
 `WaitingInputRound` remain visible without polling.
 
@@ -297,13 +298,28 @@ transport with SDK retries disabled.
 Discovery follows every pagination cursor and publishes tools atomically only
 after all configured servers succeed. Unknown and write-capable tools require
 approval and one attempt by default. Only explicitly trusted read-only tools can
-retry. `ToolDefinition` supplies attempt timeout, maximum attempts, and total
-duration to Dex StepOptions. The MCP registry performs one call per Dex attempt
-and never sleeps or retries internally. Tool-level `isError` is a completed
-known failure. A transient or ambiguous failure returns a Go error. Exhaustion
-routes to `RecoverToolExecution`, which records one unknown outcome and lets the
-Agent continue. Every session is closed, stdio subprocesses are reaped, and
-idle HTTP connections are closed by the registry owner.
+retry or join a bounded parallel wave. `maxParallelToolCalls` defaults to four
+and limits each wave. Write operations, approvals, user input, and durable waits
+remain sequential barriers. Parallel branches publish typed results without
+mutating shared Agent state. One join Step commits final tool messages in the
+model's original order.
+
+`ToolDefinition` supplies attempt timeout, maximum attempts, total duration, and
+retry-exhaustion policy to Dex StepOptions. The MCP registry performs one call
+per Dex attempt and never sleeps or retries internally. Tool-level `isError` is
+a completed known failure for the model to correct. A transient or ambiguous
+failure returns a Go error. Unknown outcomes and retry exhaustion default to a
+durable manual-recovery wait. Trusted per-tool configuration may instead choose
+`continue_with_unknown`, which retains the automatic recovery path. Recovery
+Snapshots expose only stable call identity, arguments, and error type. They
+never expose provider error detail. Every session is closed, stdio subprocesses
+are reaped, and idle HTTP connections are closed by the registry owner.
+
+`ResolveToolRecovery` validates one exact recovery revision under the pending
+recovery Attribute lock. Resume decisions cover every failed call atomically.
+Retries reuse the stable call ID and receive a fresh Dex retry execution.
+Stopping or steering records started unknown results, interrupts calls that
+were not started, and returns to user input without invoking the model.
 
 Every retry of one logical tool Step reuses its first Attribute snapshot.
 Runtime metadata therefore remains stable for the logical call.

@@ -53,7 +53,9 @@ export const EventKind = {
     USER_INPUT_REQUESTED: 'user_input_requested',
     TOOL_PROGRESS: 'tool_progress',
     TOOL_FAILED: 'tool_failed',
-    TOOL_COMPLETED: 'tool_completed'
+    TOOL_COMPLETED: 'tool_completed',
+    TOOL_RECOVERY_REQUIRED: 'tool_recovery_required',
+    TOOL_RECOVERY_RESOLVED: 'tool_recovery_resolved'
 } as const;
 
 export type EventKind = typeof EventKind[keyof typeof EventKind];
@@ -65,6 +67,7 @@ export const AgentStatus = {
     CALLING_MODEL: 'calling_model',
     ROUTING_TOOL: 'routing_tool',
     WAITING_FOR_TOOL_APPROVAL: 'waiting_for_tool_approval',
+    WAITING_FOR_TOOL_RECOVERY: 'waiting_for_tool_recovery',
     EXECUTING_TOOL: 'executing_tool',
     WAITING_FOR_TIMER: 'waiting_for_timer',
     APPLYING_STEERING: 'applying_steering'
@@ -152,6 +155,7 @@ export type StartAgentRequest = {
     compactionTriggerFraction?: number;
     compactionKeepFraction?: number;
     messageRetentionLimit: number;
+    maxParallelToolCalls?: number;
     mcpEnabled: boolean;
     enabledMcpServers: Array<string>;
     enabledTools: Array<ToolName>;
@@ -187,6 +191,26 @@ export type ToolApprovalRequest = {
     flowId: FlowId;
     callId: CallId;
     approved: boolean;
+};
+
+export const ToolRecoveryResolution = { RESUME: 'resume', STOP: 'stop' } as const;
+
+export type ToolRecoveryResolution = typeof ToolRecoveryResolution[keyof typeof ToolRecoveryResolution];
+
+export const ToolRecoveryAction = { RETRY: 'retry', CONTINUE_WITH_UNKNOWN: 'continue_with_unknown' } as const;
+
+export type ToolRecoveryAction = typeof ToolRecoveryAction[keyof typeof ToolRecoveryAction];
+
+export type ToolRecoveryDecision = {
+    callId: CallId;
+    action: ToolRecoveryAction;
+};
+
+export type ResolveToolRecoveryRequest = {
+    flowId: FlowId;
+    recoveryId: string;
+    resolution: ToolRecoveryResolution;
+    decisions: Array<ToolRecoveryDecision>;
 };
 
 export type QueueMutationRequest = {
@@ -276,6 +300,7 @@ export type AgentDescription = {
     lastSequence: number;
     summarizedThroughSequence: number;
     pendingApproval: PendingApproval | null;
+    pendingToolRecovery: PendingToolRecovery | null;
     pendingTimer: PendingTimer | null;
     pendingUserInput: PendingUserInput | null;
     plan: AgentPlan | null;
@@ -290,6 +315,18 @@ export type PendingApproval = {
     callId: CallId;
     toolName: ToolName;
     argumentsJson: string;
+};
+
+export type PendingToolRecovery = {
+    recoveryId: string;
+    calls: Array<PendingToolRecoveryCall>;
+};
+
+export type PendingToolRecoveryCall = {
+    callId: CallId;
+    toolName: ToolName;
+    argumentsJson: string;
+    errorType: string;
 };
 
 export type PendingTimer = {
@@ -845,6 +882,43 @@ export type ApproveToolResponses = {
 };
 
 export type ApproveToolResponse = ApproveToolResponses[keyof ApproveToolResponses];
+
+export type ResolveToolRecoveryData = {
+    body: ResolveToolRecoveryRequest;
+    path?: never;
+    query?: never;
+    url: '/products/ai-agent/tool-recoveries';
+};
+
+export type ResolveToolRecoveryErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: Problem;
+    /**
+     * The request could not be completed.
+     */
+    404: Problem;
+    /**
+     * The request could not be completed.
+     */
+    409: Problem;
+    /**
+     * The request could not be completed.
+     */
+    503: Problem;
+};
+
+export type ResolveToolRecoveryError = ResolveToolRecoveryErrors[keyof ResolveToolRecoveryErrors];
+
+export type ResolveToolRecoveryResponses = {
+    /**
+     * The recovery decision was durably accepted.
+     */
+    202: Accepted;
+};
+
+export type ResolveToolRecoveryResponse = ResolveToolRecoveryResponses[keyof ResolveToolRecoveryResponses];
 
 export type ReadEventData = {
     body?: never;

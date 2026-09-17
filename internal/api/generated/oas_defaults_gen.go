@@ -12,4 +12,8 @@ func (s *StartAgentRequest) setDefaults() {
 		val := float64(0.1)
 		s.CompactionKeepFraction.SetTo(val)
 	}
+	{
+		val := int(4)
+		s.MaxParallelToolCalls.SetTo(val)
+	}
 }

@@ -34,6 +34,7 @@ interface LaunchForm {
   systemPrompt: string;
   maxContextTokens: number;
   messageRetentionLimit: number;
+  maxParallelToolCalls: number;
   mcpEnabled: boolean;
   enabledMcpServers: string[];
   enabledTools: ToolName[];
@@ -74,6 +75,7 @@ function initialForm(portal: Portal): LaunchForm {
     systemPrompt: defaultSystemPrompt,
     maxContextTokens: 32_000,
     messageRetentionLimit: 1_000,
+    maxParallelToolCalls: 4,
     mcpEnabled: portal.mcpServers.length > 0,
     enabledMcpServers: [...portal.mcpServers],
     enabledTools: portal.tools.map((tool) => tool.name),
@@ -220,6 +222,7 @@ function LaunchPortal({
       systemPrompt: state.form.systemPrompt,
       maxContextTokens: state.form.maxContextTokens,
       messageRetentionLimit: state.form.messageRetentionLimit,
+      maxParallelToolCalls: state.form.maxParallelToolCalls,
       mcpEnabled: state.form.mcpEnabled,
       enabledMcpServers: state.form.mcpEnabled
         ? state.form.enabledMcpServers
@@ -360,7 +363,23 @@ function LaunchPortal({
               });
             }}
           />
+          <NumberInput
+            label="Max parallel tool calls"
+            value={state.form.maxParallelToolCalls}
+            maximum={32}
+            disabled={state.submitting}
+            onChange={(value) => {
+              dispatch({
+                type: "edit",
+                update: { maxParallelToolCalls: value },
+              });
+            }}
+          />
         </div>
+        <p className="muted">
+          Only tools explicitly configured as safe, read-only operations run in
+          parallel. Set this to 1 to disable parallel execution.
+        </p>
 
         <h2>MCP tools</h2>
         {state.portal.mcpServers.length === 0 ? (

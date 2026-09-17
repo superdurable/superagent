@@ -440,7 +440,11 @@ func registeredTool(server ServerConfig, tool *mcpsdk.Tool) (agent.RegisteredToo
 	publicName := componentName(server.Name, tool.Name)
 	policy, configured := server.Tools[tool.Name]
 	if !configured {
-		policy = ToolPolicy{TimeoutSeconds: 60, RetryTotalSeconds: 300}
+		policy = ToolPolicy{
+			TimeoutSeconds:        60,
+			RetryTotalSeconds:     300,
+			RetryExhaustionPolicy: RetryExhaustionPolicyManualRecovery,
+		}
 	}
 	readOnly := policy.ReadOnly
 	if readOnly == nil && server.TrustReadOnlyAnnotations && tool.Annotations != nil {
@@ -450,6 +454,10 @@ func registeredTool(server ServerConfig, tool *mcpsdk.Tool) (agent.RegisteredToo
 	maximumAttempts := 1
 	if readOnly != nil && *readOnly {
 		maximumAttempts = 3
+	}
+	retryExhaustionPolicy := agent.ToolRetryExhaustionPolicyManualRecovery
+	if policy.RetryExhaustionPolicy == RetryExhaustionPolicyContinueWithUnknown {
+		retryExhaustionPolicy = agent.ToolRetryExhaustionPolicyContinueWithUnknown
 	}
 	if policy.MaximumAttempts != nil {
 		maximumAttempts = *policy.MaximumAttempts
@@ -477,13 +485,15 @@ func registeredTool(server ServerConfig, tool *mcpsdk.Tool) (agent.RegisteredToo
 		ServerName: server.Name,
 		RemoteName: tool.Name,
 		Definition: agent.ToolDefinition{
-			Name:               publicName,
-			Description:        description,
-			InputSchema:        inputSchema,
-			RequiresApproval:   readOnly == nil || !*readOnly,
-			AttemptTimeout:     attemptTimeout,
-			MaximumAttempts:    maximumAttempts,
-			RetryTotalDuration: retryDuration,
+			Name:                      publicName,
+			Description:               description,
+			InputSchema:               inputSchema,
+			RequiresApproval:          readOnly == nil || !*readOnly,
+			AttemptTimeout:            attemptTimeout,
+			MaximumAttempts:           maximumAttempts,
+			RetryTotalDuration:        retryDuration,
+			SupportsParallelExecution: readOnly != nil && *readOnly,
+			RetryExhaustionPolicy:     retryExhaustionPolicy,
 		},
 	}, nil
 }

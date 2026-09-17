@@ -124,8 +124,8 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 	if payload.Model != "gpt-5-mini" || payload.Instructions != "Be helpful." {
 		t.Fatalf("unexpected request model/instructions: %#v", payload)
 	}
-	if payload.Store || !payload.Stream || payload.ParallelToolCalls {
-		t.Fatalf("request must be stateless, streaming, and sequential: %#v", payload)
+	if payload.Store || !payload.Stream || !payload.ParallelToolCalls {
+		t.Fatalf("request must be stateless, streaming, and allow parallel tool calls: %#v", payload)
 	}
 	if !slices.Equal(payload.Include, []string{"reasoning.encrypted_content"}) {
 		t.Fatalf("include = %q", payload.Include)

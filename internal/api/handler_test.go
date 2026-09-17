@@ -45,6 +45,35 @@ func TestStartAgentQualifiesProviderModel(t *testing.T) {
 	if service.started.CompactionTriggerFraction != 0.85 || service.started.CompactionKeepFraction != 0.10 {
 		t.Fatalf("compaction defaults = %v/%v", service.started.CompactionTriggerFraction, service.started.CompactionKeepFraction)
 	}
+	if service.started.MaxParallelToolCalls != agent.DefaultMaxParallelToolCalls {
+		t.Fatalf("parallel tool default = %d", service.started.MaxParallelToolCalls)
+	}
+}
+
+func TestResolveToolRecoveryMapsCompleteDecision(t *testing.T) {
+	t.Parallel()
+	service := &fakeAgentService{}
+	handler := newTestHandler(service, fakeCredentials{})
+	response, err := handler.ResolveToolRecovery(context.Background(), &transportapi.ResolveToolRecoveryRequest{
+		FlowId:     "flow-1",
+		RecoveryId: "recovery-2",
+		Resolution: transportapi.ToolRecoveryResolutionResume,
+		Decisions: []transportapi.ToolRecoveryDecision{{
+			CallId: "call-1",
+			Action: transportapi.ToolRecoveryActionContinueWithUnknown,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response.(*transportapi.Accepted); !ok {
+		t.Fatalf("response type = %T", response)
+	}
+	if service.recoveryFlowID != "flow-1" || service.recovery.RecoveryID != "recovery-2" ||
+		len(service.recovery.Decisions) != 1 ||
+		service.recovery.Decisions[0].Action != agent.ToolRecoveryActionContinueWithUnknown {
+		t.Fatalf("recovery = %q / %#v", service.recoveryFlowID, service.recovery)
+	}
 }
 
 func TestStartAgentRejectsMissingProviderCredential(t *testing.T) {
@@ -560,6 +589,9 @@ type fakeAgentService struct {
 	steeredMessageID agent.MessageID
 	steerErr         error
 	executeErr       error
+	recoveryFlowID   agent.FlowID
+	recovery         agent.ResolveToolRecoveryRequest
+	recoveryErr      error
 	event            agent.StreamEvent
 	eventErr         error
 	recentEvents     []agent.StreamEvent
@@ -633,6 +665,16 @@ func (service *fakeAgentService) SteerMessage(
 
 func (*fakeAgentService) ApproveTool(context.Context, agent.FlowID, agent.ToolApprovalRequest) error {
 	return nil
+}
+
+func (service *fakeAgentService) ResolveToolRecovery(
+	_ context.Context,
+	flowID agent.FlowID,
+	request agent.ResolveToolRecoveryRequest,
+) error {
+	service.recoveryFlowID = flowID
+	service.recovery = request
+	return service.recoveryErr
 }
 
 func (service *fakeAgentService) ExecutePlan(context.Context, agent.FlowID, agent.PlanExecutionRequest) error {

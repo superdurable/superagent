@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AnswerQuestionsData, AnswerQuestionsErrors, AnswerQuestionsResponses, ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetArchivedMessagesData, GetArchivedMessagesErrors, GetArchivedMessagesResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ListRecentEventsData, ListRecentEventsErrors, ListRecentEventsResponses, ReadEventData, ReadEventErrors, ReadEventResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses, WaitForWaitingInputRoundData, WaitForWaitingInputRoundErrors, WaitForWaitingInputRoundResponses } from './types.gen';
+import type { AnswerQuestionsData, AnswerQuestionsErrors, AnswerQuestionsResponses, ApproveToolData, ApproveToolErrors, ApproveToolResponses, DeleteQueuedMessageData, DeleteQueuedMessageErrors, DeleteQueuedMessageResponses, ExecutePlanData, ExecutePlanErrors, ExecutePlanResponses, GetAgentSnapshotData, GetAgentSnapshotErrors, GetAgentSnapshotResponses, GetArchivedMessagesData, GetArchivedMessagesErrors, GetArchivedMessagesResponses, GetHealthData, GetHealthResponses, GetPortalData, GetPortalErrors, GetPortalResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ListRecentEventsData, ListRecentEventsErrors, ListRecentEventsResponses, ReadEventData, ReadEventErrors, ReadEventResponses, ResolveToolRecoveryData, ResolveToolRecoveryErrors, ResolveToolRecoveryResponses, SendMessageData, SendMessageErrors, SendMessageResponses, StartAgentData, StartAgentErrors, StartAgentResponses, SteerQueuedMessageData, SteerQueuedMessageErrors, SteerQueuedMessageResponses, WaitForWaitingInputRoundData, WaitForWaitingInputRoundErrors, WaitForWaitingInputRoundResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -160,6 +160,19 @@ export const executePlan = <ThrowOnError extends boolean = true>(options: Option
 export const approveTool = <ThrowOnError extends boolean = true>(options: Options<ApproveToolData, ThrowOnError>): RequestResult<ApproveToolResponses, ApproveToolErrors, ThrowOnError, 'data'> => (options.client ?? client).post<ApproveToolResponses, ApproveToolErrors, ThrowOnError, 'data'>({
     responseStyle: 'data',
     url: '/products/ai-agent/tool-approvals',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Resolve one exact pending manual tool recovery
+ */
+export const resolveToolRecovery = <ThrowOnError extends boolean = true>(options: Options<ResolveToolRecoveryData, ThrowOnError>): RequestResult<ResolveToolRecoveryResponses, ResolveToolRecoveryErrors, ThrowOnError, 'data'> => (options.client ?? client).post<ResolveToolRecoveryResponses, ResolveToolRecoveryErrors, ThrowOnError, 'data'>({
+    responseStyle: 'data',
+    url: '/products/ai-agent/tool-recoveries',
     ...options,
     headers: {
         'Content-Type': 'application/json',

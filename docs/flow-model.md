@@ -10,7 +10,7 @@
 - Completion: intentionally open-ended; the Agent waits for the next user
   command after each turn
 - RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
-  `ExecutePlan`, `DeleteQueuedMessage`, `GetSnapshot`, and
+  `ResolveToolRecovery`, `ExecutePlan`, `DeleteQueuedMessage`, `GetSnapshot`, and
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
@@ -45,6 +45,7 @@ CallModel
 RouteTool
   -> CheckSteered -> AwaitToolApproval         (untrusted write)
   -> CheckSteered -> ExecuteToolWithRetry      (approved/read-only external tool)
+  -> ExecuteParallelTool + AwaitParallelToolResults (bounded contiguous safe reads)
   -> CheckSteered -> DurableWait               (timer tool)
   -> AwaitUser                                  (durable input tool)
   -> next tool or CompactContext               (built-in/result)
@@ -59,10 +60,27 @@ ExecuteTool
 
 ExecuteToolWithRetry
   -> next tool or CompactContext               (success or known failure)
-  -> RecoverToolExecution                      (Dex retry exhaustion)
+  -> RecoverToolExecution                      (configured automatic unknown)
+  -> PrepareManualToolRecovery                 (default retry exhaustion)
 
 RecoverToolExecution
   -> next tool or CompactContext               (one unknown outcome)
+
+ExecuteParallelTool
+  -> AwaitParallelToolResults ChannelMap       (one typed branch result)
+
+AwaitParallelToolResults
+  -> next tool or CompactContext               (all results final)
+  -> AwaitManualToolRecovery                   (one or more manual unknowns)
+
+PrepareManualToolRecovery
+  -> AwaitManualToolRecovery                   (capture redacted error type)
+
+AwaitManualToolRecovery
+  -> retry failed calls                        (complete per-call decisions)
+  -> next tool or CompactContext               (continue unknown decisions)
+  -> AwaitUser                                 (stop)
+  -> CompactContext                            (steered replan)
 
 DurableWait
   -> next tool or CompactContext               (timer fired)
@@ -88,7 +106,12 @@ history, and makes the model replan.
 | `AwaitToolApproval`    | exact call-ID approval or steering                                                  | Persist waiting status; consume one decision or replan on steering                                                                                         |
 | `ExecuteTool`          | none                                                                                | Perform one external MCP effect with stable Flow/call identity, then persist its result                                                                    |
 | `ExecuteToolWithRetry` | none                                                                                | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                                  |
-| `RecoverToolExecution` | none                                                                                | Record one unknown result after exhausted Dex retries, then let the Agent continue                                                                         |
+| `RecoverToolExecution` | none                                                                                | Record one unknown result for an explicitly configured automatic recovery, then continue                                                                   |
+| `ExecuteParallelTool`  | none                                                                                | Perform one bounded-wave branch effect and publish exactly one typed result without shared-state mutation                                                   |
+| `RecoverParallelToolExecution` | none                                                                        | Convert one exhausted branch to an unknown typed result and publish it                                                                                      |
+| `AwaitParallelToolResults` | all started branch results                                                                 | Join results, preserve model order, and either commit the batch or enter one manual recovery                                                                |
+| `PrepareManualToolRecovery` | none                                                                            | Capture the serial exhausted call and redacted Dex error type                                                                                               |
+| `AwaitManualToolRecovery` | exact recovery decision or steering                                               | Persist recovery state; retry selected calls, continue unknowns, stop the sequence, or replan                                                               |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
 
 Dex Server and Go SDK `v0.9.0` expose Channel size metadata in `WaitFor` and
@@ -117,12 +140,15 @@ fails explicitly.
 | `ArchivedMessages`     | AttributeMap | Ten-message chunks keyed by first sequence                                                   |
 | `AgentPlan`            | Attribute    | Atomically replaced short plan with revision and task status                                 |
 | `PendingApproval`      | Attribute    | Current exact approval boundary                                                              |
+| `PendingToolRecovery`  | Attribute    | Exact recovery revision and redacted failed-call presentation                                |
 | `PendingTimer`         | Attribute    | Current durable wait presentation                                                            |
 | `PendingUserInput`     | Attribute    | Current structured question batch                                                            |
 | `AnsweredUserInputs`   | Channel      | Validated answers awaiting immediate consumption                                             |
 | `QueuedUserMessages`   | Channel      | FIFO `PendingUserMessage` payloads with stable application IDs                               |
 | `SteeredUserMessages`  | Channel      | Safe-boundary steering payloads preserving the same application IDs                          |
 | `ToolApprovals`        | ChannelMap   | Approval decisions keyed by tool call ID                                                     |
+| `ToolRecoveryDecisions` | ChannelMap  | Atomic complete recovery decisions keyed by recovery ID                                      |
+| `ParallelToolResults`  | ChannelMap   | One typed result from each bounded parallel execution branch                                  |
 | `PlanExecutions`       | ChannelMap   | Execution request keyed by Plan revision                                                     |
 | `ReasoningSummary`     | Stream       | Buffered best-effort provider summary deltas                                                 |
 | `AssistantText`        | Stream       | Buffered best-effort assistant deltas                                                        |
@@ -174,7 +200,7 @@ sequence, but not the answer text. The browser correlates it with the locally
 submitted answer for immediate display and requests Snapshot for authoritative
 reconciliation.
 
-The approval and Timer target `WaitFor` methods write a `snapshot_required`
+The approval, manual recovery, and Timer target `WaitFor` methods write a `snapshot_required`
 control event after `RouteTool` commits their durable payload. The browser hides
 this event and requests one non-blocking Snapshot. These waits do not advance
 `WaitingInputRound`.
@@ -201,7 +227,14 @@ every completed Snapshot read. Hidden pages pause the timer and live reads.
 
 - Tool execution policy is copied from `ToolDefinition` into Dex StepOptions.
 - Known business failures return a normal tool result. Transient or ambiguous
-  errors use Dex retry. Exhaustion records one unknown result and continues.
+  errors use Dex retry. A returned unknown does not retry. Unknown outcomes and
+  retry exhaustion wait for manual recovery unless trusted per-tool policy
+  explicitly selects automatic continuation.
+- Safe read-only calls form contiguous bounded waves. Branches can finish in any
+  order, but the join commits all final messages in original model order.
+- Manual resume decisions must cover every currently failed call. Retry starts a
+  fresh full Dex retry policy with the same call ID. Stop and steering do not
+  invoke the model after the interrupted sequence.
 - Stable Flow and call IDs let tool integrations derive external-effect
   idempotency keys without creating a general Agent command ledger.
 - A timeout after an unprotected write records an unknown outcome; it never

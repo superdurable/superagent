@@ -53,6 +53,7 @@ const (
 	toolErrorRejectedByUser        toolErrorCode    = "rejected_by_user"
 	toolErrorSupersededBySteering  toolErrorCode    = "superseded_by_steered_user_message"
 	toolErrorSupersededByUserInput toolErrorCode    = "superseded_by_user_input"
+	toolErrorStoppedByRecovery     toolErrorCode    = "stopped_by_manual_recovery"
 	toolResultStatusFailed         toolResultStatus = "failed"
 	toolResultStatusUpdated        toolResultStatus = "updated"
 	toolResultStatusCleared        toolResultStatus = "cleared"

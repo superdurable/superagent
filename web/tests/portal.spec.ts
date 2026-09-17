@@ -116,6 +116,7 @@ test("starts a Flow against a separately deployed API", async ({ page }) => {
               lastSequence: 0,
               summarizedThroughSequence: 0,
               pendingApproval: null,
+              pendingToolRecovery: null,
               pendingTimer: null,
               pendingUserInput: null,
               plan: null,
