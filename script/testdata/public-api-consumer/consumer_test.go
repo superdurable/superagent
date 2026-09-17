@@ -24,6 +24,7 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/agent"
 	"github.com/superdurable/superagent/model"
+	"github.com/superdurable/superagent/toolcontract"
 )
 
 type modelClient struct{}
@@ -133,4 +134,44 @@ func TestExternalModuleCanConstructProviderRouter(t *testing.T) {
 		groq,
 	)
 	var _ agent.ModelClient = client
+}
+
+func TestExternalModuleCanUseBuiltinToolContracts(t *testing.T) {
+	t.Parallel()
+	input, err := toolcontract.DecodeWriteTodosInput(
+		`{"todos":[{"content":"publish","status":"in_progress"}]}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Todos) != 1 || input.Todos[0].Status != toolcontract.WriteTodosStatusInProgress {
+		t.Fatalf("decoded write_todos input = %#v", input)
+	}
+	wait, err := toolcontract.DecodeDurableWaitInput(`{"duration_seconds":1,"reason":"publish"}`)
+	if err != nil || wait.DurationSeconds != 1 {
+		t.Fatalf("decoded durable_wait input = %#v, %v", wait, err)
+	}
+	questions, err := toolcontract.DecodeRequestUserInput(`{
+		"questions":[{
+			"id":"release",
+			"header":"Release",
+			"question":"Publish now?",
+			"options":[
+				{"label":"Yes","description":"Publish now."},
+				{"label":"No","description":"Wait."}
+			]
+		}]
+	}`)
+	if err != nil || len(questions.Questions) != 1 {
+		t.Fatalf("decoded request_user_input input = %#v, %v", questions, err)
+	}
+	for name, schema := range map[string]string{
+		"write_todos":        toolcontract.WriteTodosInputSchema(),
+		"durable_wait":       toolcontract.DurableWaitInputSchema(),
+		"request_user_input": toolcontract.RequestUserInputSchema(),
+	} {
+		if _, err := agent.ParseJSONObject(schema); err != nil {
+			t.Fatalf("%s schema: %v", name, err)
+		}
+	}
 }

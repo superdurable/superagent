@@ -54,3 +54,4 @@ require (
 )
 
 tool github.com/ogen-go/ogen/cmd/ogen
+tool github.com/ogen-go/ogen/cmd/jschemagen

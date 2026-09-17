@@ -5,7 +5,7 @@
 	test-full-stack-e2e test-integration test-public-api test-race test-server-integration test-web vet vulnerability-check
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
-GO_PACKAGES := ./agent/... ./cmd/... ./internal/... ./model/...
+GO_PACKAGES := ./agent/... ./cmd/... ./internal/... ./model/... ./toolcontract/...
 DEXCLI_VERSION := v0.9.0
 DEXCLI_BINARY := $(CURDIR)/.cache/dexcli-$(DEXCLI_VERSION)
 OSV_SCANNER_VERSION := v2.5.1
@@ -29,7 +29,7 @@ build-web:
 generate: generate-go generate-web
 
 generate-go:
-	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go generate ./internal/api
+	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go generate ./internal/api ./internal/toolcontract
 
 generate-web:
 	@npm --prefix web run generate:api

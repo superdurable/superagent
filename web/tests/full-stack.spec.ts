@@ -1211,6 +1211,32 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   ).toBeVisible();
 });
 
+test("recovers visibly after invalid write_todos arguments", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+  const history = page.getByRole("region", { name: "Conversation history" });
+
+  await page.getByRole("checkbox", { name: "Plan mode" }).check();
+  await composer.fill("/invalid-write-todos");
+  await page.getByRole("button", { name: "Create plan" }).click();
+
+  await expect(
+    history.locator(".message-bubble.assistant").filter({
+      hasText: "The plan update was rejected, so no plan was created.",
+    }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expectAgentWaitingForMessage(page);
+  await expect(page.getByRole("region", { name: "Agent plan" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(composer).toBeFocused();
+
+  const snapshot = await readAgentSnapshot(page, await displayedFlowID(page));
+  expect(snapshot.description?.plan).toBeFalsy();
+});
+
 test("disables busy Plan actions and continues a stalled active Plan", async ({
   page,
 }) => {

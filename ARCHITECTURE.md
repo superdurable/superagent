@@ -274,6 +274,14 @@ and Groq adapters use strict native protocol structs. Provider redirects are
 disabled, response bodies are closed, attempts are bounded by context and HTTP
 timeouts, and unknown provider values return typed validation errors.
 
+Built-in tool inputs are schema-first contracts under `internal/toolcontract`.
+Each provider receives the embedded compact JSON Schema, while Agent execution
+uses ogen-generated DTOs, strict decoders, and validators from the same file.
+Explicit mappers keep generated contract types out of the Agent domain. MCP
+tool schemas remain dynamic runtime data behind `ToolDefinition.InputSchema`.
+The public `toolcontract` package exposes the same DTOs, schemas, and strict
+decoders to embedding applications such as Superverse.
+
 API keys come from process configuration or an in-memory Flow override. They are
 never included in Dex configuration, model messages, activity events, or log
 fields. Base URL overrides require trusted absolute HTTPS URLs without embedded

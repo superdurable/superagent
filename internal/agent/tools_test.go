@@ -64,6 +64,11 @@ func TestPlanTasksValidatesStatusAndTrimsContent(t *testing.T) {
 	if err == nil {
 		t.Fatal("planTasks() error = nil")
 	}
+	for _, arguments := range []string{`{}`, `{"todos":null}`, `{"todos":[{"content":"   ","status":"pending"}]}`} {
+		if _, err := planTasks(ToolCall{Name: ToolNameWriteTodos, Arguments: MustJSONObject(arguments)}); err == nil {
+			t.Fatalf("planTasks(%s) error = nil", arguments)
+		}
+	}
 }
 
 func TestUserInputQuestionsEnforceBatchShape(t *testing.T) {
@@ -87,6 +92,71 @@ func TestUserInputQuestionsEnforceBatchShape(t *testing.T) {
 	}}
 	if _, err := validateUserInputQuestions(invalid); err == nil {
 		t.Fatal("validateUserInputQuestions() error = nil")
+	}
+	duplicateIDs := []UserInputQuestion{
+		{ID: "region", Header: "Region", Question: "Where?", Options: []UserInputOption{{Label: "West", Description: "Use west."}, {Label: "East", Description: "Use east."}}},
+		{ID: " region ", Header: "Backup", Question: "Again?", Options: []UserInputOption{{Label: "West", Description: "Use west."}, {Label: "East", Description: "Use east."}}},
+	}
+	if _, err := validateUserInputQuestions(duplicateIDs); err == nil {
+		t.Fatal("duplicate question ID error = nil")
+	}
+	duplicateLabels := []UserInputQuestion{{
+		ID: "region", Header: "Region", Question: "Where?",
+		Options: []UserInputOption{{Label: "West", Description: "Use west."}, {Label: " West ", Description: "Still west."}},
+	}}
+	if _, err := validateUserInputQuestions(duplicateLabels); err == nil {
+		t.Fatal("duplicate option label error = nil")
+	}
+}
+
+func TestUserInputArgumentsUseGeneratedContractBeforeSemanticValidation(t *testing.T) {
+	arguments, err := userInputArgumentsFor(ToolCall{
+		Name: ToolNameRequestUserInput,
+		Arguments: MustJSONObject(`{
+			"questions":[{
+				"id":" region ",
+				"header":" Region ",
+				"question":" Where? ",
+				"options":[
+					{"label":" West ","description":" Use west. "},
+					{"label":" East ","description":" Use east. "}
+				]
+			}]
+		}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arguments.Questions) != 1 || arguments.Questions[0].ID != "region" ||
+		arguments.Questions[0].Options[0].Label != "West" {
+		t.Fatalf("userInputArgumentsFor() = %#v", arguments)
+	}
+
+	for name, encoded := range map[string]string{
+		"duplicate IDs":    `{"questions":[{"id":"region","header":"Region","question":"Where?","options":[{"label":"West","description":"West."},{"label":"East","description":"East."}]},{"id":" region ","header":"Backup","question":"Again?","options":[{"label":"West","description":"West."},{"label":"East","description":"East."}]}]}`,
+		"duplicate labels": `{"questions":[{"id":"region","header":"Region","question":"Where?","options":[{"label":"West","description":"West."},{"label":" West ","description":"Still west."}]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := userInputArgumentsFor(ToolCall{
+				Name:      ToolNameRequestUserInput,
+				Arguments: MustJSONObject(encoded),
+			}); err == nil {
+				t.Fatal("userInputArgumentsFor() error = nil")
+			}
+		})
+	}
+}
+
+func TestDurableWaitArgumentsUseGeneratedContractAndTrimReason(t *testing.T) {
+	arguments, err := durableWaitArgumentsFor(ToolCall{
+		Name:      ToolNameDurableWait,
+		Arguments: MustJSONObject(`{"duration_seconds":1,"reason":" retry "}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arguments.DurationSeconds != 1 || arguments.Reason != "retry" {
+		t.Fatalf("durableWaitArgumentsFor() = %#v", arguments)
 	}
 }
 

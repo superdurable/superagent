@@ -17,14 +17,15 @@
 package agent
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/superdurable/superagent/internal/toolcontract"
+	"github.com/superdurable/superagent/internal/toolcontract/generated"
 )
 
 const (
@@ -63,10 +64,6 @@ const (
 type toolErrorCode string
 type toolResultStatus string
 
-type writeTodosArguments struct {
-	Todos []PlanTask `json:"todos"`
-}
-
 type durableWaitArguments struct {
 	DurationSeconds int64  `json:"duration_seconds"`
 	Reason          string `json:"reason"`
@@ -93,158 +90,105 @@ type toolResultPayload struct {
 
 func writeTodosDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        ToolNameWriteTodos,
-		Description: "Replace the durable plan with a complete ordered todo list. Use an empty list to clear the plan. Keep statuses accurate as work proceeds.",
-		InputSchema: MustJSONObject(`{
-			"type":"object",
-			"properties":{
-				"todos":{
-					"type":"array",
-					"items":{
-						"type":"object",
-						"properties":{
-							"content":{"type":"string","minLength":1},
-							"status":{"type":"string","enum":["pending","in_progress","completed"]}
-						},
-						"required":["content","status"],
-						"additionalProperties":false
-					}
-				}
-			},
-			"required":["todos"],
-			"additionalProperties":false
-		}`),
+		Name:            ToolNameWriteTodos,
+		Description:     "Replace the durable plan with a complete ordered todo list. Use an empty list to clear the plan. Keep statuses accurate as work proceeds.",
+		InputSchema:     MustJSONObject(toolcontract.WriteTodos.InputSchema()),
 		MaximumAttempts: 1,
 	}
 }
 
 func durableWaitDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        ToolNameDurableWait,
-		Description: "Wait durably before continuing. A steered user message interrupts the wait.",
-		InputSchema: MustJSONObject(`{
-			"type":"object",
-			"properties":{
-				"duration_seconds":{"type":"integer","minimum":1},
-				"reason":{"type":"string"}
-			},
-			"required":["duration_seconds","reason"],
-			"additionalProperties":false
-		}`),
+		Name:            ToolNameDurableWait,
+		Description:     "Wait durably before continuing. A steered user message interrupts the wait.",
+		InputSchema:     MustJSONObject(toolcontract.DurableWait.InputSchema()),
 		MaximumAttempts: 1,
 	}
 }
 
 func requestUserInputDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        ToolNameRequestUserInput,
-		Description: "Pause durably and ask for information required to continue. Keep dependent plan tasks pending until the user answers.",
-		InputSchema: MustJSONObject(`{
-			"type":"object",
-			"properties":{
-				"questions":{
-					"type":"array",
-					"minItems":1,
-					"maxItems":3,
-					"items":{
-						"type":"object",
-						"properties":{
-							"id":{"type":"string","minLength":1,"description":"Stable identifier unique within this batch."},
-							"header":{"type":"string","minLength":1,"maxLength":12,"description":"Short label for navigation."},
-							"question":{"type":"string","minLength":1,"description":"One concise question for the user."},
-							"options":{
-								"type":"array",
-								"minItems":2,
-								"maxItems":3,
-								"items":{
-									"type":"object",
-									"properties":{
-										"label":{"type":"string","minLength":1},
-										"description":{"type":"string","minLength":1}
-									},
-									"required":["label","description"],
-									"additionalProperties":false
-								}
-							}
-						},
-						"required":["id","header","question","options"],
-						"additionalProperties":false
-					}
-				}
-			},
-			"required":["questions"],
-			"additionalProperties":false
-		}`),
+		Name:            ToolNameRequestUserInput,
+		Description:     "Pause durably and ask for information required to continue. Keep dependent plan tasks pending until the user answers.",
+		InputSchema:     MustJSONObject(toolcontract.RequestUserInput.InputSchema()),
 		MaximumAttempts: 1,
 	}
 }
 
 func planTasks(call ToolCall) ([]PlanTask, error) {
-	var arguments writeTodosArguments
-	if err := decodeWriteTodosArguments(call, &arguments); err != nil {
-		return nil, err
+	arguments, err := toolcontract.WriteTodos.Decode(call.Arguments.String())
+	if err != nil {
+		return nil, invalidToolArguments(call, err)
 	}
-	for index, task := range arguments.Todos {
-		arguments.Todos[index].Content = strings.TrimSpace(task.Content)
-		if err := validateTask(arguments.Todos[index], index); err != nil {
+	tasks := make([]PlanTask, 0, len(arguments.Todos))
+	for index, input := range arguments.Todos {
+		status, err := taskStatusFromContract(input.Status)
+		if err != nil {
 			return nil, err
 		}
+		task := PlanTask{Content: strings.TrimSpace(input.Content), Status: status}
+		if err := validateTask(task, index); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
 	}
-	return arguments.Todos, nil
+	return tasks, nil
 }
 
-func decodeWriteTodosArguments(call ToolCall, arguments *writeTodosArguments) error {
-	return decodeStrictToolObject(call, func(decoder *json.Decoder) error {
-		return decoder.Decode(arguments)
-	})
+func taskStatusFromContract(status generated.WriteTodosInputTodosItemStatus) (TaskStatus, error) {
+	switch status {
+	case generated.WriteTodosInputTodosItemStatusPending:
+		return TaskStatusPending, nil
+	case generated.WriteTodosInputTodosItemStatusInProgress:
+		return TaskStatusInProgress, nil
+	case generated.WriteTodosInputTodosItemStatusCompleted:
+		return TaskStatusCompleted, nil
+	default:
+		return "", fmt.Errorf("unsupported generated task status %q", status)
+	}
+}
+
+func invalidToolArguments(call ToolCall, err error) error {
+	return fmt.Errorf("tool %q has invalid arguments: %w", call.Name, err)
 }
 
 func durableWaitArgumentsFor(call ToolCall) (durableWaitArguments, error) {
-	var arguments durableWaitArguments
-	err := decodeStrictToolObject(call, func(decoder *json.Decoder) error {
-		return decoder.Decode(&arguments)
-	})
+	input, err := toolcontract.DurableWait.Decode(call.Arguments.String())
 	if err != nil {
-		return durableWaitArguments{}, err
+		return durableWaitArguments{}, invalidToolArguments(call, err)
 	}
-	arguments.Reason = strings.TrimSpace(arguments.Reason)
-	if arguments.DurationSeconds <= 0 {
-		return durableWaitArguments{}, errors.New("duration_seconds must be positive")
-	}
-	return arguments, nil
+	return durableWaitArguments{
+		DurationSeconds: int64(input.DurationSeconds),
+		Reason:          strings.TrimSpace(input.Reason),
+	}, nil
 }
 
 func userInputArgumentsFor(call ToolCall) (userInputArguments, error) {
-	var arguments userInputArguments
-	err := decodeStrictToolObject(call, func(decoder *json.Decoder) error {
-		return decoder.Decode(&arguments)
-	})
+	input, err := toolcontract.RequestUserInput.Decode(call.Arguments.String())
 	if err != nil {
-		return userInputArguments{}, err
+		return userInputArguments{}, invalidToolArguments(call, err)
 	}
-	questions, err := validateUserInputQuestions(arguments.Questions)
-	if err != nil {
-		return userInputArguments{}, err
-	}
-	arguments.Questions = questions
-	return arguments, nil
-}
-
-func decodeStrictToolObject(call ToolCall, decode func(*json.Decoder) error) error {
-	decoder := json.NewDecoder(bytes.NewBufferString(call.Arguments.String()))
-	decoder.DisallowUnknownFields()
-	decoder.UseNumber()
-	if err := decode(decoder); err != nil {
-		return fmt.Errorf("tool %q has invalid arguments: %w", call.Name, err)
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return fmt.Errorf("tool %q has trailing arguments", call.Name)
+	questions := make([]UserInputQuestion, 0, len(input.Questions))
+	for _, inputQuestion := range input.Questions {
+		options := make([]UserInputOption, 0, len(inputQuestion.Options))
+		for _, inputOption := range inputQuestion.Options {
+			options = append(options, UserInputOption{
+				Label:       inputOption.Label,
+				Description: inputOption.Description,
+			})
 		}
-		return fmt.Errorf("tool %q has invalid arguments: %w", call.Name, err)
+		questions = append(questions, UserInputQuestion{
+			ID:       UserInputQuestionID(inputQuestion.ID),
+			Header:   inputQuestion.Header,
+			Question: inputQuestion.Question,
+			Options:  options,
+		})
 	}
-	return nil
+	questions, err = validateUserInputQuestions(questions)
+	if err != nil {
+		return userInputArguments{}, err
+	}
+	return userInputArguments{Questions: questions}, nil
 }
 
 func validateUserInputQuestions(values []UserInputQuestion) ([]UserInputQuestion, error) {

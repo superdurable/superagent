@@ -2019,6 +2019,11 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		tasks, parseErr := planTasks(call)
 		if parseErr != nil {
+			state.PlanningRequiresWrite = false
+			state.PlanningAllowsWrite = true
+			if err := agentStateAttribute.Set(ctx, state); err != nil {
+				return nil, err
+			}
 			result, encodeErr := encodeToolResult(toolResultPayload{
 				Status:  toolResultStatusFailed,
 				Error:   toolErrorInvalidPlan,
