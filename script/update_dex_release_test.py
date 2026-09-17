@@ -112,6 +112,18 @@ class UpdateDexReleaseTests(unittest.TestCase):
                 incompatible_content,
             )
 
+    def test_upgrade_workflow_opens_a_draft_before_product_ci(self) -> None:
+        workflow = (MODULE.ROOT / ".github/workflows/dex-release-upgrade.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("draft: true", workflow)
+        self.assertIn("Normal pull-request CI owns compilation and tests", workflow)
+        self.assertNotIn("make governance-check format-check vet test", workflow)
+        self.assertLess(
+            workflow.index("Update immutable Dex release pins"),
+            workflow.index("Open draft upgrade pull request before compilation"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

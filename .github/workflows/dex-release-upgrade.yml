@@ -40,13 +40,13 @@ jobs:
           GOWORK=off go mod tidy
           python3 -m unittest script/update_dex_release_test.py
           python3 script/check_dex_release.py
-          make governance-check format-check vet test
-      - name: Create audited upgrade pull request
+      - name: Open draft upgrade pull request before compilation
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ steps.app-token.outputs.token }}
           branch: automation/dex-v${{ github.event.client_payload.version }}
           delete-branch: true
+          draft: true
           commit-message: Upgrade SuperAgent to Dex ${{ github.event.client_payload.version }}
           title: Upgrade SuperAgent to Dex ${{ github.event.client_payload.version }}
           body: |
@@ -54,3 +54,6 @@ jobs:
 
             Review `openFlowsCompatibility` before merging. It defaults to
             `cancel-required`; automation never claims open-Flow compatibility.
+
+            Normal pull-request CI owns compilation and tests. When a Dex SDK
+            API breaks, continue the required migration in this draft PR.

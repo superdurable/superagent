@@ -22,6 +22,9 @@ branch.
 Dex manifest. A Dex publication opens an automated upgrade PR with open Flow
 compatibility set to `cancel-required` for review. Publishing the subsequent
 SuperAgent release dispatches the reviewed IaC and SuperVerse upgrades.
+The automation opens the draft after asset validation and mechanical pin
+updates, before product compilation. Resolve breaking SDK API migrations in
+that draft; normal pull-request CI remains the merge gate.
 
 ## Deployment boundary
 
