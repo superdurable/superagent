@@ -18,6 +18,11 @@ the installed SDK source and the installed skill before changing resource
 projection or errors. Never infer an API from a design screenshot or unreleased
 branch.
 
+`dex-release.lock.json` binds the direct Go SDK requirement to one immutable
+Dex manifest. A Dex publication opens an automated upgrade PR with open Flow
+compatibility set to `cancel-required` for review. Publishing the subsequent
+SuperAgent release dispatches the reviewed IaC and SuperVerse upgrades.
+
 ## Deployment boundary
 
 The Go backend and `web/dist` frontend are separate artifacts. Do not add static

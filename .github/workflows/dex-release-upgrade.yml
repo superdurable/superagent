@@ -1,0 +1,56 @@
+name: Prepare Dex release upgrade
+
+on:
+  repository_dispatch:
+    types: [dex-release-published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: superagent-dex-${{ github.event.client_payload.version }}
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    if: github.event.sender.type == 'Bot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Create repository-scoped release automation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_PRIVATE_KEY }}
+          owner: superdurable
+          repositories: superagent
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Update immutable Dex release pins
+        env:
+          DEX_MANIFEST_SHA256: ${{ github.event.client_payload.manifest_sha256 }}
+          DEX_MANIFEST_URL: ${{ github.event.client_payload.manifest_url }}
+        run: |
+          python3 script/update_dex_release.py \
+            --manifest-url "${DEX_MANIFEST_URL}" \
+            --manifest-sha256 "${DEX_MANIFEST_SHA256}"
+          GOWORK=off go mod tidy
+          python3 -m unittest script/update_dex_release_test.py
+          python3 script/check_dex_release.py
+          make governance-check format-check vet test
+      - name: Create audited upgrade pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automation/dex-v${{ github.event.client_payload.version }}
+          delete-branch: true
+          commit-message: Upgrade SuperAgent to Dex ${{ github.event.client_payload.version }}
+          title: Upgrade SuperAgent to Dex ${{ github.event.client_payload.version }}
+          body: |
+            Automated from the immutable Dex compatibility manifest.
+
+            Review `openFlowsCompatibility` before merging. It defaults to
+            `cancel-required`; automation never claims open-Flow compatibility.
