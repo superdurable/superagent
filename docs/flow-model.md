@@ -182,9 +182,10 @@ this event and requests one non-blocking Snapshot. These waits do not advance
 ## Snapshot and history
 
 `CurrentMessages` and `ArchivedMessages` are application history, not Dex
-execution history. Fixed-width monotonic sequence metadata defines ordering and
-archive boundaries. Context compaction commits a summary and its covered range
-before deleting retained messages.
+execution history. Explicit monotonic sequence metadata defines ordering and
+archive boundaries. AttributeMap instances use unpadded decimal sequence keys.
+Context compaction commits a summary and its covered range before deleting
+retained messages.
 
 Snapshot is one read-only Flow RPC that loads current history, the interaction
 description, and pending Channels. It returns `WaitingInputRound` and stable

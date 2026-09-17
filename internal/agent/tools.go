@@ -375,7 +375,7 @@ func toolSafeCompactionCutoff(messages []AgentMessage, firstSequence Sequence, c
 }
 
 func sequenceKey(sequence Sequence) string {
-	return fmt.Sprintf("%020d", sequence)
+	return fmt.Sprintf("%d", sequence)
 }
 
 func planRevisionKey(revision PlanRevision) string {
