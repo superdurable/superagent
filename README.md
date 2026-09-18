@@ -5,6 +5,14 @@ durable execution and the released Dex Go SDK. It combines a Go API and Worker
 with an independently deployable React application. OpenAPI generates both
 transport boundaries from one contract.
 
+## 💬 Community
+
+🚀 **[Join the SuperDurable SuperAgent community on Slack](https://join.slack.com/t/superdurableworkspace/shared_invite/zt-4aby5e0b6-6rNT9zN6BzbroHZpGyia0A)**
+
+- 💡 Share ideas and feedback
+- ❓ Ask questions and get help
+- 🤝 Connect with contributors and other users
+
 ## Capabilities
 
 - Durable conversations with typed application history
