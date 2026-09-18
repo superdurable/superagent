@@ -19,6 +19,15 @@ The implementation requires Dex Go SDK and Server `v0.9.0`. Each
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
 
+New Agent Flows set `FlowConfig.StepDurability` to ASYNC. Ordinary Steps inherit
+that default. `CompactContext`, `CallModel`, and tools declared long-running
+override Execute durability to SYNC. A short-running tool may fall back from
+local to regular execution; that is an expected optimization path and does not
+change its ASYNC durability. Registry policy supplies each tool's attempt,
+heartbeat, retry, and recovery settings. Ordinary Step methods use a one-minute
+timeout, while model methods retain their explicit ten-minute timeout and
+five-minute heartbeat.
+
 The `v0.9.0` Worker negotiates the highest common protocol with the Server before
 Attribute index synchronization or Worker binding. Deploy the Server before the
 Worker. Startup fails when `GetServerInfo` is missing, either interval is
@@ -54,9 +63,6 @@ AwaitToolApproval
   -> CheckSteered -> ExecuteToolWithRetry      (approved)
   -> next tool or CompactContext               (rejected)
   -> CompactContext                            (steered)
-
-ExecuteTool
-  -> next tool or CompactContext               (legacy open executions only)
 
 ExecuteToolWithRetry
   -> next tool or CompactContext               (success or known failure)
@@ -104,7 +110,6 @@ history, and makes the model replan.
 | `CheckSteered`         | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                       |
 | `RouteTool`            | none                                                                                | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                                                            |
 | `AwaitToolApproval`    | exact call-ID approval or steering                                                  | Persist waiting status; consume one decision or replan on steering                                                                                         |
-| `ExecuteTool`          | none                                                                                | Perform one external MCP effect with stable Flow/call identity, then persist its result                                                                    |
 | `ExecuteToolWithRetry` | none                                                                                | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                                  |
 | `RecoverToolExecution` | none                                                                                | Record one unknown result for an explicitly configured automatic recovery, then continue                                                                   |
 | `ExecuteParallelTool`  | none                                                                                | Perform one bounded-wave branch effect and publish exactly one typed result without shared-state mutation                                                   |
@@ -226,6 +231,13 @@ every completed Snapshot read. Hidden pages pause the timer and live reads.
 ## External effects and recovery
 
 - Tool execution policy is copied from `ToolDefinition` into Dex StepOptions.
+- `short_running` is the default and inherits Flow ASYNC durability. Use
+  `long_running` when more than half of expected calls are likely to exceed five
+  seconds; it overrides Execute durability to SYNC. This classification is an
+  optimization hint, not a runtime guarantee.
+- Tool heartbeat defaults to one minute. Increase it only when healthy regular
+  execution can remain silent for longer. `AttemptTimeout` also bounds the
+  registry context because ASYNC local execution ignores Dex method timeouts.
 - The `mock/dex` model alone exposes `simulate_tool_failure`; `/tool-failure`
   uses it to verify retry exhaustion and the manual recovery surface locally.
 - Known business failures return a normal tool result. Transient or ambiguous

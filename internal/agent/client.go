@@ -30,6 +30,9 @@ import (
 const (
 	defaultCommandTimeout = 20 * time.Second
 	defaultEventPoll      = 20 * time.Second
+	// Snapshot reads use a shorter budget so clients can retry across continue-as-new.
+	defaultSnapshotTimeout  = 5 * time.Second
+	maximumSnapshotAttempts = 3
 	// MaximumRecentEventLimit matches Dex's default maximum Stream list page size.
 	MaximumRecentEventLimit = 1_000
 )
@@ -78,10 +81,13 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, request StartReq
 	if err != nil {
 		return "", fmt.Errorf("encode Agent runtime metadata: %w", err)
 	}
-	runID, err := client.sdk.StartFlow(ctx, client.flow, string(flowID), request.Config, dex.StartFlowOptions{
-		IDReusePolicy: dex.IDReuseDisallow,
-		Attributes:    []dex.InitialAttributeDef{initialMetadata},
-	})
+	runID, err := client.sdk.StartFlow(
+		ctx,
+		client.flow,
+		string(flowID),
+		request.Config,
+		newAgentStartFlowOptions(initialMetadata),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -89,6 +95,17 @@ func (client *Client) Start(ctx context.Context, flowID FlowID, request StartReq
 		return "", fmt.Errorf("wait for initial Agent input round: %w", err)
 	}
 	return RunID(runID), nil
+}
+
+func newAgentStartFlowOptions(initialMetadata dex.InitialAttributeDef) dex.StartFlowOptions {
+	durability := dex.StepDurabilityAsync
+	return dex.StartFlowOptions{
+		IDReusePolicy: dex.IDReuseDisallow,
+		Attributes:    []dex.InitialAttributeDef{initialMetadata},
+		ConfigOverride: &dex.FlowConfig{
+			StepDurability: &durability,
+		},
+	}
 }
 
 // SendMessage invokes the durable SendMessage command.
@@ -204,27 +221,46 @@ func (client *Client) GetSnapshot(
 	if statusErr == nil && current != nil && current.Status != dex.FlowRunning {
 		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
 	}
+	var inactiveErr error
+	for range maximumSnapshotAttempts {
+		snapshot, err := client.invokeSnapshotRPC(ctx, flowID)
+		if err == nil {
+			return snapshot, nil
+		}
+		var inactive *dex.FlowNotActiveError
+		if !errors.As(err, &inactive) {
+			return AgentSnapshot{}, err
+		}
+		inactiveErr = err
+		current, statusErr = client.latestAgentRun(ctx, flowID)
+		if statusErr != nil {
+			return AgentSnapshot{}, errors.Join(err, statusErr)
+		}
+		if current == nil || current.Status == dex.FlowRunning {
+			continue
+		}
+		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
+	}
+	return AgentSnapshot{}, inactiveErr
+}
+
+func (client *Client) invokeSnapshotRPC(ctx context.Context, flowID FlowID) (AgentSnapshot, error) {
+	timeout := client.commandTimeout
+	if timeout <= 0 || timeout > defaultSnapshotTimeout {
+		timeout = defaultSnapshotTimeout
+	}
+	rpcContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var snapshot AgentSnapshot
-	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.GetSnapshot, nil, &snapshot, dex.InvokeOptions{
-		Timeout:           client.commandTimeout,
+	err := client.sdk.InvokeRPC(rpcContext, string(flowID), client.flow.GetSnapshot, nil, &snapshot, dex.InvokeOptions{
+		Timeout:           timeout,
 		LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
 		LoadChannels: []dex.ChannelDef{
 			queuedUserMessagesChannel,
 			steeredUserMessagesChannel,
 		},
 	})
-	if err == nil {
-		return snapshot, nil
-	}
-	var inactive *dex.FlowNotActiveError
-	if !errors.As(err, &inactive) {
-		return AgentSnapshot{}, err
-	}
-	terminal, terminalErr := client.terminalSnapshot(ctx, flowID, "")
-	if terminalErr != nil {
-		return AgentSnapshot{}, errors.Join(err, terminalErr)
-	}
-	return terminal, nil
+	return snapshot, err
 }
 
 // GetArchivedMessages reads exactly one immutable history chunk before a sequence boundary.

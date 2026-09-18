@@ -443,6 +443,39 @@ func (outcome *ToolOutcome) UnmarshalJSON(data []byte) error {
 	return decodeEnum(data, outcome, ToolOutcome.Validate)
 }
 
+// ToolRunningType selects the preferred Dex execution path for one tool.
+type ToolRunningType string
+
+const (
+	// ToolRunningTypeShortRunning optimizes for ASYNC local execution with regular fallback.
+	ToolRunningTypeShortRunning ToolRunningType = "short_running"
+	// ToolRunningTypeLongRunning starts directly as a regular SYNC activity.
+	ToolRunningTypeLongRunning ToolRunningType = "long_running"
+)
+
+// Validate rejects unknown tool running types.
+func (runningType ToolRunningType) Validate() error {
+	switch runningType {
+	case ToolRunningTypeShortRunning, ToolRunningTypeLongRunning:
+		return nil
+	default:
+		return newEnumValidationError("ToolRunningType", string(runningType))
+	}
+}
+
+// Effective returns the short-running default for an omitted registry policy.
+func (runningType ToolRunningType) Effective() ToolRunningType {
+	if runningType == "" {
+		return ToolRunningTypeShortRunning
+	}
+	return runningType
+}
+
+// UnmarshalJSON decodes and validates a tool running type.
+func (runningType *ToolRunningType) UnmarshalJSON(data []byte) error {
+	return decodeEnum(data, runningType, ToolRunningType.Validate)
+}
+
 // ToolRetryExhaustionPolicy controls what happens after a tool's Dex retries are exhausted.
 type ToolRetryExhaustionPolicy string
 
@@ -1131,7 +1164,9 @@ type ToolDefinition struct {
 	Description               string
 	InputSchema               JSONObject
 	RequiresApproval          bool
+	RunningType               ToolRunningType
 	AttemptTimeout            time.Duration
+	HeartbeatTimeout          time.Duration
 	MaximumAttempts           int
 	RetryTotalDuration        time.Duration
 	SupportsParallelExecution bool
