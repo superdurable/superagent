@@ -16,7 +16,22 @@
 
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/superdurable/dex/sdk-go/dex"
+)
+
+func TestAgentStartFlowOptionsDefaultStepsToAsyncDurability(t *testing.T) {
+	t.Parallel()
+	options := newAgentStartFlowOptions(nil)
+	if options.ConfigOverride == nil || options.ConfigOverride.StepDurability == nil {
+		t.Fatalf("ConfigOverride = %+v", options.ConfigOverride)
+	}
+	if got := *options.ConfigOverride.StepDurability; got != dex.StepDurabilityAsync {
+		t.Fatalf("StepDurability = %v, want %v", got, dex.StepDurabilityAsync)
+	}
+}
 
 func TestListRecentEventsRejectsInvalidLimits(t *testing.T) {
 	t.Parallel()

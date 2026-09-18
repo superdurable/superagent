@@ -18,8 +18,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/superdurable/dex/sdk-go/dex"
 )
 
 func TestParallelToolMovementsUseBoundedContiguousSafeWave(t *testing.T) {
@@ -92,6 +95,72 @@ func TestToolDefinitionsExposeFailureSimulationOnlyToLocalMock(t *testing.T) {
 	config.Model = "openai/gpt-5-mini"
 	if hasToolDefinitionForTestOnly(flow.toolDefinitions(config), ToolNameSimulateFailure) {
 		t.Fatal("real provider definitions include simulate_tool_failure")
+	}
+}
+
+func TestToolStepOptionsMapRunningTypeAndHeartbeat(t *testing.T) {
+	flow := &Flow{}
+	short := parallelDefinitionForTestOnly("short")
+	shortOptions := flow.toolStepOptions(short)
+	if shortOptions.ExecuteDurability != dex.StepDurabilityDefault ||
+		shortOptions.HeartbeatTimeout != time.Minute {
+		t.Fatalf("short options = %+v", shortOptions)
+	}
+	parallelShortOptions := flow.parallelToolStepOptions(short)
+	if parallelShortOptions.ExecuteDurability != dex.StepDurabilityDefault ||
+		parallelShortOptions.HeartbeatTimeout != time.Minute {
+		t.Fatalf("parallel short options = %+v", parallelShortOptions)
+	}
+
+	long := short
+	long.RunningType = ToolRunningTypeLongRunning
+	long.HeartbeatTimeout = 15 * time.Minute
+	longOptions := flow.toolStepOptions(long)
+	if longOptions.ExecuteDurability != dex.StepDurabilitySync ||
+		longOptions.HeartbeatTimeout != 15*time.Minute {
+		t.Fatalf("long options = %+v", longOptions)
+	}
+	parallelLongOptions := flow.parallelToolStepOptions(long)
+	if parallelLongOptions.ExecuteDurability != dex.StepDurabilitySync ||
+		parallelLongOptions.HeartbeatTimeout != 15*time.Minute {
+		t.Fatalf("parallel long options = %+v", parallelLongOptions)
+	}
+}
+
+func TestRegisteredStepOptionsUseBoundedTimeoutsAndModelSyncDurability(t *testing.T) {
+	if defaultStepOptions.WaitForMethodTimeout != time.Minute ||
+		defaultStepOptions.ExecuteMethodTimeout != time.Minute {
+		t.Fatalf("default Step options = %+v", defaultStepOptions)
+	}
+	if modelStepOptions.ExecuteDurability != dex.StepDurabilitySync ||
+		modelStepOptions.ExecuteMethodTimeout != 10*time.Minute ||
+		modelStepOptions.HeartbeatTimeout != 5*time.Minute {
+		t.Fatalf("model Step options = %+v", modelStepOptions)
+	}
+}
+
+func TestValidateToolExecutionPolicyRejectsUnknownRunningType(t *testing.T) {
+	definition := parallelDefinitionForTestOnly("invalid")
+	definition.RunningType = "sometimes"
+	err := validateToolExecutionPolicy(definition)
+	var validationErr *EnumValidationError
+	if !errors.As(err, &validationErr) || validationErr.Type != "ToolRunningType" {
+		t.Fatalf("validation error = %T %v", err, err)
+	}
+}
+
+func TestToolExecutionContextUsesDeclaredAttemptTimeout(t *testing.T) {
+	started := time.Now()
+	ctx, cancel := newToolExecutionContext(context.Background(), time.Minute)
+	defer cancel()
+	deadline, found := ctx.Deadline()
+	if !found || deadline.Before(started.Add(59*time.Second)) || deadline.After(started.Add(61*time.Second)) {
+		t.Fatalf("deadline = %v, found = %t", deadline, found)
+	}
+	withoutDeadline, cancelWithoutDeadline := newToolExecutionContext(context.Background(), 0)
+	defer cancelWithoutDeadline()
+	if _, found := withoutDeadline.Deadline(); found {
+		t.Fatal("zero attempt timeout added a deadline")
 	}
 }
 
