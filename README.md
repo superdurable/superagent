@@ -152,11 +152,11 @@ persisted in Dex state or logged. Copy
 [`web/mcp-servers.example.yaml`](web/mcp-servers.example.yaml) to configure
 trusted MCP servers.
 
-Each configured tool defaults to `running_type: short_running` and a 60-second
-heartbeat timeout. Use `long_running` when more than half of expected calls
-exceed five seconds. This is a Dex placement optimization, not a timeout or
-SLA; short-running calls may fall back and complete normally. Keep the
-heartbeat default unless a healthy tool can remain silent longer.
+Each configured tool defaults to `running_type: short_running`. Use
+`long_running` when more than half of expected calls exceed five seconds. This
+is a Dex placement optimization, not a timeout or SLA; short-running calls may
+fall back and complete normally. Every regular Step attempt uses Dex's
+one-minute heartbeat timeout.
 
 For a cross-origin frontend deployment, add its exact origin to
 `SUPERAGENT_HTTP_ALLOWED_ORIGINS`. Wildcards and credentialed cross-origin

@@ -42,7 +42,6 @@ func TestLoadConfigAppliesSafeDefaults(t *testing.T) {
 	}
 	policy := servers[0].Tools["query"]
 	if policy.TimeoutSeconds != 60 || policy.RunningType != RunningTypeShortRunning ||
-		policy.HeartbeatTimeoutSeconds == nil || *policy.HeartbeatTimeoutSeconds != 60 ||
 		policy.RetryTotalSeconds != 300 ||
 		policy.RetryExhaustionPolicy != RetryExhaustionPolicyManualRecovery {
 		t.Fatalf("policy defaults = %+v", policy)
@@ -57,16 +56,28 @@ func TestLoadConfigAcceptsLongRunningToolPolicy(t *testing.T) {
     tools:
       compile:
         running_type: long_running
-        heartbeat_timeout_seconds: 900
 `)
 	servers, err := LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := servers[0].Tools["compile"]
-	if policy.RunningType != RunningTypeLongRunning || policy.HeartbeatTimeoutSeconds == nil ||
-		*policy.HeartbeatTimeoutSeconds != 900 {
+	if policy.RunningType != RunningTypeLongRunning {
 		t.Fatalf("policy = %+v", policy)
+	}
+}
+
+func TestLoadConfigRejectsHeartbeatOverride(t *testing.T) {
+	path := writeConfig(t, `servers:
+  - name: build
+    transport: stdio
+    command: build-server
+    tools:
+      compile:
+        heartbeat_timeout_seconds: 900
+`)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("LoadConfig() error = nil")
 	}
 }
 
@@ -191,22 +202,6 @@ func TestLoadConfigRejectsUnsafeRetryPolicy(t *testing.T) {
 `)
 	if _, err := LoadConfig(path); err == nil {
 		t.Fatal("LoadConfig() error = nil")
-	}
-}
-
-func TestLoadConfigRejectsUnsafeHeartbeatTimeout(t *testing.T) {
-	for _, value := range []string{".nan", "0", "-1"} {
-		path := writeConfig(t, `servers:
-  - name: search
-    transport: stdio
-    command: search-server
-    tools:
-      query:
-        heartbeat_timeout_seconds: `+value+`
-`)
-		if _, err := LoadConfig(path); err == nil {
-			t.Fatalf("heartbeat_timeout_seconds %s: LoadConfig() error = nil", value)
-		}
 	}
 }
 

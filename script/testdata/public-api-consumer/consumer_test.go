@@ -20,7 +20,6 @@ import (
 	"context"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/agent"
@@ -108,8 +107,7 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 		t.Fatal("public runtime metadata limit is unavailable")
 	}
 	definition := agent.ToolDefinition{
-		RunningType:      agent.ToolRunningTypeLongRunning,
-		HeartbeatTimeout: time.Minute,
+		RunningType: agent.ToolRunningTypeLongRunning,
 	}
 	if definition.RunningType != agent.ToolRunningTypeLongRunning {
 		t.Fatal("public tool running policy is unavailable")

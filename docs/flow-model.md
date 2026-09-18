@@ -24,9 +24,9 @@ that default. `CompactContext`, `CallModel`, and tools declared long-running
 override Execute durability to SYNC. A short-running tool may fall back from
 local to regular execution; that is an expected optimization path and does not
 change its ASYNC durability. Registry policy supplies each tool's attempt,
-heartbeat, retry, and recovery settings. Ordinary Step methods use a one-minute
-timeout, while model methods retain their explicit ten-minute timeout and
-five-minute heartbeat.
+retry, and recovery settings. Every regular attempt uses a one-minute heartbeat
+timeout. Ordinary Step methods use a one-minute method timeout, while model
+methods retain their explicit ten-minute method timeout.
 
 The Worker negotiates the highest common protocol with the Server before
 Attribute index synchronization or Worker binding. Deploy the Server before the
@@ -244,9 +244,8 @@ every completed Snapshot read. Hidden pages pause the timer and live reads.
   `long_running` when more than half of expected calls are likely to exceed five
   seconds; it overrides Execute durability to SYNC. This classification is an
   optimization hint, not a runtime guarantee.
-- Tool heartbeat defaults to one minute. Increase it only when healthy regular
-  execution can remain silent for longer. `AttemptTimeout` also bounds the
-  registry context because ASYNC local execution ignores Dex method timeouts.
+- Tool heartbeat timeout is one minute. `AttemptTimeout` also bounds the registry
+  context because ASYNC local execution ignores Dex method timeouts.
 - The `mock/dex` model alone exposes `simulate_tool_failure`; `/tool-failure`
   uses it to verify retry exhaustion and the manual recovery surface locally.
 - Known business failures return a normal tool result. Transient or ambiguous

@@ -98,7 +98,7 @@ func TestToolDefinitionsExposeFailureSimulationOnlyToLocalMock(t *testing.T) {
 	}
 }
 
-func TestToolStepOptionsMapRunningTypeAndHeartbeat(t *testing.T) {
+func TestToolStepOptionsMapRunningTypeWithOneMinuteHeartbeat(t *testing.T) {
 	flow := &Flow{}
 	short := parallelDefinitionForTestOnly("short")
 	shortOptions := flow.toolStepOptions(short)
@@ -114,15 +114,14 @@ func TestToolStepOptionsMapRunningTypeAndHeartbeat(t *testing.T) {
 
 	long := short
 	long.RunningType = ToolRunningTypeLongRunning
-	long.HeartbeatTimeout = 15 * time.Minute
 	longOptions := flow.toolStepOptions(long)
 	if longOptions.ExecuteDurability != dex.StepDurabilitySync ||
-		longOptions.HeartbeatTimeout != 15*time.Minute {
+		longOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("long options = %+v", longOptions)
 	}
 	parallelLongOptions := flow.parallelToolStepOptions(long)
 	if parallelLongOptions.ExecuteDurability != dex.StepDurabilitySync ||
-		parallelLongOptions.HeartbeatTimeout != 15*time.Minute {
+		parallelLongOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("parallel long options = %+v", parallelLongOptions)
 	}
 }
@@ -134,7 +133,7 @@ func TestRegisteredStepOptionsUseBoundedTimeoutsAndModelSyncDurability(t *testin
 	}
 	if modelStepOptions.ExecuteDurability != dex.StepDurabilitySync ||
 		modelStepOptions.ExecuteMethodTimeout != 10*time.Minute ||
-		modelStepOptions.HeartbeatTimeout != 5*time.Minute {
+		modelStepOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("model Step options = %+v", modelStepOptions)
 	}
 }

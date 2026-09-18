@@ -1099,7 +1099,6 @@ type ToolDefinition struct {
 	RequiresApproval          bool
 	RunningType               ToolRunningType
 	AttemptTimeout            time.Duration
-	HeartbeatTimeout          time.Duration
 	MaximumAttempts           int
 	RetryTotalDuration        time.Duration
 	SupportsParallelExecution bool

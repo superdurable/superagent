@@ -617,8 +617,6 @@ func validateToolExecutionPolicy(definition ToolDefinition) error {
 		return errors.New("maximum attempts exceeds the Dex limit")
 	case definition.AttemptTimeout < 0:
 		return errors.New("attempt timeout must not be negative")
-	case definition.HeartbeatTimeout < 0:
-		return errors.New("heartbeat timeout must not be negative")
 	case definition.RetryTotalDuration < 0:
 		return errors.New("retry total duration must not be negative")
 	default:
@@ -662,7 +660,7 @@ func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	}
 	return &dex.StepOptions{
 		ExecuteMethodTimeout:     definition.AttemptTimeout,
-		HeartbeatTimeout:         effectiveToolHeartbeatTimeout(definition),
+		HeartbeatTimeout:         time.Minute,
 		ExecuteDurability:        toolExecuteDurability(definition),
 		ExecuteLoadAttributeMaps: toolStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
@@ -677,7 +675,7 @@ func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
 func (flow *Flow) parallelToolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	return &dex.StepOptions{
 		ExecuteMethodTimeout: definition.AttemptTimeout,
-		HeartbeatTimeout:     effectiveToolHeartbeatTimeout(definition),
+		HeartbeatTimeout:     time.Minute,
 		ExecuteDurability:    toolExecuteDurability(definition),
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: int32(definition.MaximumAttempts), // #nosec G115 -- validated before scheduling.
@@ -688,13 +686,6 @@ func (flow *Flow) parallelToolStepOptions(definition ToolDefinition) *dex.StepOp
 			defaultStepOptions,
 		),
 	}
-}
-
-func effectiveToolHeartbeatTimeout(definition ToolDefinition) time.Duration {
-	if definition.HeartbeatTimeout == 0 {
-		return time.Minute
-	}
-	return definition.HeartbeatTimeout
 }
 
 func toolExecuteDurability(definition ToolDefinition) dex.StepDurability {
@@ -1794,7 +1785,7 @@ var (
 	}
 	modelStepOptions = &dex.StepOptions{
 		ExecuteMethodTimeout:     10 * time.Minute,
-		HeartbeatTimeout:         5 * time.Minute,
+		HeartbeatTimeout:         time.Minute,
 		ExecuteDurability:        dex.StepDurabilitySync,
 		ExecuteLoadAttributeMaps: messageContextStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
