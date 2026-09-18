@@ -81,7 +81,7 @@ and resource model.
 
 - Go matching [`go.mod`](go.mod)
 - Node.js and npm compatible with [`web/package-lock.json`](web/package-lock.json)
-- A Dex `v0.9.0` server
+- A Dex Server compatible with Dex Go SDK `v0.10.0`
 - A writable directory for disposable Dex BlobCache data
 
 ## Quick start
@@ -94,9 +94,7 @@ make build-api
 make build-web
 ```
 
-Start a compatible Dex server. Dex `v0.9.0` Workers require the Server
-compatibility RPC, so upgrade the Server before the Worker. Then run the API and
-Worker:
+Start a compatible Dex server, then run the API and Worker:
 
 ```bash
 SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent

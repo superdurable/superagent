@@ -105,10 +105,6 @@ func (client *Client) GetFlowStateForTestOnly(
 		client.flow.GetFlowStateForTestOnly,
 		nil,
 		&result,
-		dex.InvokeOptions{
-			Timeout:      client.commandTimeout,
-			LoadChannels: []dex.ChannelDef{queuedUserMessagesChannel},
-		},
 	)
 	return result, err
 }
@@ -141,12 +137,6 @@ func (client *Client) GetPlanExecutionMessagesForTestOnly(
 		client.flow.GetPlanExecutionMessagesForTestOnly,
 		revision,
 		&messages,
-		dex.InvokeOptions{
-			Timeout: client.commandTimeout,
-			LoadChannelMapInstances: []dex.ChannelMapLoad{
-				planExecutionsChannel.LoadMessages(planRevisionKey(revision)),
-			},
-		},
 	)
 	return messages, err
 }
@@ -231,13 +221,6 @@ func (client *Client) GetMessagesAfterForTestOnly(
 		client.flow.GetMessagesAfterForTestOnly,
 		getMessagesAfterInputForTestOnly{After: after, Limit: limit},
 		&page,
-		dex.InvokeOptions{
-			Timeout: client.commandTimeout,
-			LoadAttributeMaps: []dex.AttributeDef{
-				currentMessagesAttribute,
-				archivedMessagesAttribute,
-			},
-		},
 	)
 	return page, err
 }

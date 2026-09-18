@@ -56,8 +56,9 @@ var (
 
 // Flow is the durable AI Agent state machine.
 type Flow struct {
-	modelClient ModelClient
-	tools       ToolRegistry
+	modelClient               ModelClient
+	tools                     ToolRegistry
+	rpcDefinitionsForTestOnly []dex.RPCDef
 }
 
 var _ dex.Flow = (*Flow)(nil)
@@ -100,6 +101,58 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(awaitManualToolRecoveryStep{flow: flow}),
 		dex.DefineStep(durableWaitStep{flow: flow}),
 	}
+}
+
+// GetRPCs registers synchronous Agent reads and commands with immutable execution policy.
+func (flow *Flow) GetRPCs() []dex.RPCDef {
+	definitions := []dex.RPCDef{
+		dex.DefineRPC(flow.SendMessage, &dex.RPCOptions{
+			Timeout:        defaultCommandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+		}),
+		dex.DefineRPC(flow.AnswerQuestions, &dex.RPCOptions{
+			Timeout:        defaultCommandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
+		}),
+		dex.DefineRPC(flow.SteerMessage, &dex.RPCOptions{
+			Timeout:         defaultCommandTimeout,
+			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
+			IsTransactional: true,
+			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
+		}),
+		dex.DefineRPC(flow.GetSnapshot, &dex.RPCOptions{
+			Timeout:           defaultSnapshotTimeout,
+			LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
+			LoadChannels: []dex.ChannelDef{
+				queuedUserMessagesChannel,
+				steeredUserMessagesChannel,
+			},
+		}),
+		dex.DefineRPC(flow.GetArchivedMessages, &dex.RPCOptions{
+			Timeout:           defaultCommandTimeout,
+			LoadAttributeMaps: []dex.AttributeDef{archivedMessagesAttribute},
+		}),
+		dex.DefineRPC(flow.DeleteQueuedMessage, &dex.RPCOptions{
+			Timeout:         defaultCommandTimeout,
+			IsTransactional: true,
+			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
+		}),
+		dex.DefineRPC(flow.ApproveTool, &dex.RPCOptions{
+			Timeout:         defaultCommandTimeout,
+			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingApprovalAttribute)},
+			IsTransactional: true,
+		}),
+		dex.DefineRPC(flow.ResolveToolRecovery, &dex.RPCOptions{
+			Timeout:        defaultCommandTimeout,
+			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
+		}),
+		dex.DefineRPC(flow.ExecutePlan, &dex.RPCOptions{
+			Timeout:         defaultCommandTimeout,
+			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(agentStateAttribute)},
+			IsTransactional: true,
+		}),
+	}
+	return append(definitions, flow.rpcDefinitionsForTestOnly...)
 }
 
 // GetPersistenceSchema registers every durable value and best-effort stream.

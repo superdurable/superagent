@@ -118,10 +118,7 @@ func (client *Client) SendMessage(ctx context.Context, flowID FlowID, message Us
 	}
 	pending := PendingUserMessage{MessageID: MessageID(uuid.NewString()), Value: message}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, pending, accepted, dex.InvokeOptions{
-			Timeout:        client.commandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
-		})
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, pending, accepted)
 	})
 	if err != nil {
 		return err
@@ -142,10 +139,7 @@ func (client *Client) AnswerQuestions(
 		return err
 	}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted, dex.InvokeOptions{
-			Timeout:        client.commandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
-		})
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted)
 	})
 	if err != nil {
 		return err
@@ -193,12 +187,7 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 		return err
 	}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, accepted, dex.InvokeOptions{
-			Timeout:         client.commandTimeout,
-			IsTransactional: true,
-			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
-			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
-		})
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, accepted)
 	})
 	if err != nil {
 		return err
@@ -218,7 +207,7 @@ func (client *Client) GetSnapshot(
 		return AgentSnapshot{}, err
 	}
 	current, statusErr := client.latestAgentRun(ctx, flowID)
-	if statusErr == nil && current != nil && current.Status != dex.FlowRunning {
+	if statusErr == nil && current != nil && isTerminalFlowStatus(current.Status) {
 		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
 	}
 	var retryErr error
@@ -238,12 +227,16 @@ func (client *Client) GetSnapshot(
 		if statusErr != nil {
 			return AgentSnapshot{}, errors.Join(err, statusErr)
 		}
-		if current == nil || current.Status == dex.FlowRunning {
+		if current == nil || !isTerminalFlowStatus(current.Status) {
 			continue
 		}
 		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
 	}
 	return AgentSnapshot{}, retryErr
+}
+
+func isTerminalFlowStatus(status dex.FlowStatus) bool {
+	return (dex.FlowResult{Status: status}).IsTerminal()
 }
 
 func (client *Client) invokeSnapshotRPC(ctx context.Context, flowID FlowID) (AgentSnapshot, error) {
@@ -254,14 +247,7 @@ func (client *Client) invokeSnapshotRPC(ctx context.Context, flowID FlowID) (Age
 	rpcContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var snapshot AgentSnapshot
-	err := client.sdk.InvokeRPC(rpcContext, string(flowID), client.flow.GetSnapshot, nil, &snapshot, dex.InvokeOptions{
-		Timeout:           timeout,
-		LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
-		LoadChannels: []dex.ChannelDef{
-			queuedUserMessagesChannel,
-			steeredUserMessagesChannel,
-		},
-	})
+	err := client.sdk.InvokeRPC(rpcContext, string(flowID), client.flow.GetSnapshot, nil, &snapshot)
 	return snapshot, err
 }
 
@@ -270,17 +256,11 @@ func (client *Client) GetArchivedMessages(ctx context.Context, flowID FlowID, be
 	if err := validateFlowID(flowID); err != nil {
 		return HistoryPage{}, err
 	}
-	first, isValid := archivedMessageChunkFirst(before)
-	if !isValid {
+	if _, isValid := archivedMessageChunkFirst(before); !isValid {
 		return HistoryPage{}, fmt.Errorf("before sequence must identify a %d-message boundary", archiveMessageChunkSize)
 	}
 	var result archivedMessagesRPCOutput
-	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.GetArchivedMessages, before, &result, dex.InvokeOptions{
-		Timeout: client.commandTimeout,
-		LoadAttributeMapInstances: []dex.AttributeMapLoad{
-			archivedMessagesAttribute.Load(sequenceKey(first)),
-		},
-	})
+	err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.GetArchivedMessages, before, &result)
 	if err != nil {
 		return HistoryPage{}, err
 	}
@@ -452,11 +432,6 @@ func (client *Client) DeleteQueuedMessage(ctx context.Context, flowID FlowID, me
 		client.flow.DeleteQueuedMessage,
 		messageID,
 		&deleted,
-		dex.InvokeOptions{
-			Timeout:         client.commandTimeout,
-			IsTransactional: true,
-			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
-		},
 	); err != nil {
 		return err
 	}
@@ -475,11 +450,7 @@ func (client *Client) ApproveTool(ctx context.Context, flowID FlowID, request To
 		return errors.New("call ID must not be empty")
 	}
 	var accepted bool
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, request, &accepted, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-		LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingApprovalAttribute)},
-	}); err != nil {
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, request, &accepted); err != nil {
 		return err
 	}
 	return ensureAccepted(accepted, CommandApproveTool)
@@ -515,10 +486,6 @@ func (client *Client) ResolveToolRecovery(
 			client.flow.ResolveToolRecovery,
 			request,
 			accepted,
-			dex.InvokeOptions{
-				Timeout:        client.commandTimeout,
-				LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
-			},
 		)
 	})
 	if err != nil {
@@ -536,11 +503,7 @@ func (client *Client) ExecutePlan(ctx context.Context, flowID FlowID, request Pl
 		return errors.New("plan revision must be positive")
 	}
 	var accepted bool
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, request, &accepted, dex.InvokeOptions{
-		Timeout:         client.commandTimeout,
-		IsTransactional: true,
-		LockAttributes:  []dex.AttributeLock{dex.LockAttribute(agentStateAttribute)},
-	}); err != nil {
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, request, &accepted); err != nil {
 		return err
 	}
 	return ensureAccepted(accepted, CommandExecutePlan)

@@ -43,3 +43,26 @@ func TestListRecentEventsRejectsInvalidLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestIsTerminalFlowStatusTreatsContinueAsNewAsActive(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		status   dex.FlowStatus
+		terminal bool
+	}{
+		{name: "running", status: dex.FlowRunning},
+		{name: "continued as new", status: dex.FlowContinuedAsNew},
+		{name: "completed", status: dex.FlowCompleted, terminal: true},
+		{name: "failed", status: dex.FlowFailed, terminal: true},
+		{name: "canceled", status: dex.FlowCanceled, terminal: true},
+		{name: "terminated", status: dex.FlowTerminated, terminal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isTerminalFlowStatus(test.status); got != test.terminal {
+				t.Fatalf("isTerminalFlowStatus(%v) = %t, want %t", test.status, got, test.terminal)
+			}
+		})
+	}
+}
