@@ -83,6 +83,13 @@ func (*Flow) GetFlowType() string {
 
 // GetSteps registers the state-machine nodes.
 func (flow *Flow) GetSteps() []dex.StepDef {
+	// Tool calls enter routeToolStep after a checkSteeredStep safe boundary.
+	// Built-ins complete there; external writes may wait in awaitToolApprovalStep.
+	// Serial effects run in executeToolStep and use recoverToolExecutionStep for
+	// configured automatic recovery. Safe reads fan out through
+	// executeParallelToolStep, recover per branch, and join before shared state
+	// changes. prepareManualToolRecoveryStep and awaitManualToolRecoveryStep own
+	// operator decisions and retry selected calls with their original IDs.
 	return []dex.StepDef{
 		dex.DefineStartStep(initStep{flow: flow}),
 		dex.DefineStep(awaitUserStep{flow: flow}),
@@ -92,7 +99,7 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(checkSteeredStep{flow: flow}),
 		dex.DefineStep(routeToolStep{flow: flow}),
 		dex.DefineStep(awaitToolApprovalStep{flow: flow}),
-		dex.DefineStep(executeToolWithRetryStep{flow: flow}),
+		dex.DefineStep(executeToolStep{flow: flow}),
 		dex.DefineStep(recoverToolExecutionStep{flow: flow}),
 		dex.DefineStep(executeParallelToolStep{flow: flow}),
 		dex.DefineStep(recoverParallelToolExecutionStep{flow: flow}),
@@ -624,7 +631,9 @@ func validateToolExecutionPolicy(definition ToolDefinition) error {
 	}
 }
 
-func (flow *Flow) currentToolStepOptions(ctx dex.Context) (*dex.StepOptions, error) {
+// currentSerialToolStepOptions resolves the current call before scheduling its
+// serial execution movement. WithStepOptions carries the result to Dex.
+func (flow *Flow) currentSerialToolStepOptions(ctx dex.Context) (*dex.StepOptions, error) {
 	call, err := flow.currentToolCall(ctx)
 	if err != nil {
 		return nil, err
@@ -644,10 +653,12 @@ func (flow *Flow) currentToolStepOptions(ctx dex.Context) (*dex.StepOptions, err
 	if err := validateToolExecutionPolicy(definition); err != nil {
 		return nil, fmt.Errorf("tool %q: %w", definition.Name, err)
 	}
-	return flow.toolStepOptions(definition), nil
+	return flow.serialToolStepOptions(definition), nil
 }
 
-func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
+// serialToolStepOptions maps one definition to movement-scoped serial policy.
+// Exhausted retries route according to that tool's recovery policy.
+func (flow *Flow) serialToolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	failureStep := dex.ProceedToOnExecuteFailure(
 		recoverToolExecutionStep{flow: flow},
 		messageMutationStepOptions,
@@ -672,6 +683,8 @@ func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	}
 }
 
+// parallelToolStepOptions maps one definition to one branch movement. Branch
+// exhaustion always becomes a typed result so the join can resolve the batch.
 func (flow *Flow) parallelToolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	return &dex.StepOptions{
 		ExecuteMethodTimeout: definition.AttemptTimeout,
@@ -1655,7 +1668,7 @@ const (
 	continueCompactContext    continuation = "compact_context"
 	continueRouteTool         continuation = "route_tool"
 	continueAwaitToolApproval continuation = "await_tool_approval"
-	continueExecuteToolRetry  continuation = "execute_tool_with_retry"
+	continueExecuteTool       continuation = "execute_tool"
 	continueDurableWait       continuation = "durable_wait"
 
 	stepTypeInit                  stepType = "Init"
@@ -1666,7 +1679,7 @@ const (
 	stepTypeCheckSteered          stepType = "CheckSteered"
 	stepTypeRouteTool             stepType = "RouteTool"
 	stepTypeAwaitApproval         stepType = "AwaitToolApproval"
-	stepTypeExecuteRetry          stepType = "ExecuteToolWithRetry"
+	stepTypeExecuteTool           stepType = "ExecuteTool"
 	stepTypeRecoverTool           stepType = "RecoverToolExecution"
 	stepTypeExecuteParallel       stepType = "ExecuteParallelTool"
 	stepTypeRecoverParallel       stepType = "RecoverParallelToolExecution"
@@ -2293,13 +2306,13 @@ func (step checkSteeredStep) Execute(ctx dex.Context, input continuation) (*dex.
 		return dex.GoTo(routeToolStep{flow: step.flow}, nil), nil
 	case continueAwaitToolApproval:
 		return dex.GoTo(awaitToolApprovalStep{flow: step.flow}, nil), nil
-	case continueExecuteToolRetry:
-		options, err := step.flow.currentToolStepOptions(ctx)
+	case continueExecuteTool:
+		options, err := step.flow.currentSerialToolStepOptions(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return dex.GoTo(
-			executeToolWithRetryStep{flow: step.flow},
+			executeToolStep{flow: step.flow},
 			nil,
 			dex.WithStepOptions(options),
 		), nil
@@ -2524,7 +2537,7 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueAwaitToolApproval), nil
 	}
-	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteToolRetry), nil
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteTool), nil
 }
 
 type awaitToolApprovalStep struct {
@@ -2581,7 +2594,7 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 		return nil, deleteErr
 	}
 	if approvals[0].Approved {
-		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteToolRetry), nil
+		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueExecuteTool), nil
 	}
 	result, encodeErr := encodeToolResult(toolResultPayload{
 		Status: toolResultStatusFailed,
@@ -2702,29 +2715,18 @@ func (flow *Flow) finishToolBatch(ctx dex.Context, batch toolBatchState) (contin
 	return continueCompactContext, nil
 }
 
-type executeToolWithRetryStep struct {
+// executeToolStep has no registered StepOptions. checkSteeredStep resolves the
+// current definition and attaches complete serial options to every movement.
+type executeToolStep struct {
 	dex.StepDefaultsNoWaitFor[dex.None]
 	flow *Flow
 }
 
-var _ dex.Step[dex.None] = executeToolWithRetryStep{}
+var _ dex.Step[dex.None] = executeToolStep{}
 
-func (executeToolWithRetryStep) GetStepType() string { return string(stepTypeExecuteRetry) }
+func (executeToolStep) GetStepType() string { return string(stepTypeExecuteTool) }
 
-func (step executeToolWithRetryStep) GetStepOptions() *dex.StepOptions {
-	return &dex.StepOptions{
-		ExecuteMethodTimeout:     toolStepOptions.ExecuteMethodTimeout,
-		HeartbeatTimeout:         toolStepOptions.HeartbeatTimeout,
-		ExecuteLoadAttributeMaps: toolStepOptions.ExecuteLoadAttributeMaps,
-		ExecuteRetry:             toolStepOptions.ExecuteRetry,
-		ExecuteFailure: dex.ProceedToOnExecuteFailure(
-			prepareManualToolRecoveryStep{flow: step.flow},
-			manualToolRecoveryStepOptions,
-		),
-	}
-}
-
-func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
 	if err := step.flow.updateStatus(ctx, AgentStatusExecutingTool); err != nil {
 		return nil, err
 	}
@@ -2773,21 +2775,7 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	}
 	if result.Outcome == ToolOutcomeUnknown &&
 		definition.RetryExhaustionPolicy.Effective() == ToolRetryExhaustionPolicyManualRecovery {
-		resultCopy := result
-		batch := toolBatchState{
-			BatchID:          fmt.Sprintf("tool-batch-%d-%d", state.LastSequence, state.PendingToolIndex),
-			FirstIndex:       state.PendingToolIndex,
-			RecoveryRevision: 1,
-			Records: []toolBatchRecord{{
-				Index:                 state.PendingToolIndex,
-				Call:                  call,
-				Result:                &resultCopy,
-				HasResult:             true,
-				ErrorType:             "tool_reported_unknown",
-				RetryExhaustionPolicy: ToolRetryExhaustionPolicyManualRecovery,
-			}},
-		}
-		return dex.GoTo(awaitManualToolRecoveryStep{flow: step.flow}, batch), nil
+		return dex.GoTo(prepareManualToolRecoveryStep{flow: step.flow}, nil), nil
 	}
 	if result.Outcome == ToolOutcomeUnknown {
 		return dex.GoTo(recoverToolExecutionStep{flow: step.flow}, nil), nil
@@ -2836,6 +2824,8 @@ func (step recoverToolExecutionStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
 }
 
+// executeParallelToolStep has no registered StepOptions. Initial fan-out and
+// manual retries attach complete branch options to every movement.
 type executeParallelToolStep struct {
 	dex.StepDefaultsNoWaitFor[parallelToolExecutionInput]
 	flow *Flow
@@ -2844,18 +2834,6 @@ type executeParallelToolStep struct {
 var _ dex.Step[parallelToolExecutionInput] = executeParallelToolStep{}
 
 func (executeParallelToolStep) GetStepType() string { return string(stepTypeExecuteParallel) }
-
-func (step executeParallelToolStep) GetStepOptions() *dex.StepOptions {
-	return &dex.StepOptions{
-		ExecuteMethodTimeout: toolStepOptions.ExecuteMethodTimeout,
-		HeartbeatTimeout:     toolStepOptions.HeartbeatTimeout,
-		ExecuteRetry:         toolStepOptions.ExecuteRetry,
-		ExecuteFailure: dex.ProceedToOnExecuteFailure(
-			recoverParallelToolExecutionStep{flow: step.flow},
-			defaultStepOptions,
-		),
-	}
-}
 
 func (step executeParallelToolStep) Execute(
 	ctx dex.Context,
@@ -2900,15 +2878,14 @@ func (step executeParallelToolStep) Execute(
 	if err := result.Outcome.Validate(); err != nil {
 		return nil, fmt.Errorf("tool %q outcome: %w", input.Call.Name, err)
 	}
-	errorType := ""
 	if result.Outcome == ToolOutcomeUnknown {
-		errorType = "tool_reported_unknown"
+		return dex.GoTo(recoverParallelToolExecutionStep{flow: step.flow}, input), nil
 	}
 	if err := parallelToolResultsChannel.Publish(ctx, input.ResultInstance, parallelToolResult{
 		Index:                 input.Index,
 		Call:                  input.Call,
 		Result:                result,
-		ErrorType:             errorType,
+		ErrorType:             "",
 		RetryExhaustionPolicy: input.RetryExhaustionPolicy.Effective(),
 	}); err != nil {
 		return nil, err
@@ -2935,11 +2912,11 @@ func (recoverParallelToolExecutionStep) Execute(
 	ctx dex.Context,
 	input parallelToolExecutionInput,
 ) (*dex.StepDecision, error) {
-	failure := ctx.RecoveryError()
-	if failure == nil {
-		return nil, errors.New("parallel tool recovery is missing the exhausted failure")
+	errorType := "tool_reported_unknown"
+	if failure := ctx.RecoveryError(); failure != nil {
+		errorType = failure.ErrorType
 	}
-	result, err := unknownToolResult(failure.ErrorType)
+	result, err := unknownToolResult(errorType)
 	if err != nil {
 		return nil, err
 	}
@@ -2947,7 +2924,7 @@ func (recoverParallelToolExecutionStep) Execute(
 		Index:                 input.Index,
 		Call:                  input.Call,
 		Result:                result,
-		ErrorType:             failure.ErrorType,
+		ErrorType:             errorType,
 		RetryExhaustionPolicy: input.RetryExhaustionPolicy.Effective(),
 	}); err != nil {
 		return nil, err
@@ -3042,9 +3019,9 @@ func (step prepareManualToolRecoveryStep) Execute(
 	ctx dex.Context,
 	_ dex.None,
 ) (*dex.StepDecision, error) {
-	failure := ctx.RecoveryError()
-	if failure == nil {
-		return nil, errors.New("manual tool recovery is missing the exhausted failure")
+	errorType := "tool_reported_unknown"
+	if failure := ctx.RecoveryError(); failure != nil {
+		errorType = failure.ErrorType
 	}
 	call, err := step.flow.currentToolCall(ctx)
 	if err != nil {
@@ -3054,7 +3031,7 @@ func (step prepareManualToolRecoveryStep) Execute(
 	if err != nil {
 		return nil, err
 	}
-	result, err := unknownToolResult(failure.ErrorType)
+	result, err := unknownToolResult(errorType)
 	if err != nil {
 		return nil, err
 	}
@@ -3068,7 +3045,7 @@ func (step prepareManualToolRecoveryStep) Execute(
 			Call:                  call,
 			Result:                &resultCopy,
 			HasResult:             true,
-			ErrorType:             failure.ErrorType,
+			ErrorType:             errorType,
 			RetryExhaustionPolicy: ToolRetryExhaustionPolicyManualRecovery,
 		}},
 	}

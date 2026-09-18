@@ -80,8 +80,8 @@ check-flow-definition: install-dexcli
 			sed -n '/"diagnostics"/,$$p' "$${flow_definition}" >&2; \
 			exit 1; \
 		fi; \
-		if grep -Fq '"name": "ExecuteTool"' "$${flow_definition}"; then \
-			echo "Flow definition must not contain the removed ExecuteTool Step" >&2; \
+		if ! grep -Fq '"name": "ExecuteTool"' "$${flow_definition}"; then \
+			echo "Flow definition must contain the canonical ExecuteTool Step" >&2; \
 			exit 1; \
 		fi; \
 		for channel in answeredUserInputsChannel queuedUserMessagesChannel steeredUserMessagesChannel toolApprovalsChannel toolRecoveryDecisionsChannel parallelToolResultsChannel planExecutionsChannel; do \

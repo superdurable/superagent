@@ -101,7 +101,7 @@ func TestToolDefinitionsExposeFailureSimulationOnlyToLocalMock(t *testing.T) {
 func TestToolStepOptionsMapRunningTypeWithOneMinuteHeartbeat(t *testing.T) {
 	flow := &Flow{}
 	short := parallelDefinitionForTestOnly("short")
-	shortOptions := flow.toolStepOptions(short)
+	shortOptions := flow.serialToolStepOptions(short)
 	if shortOptions.ExecuteDurability != dex.StepDurabilityDefault ||
 		shortOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("short options = %+v", shortOptions)
@@ -114,7 +114,7 @@ func TestToolStepOptionsMapRunningTypeWithOneMinuteHeartbeat(t *testing.T) {
 
 	long := short
 	long.RunningType = ToolRunningTypeLongRunning
-	longOptions := flow.toolStepOptions(long)
+	longOptions := flow.serialToolStepOptions(long)
 	if longOptions.ExecuteDurability != dex.StepDurabilitySync ||
 		longOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("long options = %+v", longOptions)
@@ -123,6 +123,18 @@ func TestToolStepOptionsMapRunningTypeWithOneMinuteHeartbeat(t *testing.T) {
 	if parallelLongOptions.ExecuteDurability != dex.StepDurabilitySync ||
 		parallelLongOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("parallel long options = %+v", parallelLongOptions)
+	}
+}
+
+func TestToolExecutionStepsUseOnlyMovementOptions(t *testing.T) {
+	if got := (executeToolStep{}).GetStepType(); got != "ExecuteTool" {
+		t.Fatalf("serial Step type = %q", got)
+	}
+	if options := (executeToolStep{}).GetStepOptions(); options != nil {
+		t.Fatalf("serial registered options = %+v", options)
+	}
+	if options := (executeParallelToolStep{}).GetStepOptions(); options != nil {
+		t.Fatalf("parallel registered options = %+v", options)
 	}
 }
 

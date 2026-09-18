@@ -59,21 +59,21 @@ CallModel
 
 RouteTool
   -> CheckSteered -> AwaitToolApproval         (untrusted write)
-  -> CheckSteered -> ExecuteToolWithRetry      (approved/read-only external tool)
+  -> CheckSteered -> ExecuteTool               (approved/read-only external tool)
   -> ExecuteParallelTool + AwaitParallelToolResults (bounded contiguous safe reads)
   -> CheckSteered -> DurableWait               (timer tool)
   -> AwaitUser                                  (durable input tool)
   -> next tool or CompactContext               (built-in/result)
 
 AwaitToolApproval
-  -> CheckSteered -> ExecuteToolWithRetry      (approved)
+  -> CheckSteered -> ExecuteTool               (approved)
   -> next tool or CompactContext               (rejected)
   -> CompactContext                            (steered)
 
-ExecuteToolWithRetry
+ExecuteTool
   -> next tool or CompactContext               (success or known failure)
   -> RecoverToolExecution                      (configured automatic unknown)
-  -> PrepareManualToolRecovery                 (default retry exhaustion)
+  -> PrepareManualToolRecovery                 (manual unknown or retry exhaustion)
 
 RecoverToolExecution
   -> next tool or CompactContext               (one unknown outcome)
@@ -116,14 +116,39 @@ history, and makes the model replan.
 | `CheckSteered`         | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                       |
 | `RouteTool`            | none                                                                                | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                                                            |
 | `AwaitToolApproval`    | exact call-ID approval or steering                                                  | Persist waiting status; consume one decision or replan on steering                                                                                         |
-| `ExecuteToolWithRetry` | none                                                                                | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                                  |
+| `ExecuteTool`          | none                                                                                | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                                  |
 | `RecoverToolExecution` | none                                                                                | Record one unknown result for an explicitly configured automatic recovery, then continue                                                                   |
 | `ExecuteParallelTool`  | none                                                                                | Perform one bounded-wave branch effect and publish exactly one typed result without shared-state mutation                                                   |
-| `RecoverParallelToolExecution` | none                                                                        | Convert one exhausted branch to an unknown typed result and publish it                                                                                      |
+| `RecoverParallelToolExecution` | none                                                                        | Normalize one returned-unknown or exhausted branch and publish its typed result                                                                             |
 | `AwaitParallelToolResults` | all started branch results                                                                 | Join results, preserve model order, and either commit the batch or enter one manual recovery                                                                |
-| `PrepareManualToolRecovery` | none                                                                            | Capture the serial exhausted call and redacted Dex error type                                                                                               |
+| `PrepareManualToolRecovery` | none                                                                            | Capture a serial returned-unknown or exhausted call and its redacted error type                                                                              |
 | `AwaitManualToolRecovery` | exact recovery decision or steering                                               | Persist recovery state; retry selected calls, continue unknowns, stop the sequence, or replan                                                               |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
+
+### Tool StepOptions resolution
+
+`ExecuteTool` and `ExecuteParallelTool` register without static StepOptions.
+Their execution policy is resolved for each movement from the selected
+`ToolDefinition`, so a prior call cannot leak policy into the next call.
+
+For a serial call, `CheckSteered` re-reads the current call, Agent config, and
+state after approval and steering boundaries. It schedules `ExecuteTool` with
+`WithStepOptions`. For a parallel wave, `RouteTool` creates one
+`ExecuteParallelTool` movement per call with its own options. Manual retries
+re-resolve each selected definition and use the same parallel movement path.
+
+Each movement supplies attempt timeout, the fixed one-minute heartbeat, retry
+attempts and total duration, durability, and exhausted-retry routing. Serial
+execution also loads the retained message map that it may append to. Each
+failure target carries its own StepOptions. Parallel exhaustion becomes a typed
+branch result so the join can decide whether the batch needs manual recovery.
+
+Dex merges movement options over registered options. Because these execution
+Steps register `nil`, the movement is their complete Step-level policy. A
+short-running definition leaves Execute durability unset and therefore inherits
+the Flow's ASYNC default. A long-running definition explicitly selects SYNC.
+ASYNC fallback changes where the attempt runs; it does not change that resolved
+durability.
 
 Dex Server `v0.10.0` and Go SDK `v0.9.1` expose Channel size metadata in `WaitFor` and
 `Execute`. `AwaitUser.WaitFor` reads the
@@ -239,7 +264,8 @@ every completed Snapshot read. Hidden pages pause the timer and live reads.
 
 ## External effects and recovery
 
-- Tool execution policy is copied from `ToolDefinition` into Dex StepOptions.
+- Tool execution policy is copied from `ToolDefinition` into movement-scoped
+  Dex StepOptions immediately before scheduling each execution.
 - `short_running` is the default and inherits Flow ASYNC durability. Use
   `long_running` when more than half of expected calls are likely to exceed five
   seconds; it overrides Execute durability to SYNC. This classification is an
