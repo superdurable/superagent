@@ -14,7 +14,7 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK `v0.9.1` and Server `v0.10.0`. Each
+The implementation requires Dex Go SDK `v0.10.0` and Server `v0.10.0`. Each
 `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
@@ -184,7 +184,7 @@ the Flow's ASYNC default. A long-running definition explicitly selects SYNC.
 ASYNC fallback changes where the attempt runs; it does not change that resolved
 durability.
 
-Dex Server `v0.10.0` and Go SDK `v0.9.1` expose Channel size metadata in `WaitFor` and
+Dex Server `v0.10.0` and Go SDK `v0.10.0` expose Channel size metadata in `WaitFor` and
 `Execute`. `AwaitUser.WaitFor` reads the
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
@@ -288,7 +288,7 @@ description, and pending Channels. It returns `WaitingInputRound` and stable
 application message IDs. Snapshot contains application state only; it does not
 project Dex lifecycle or terminal failure metadata. Archive paging returns exactly one immutable chunk and
 the bounded sequence metadata needed for continuation. Its registered
-`v0.9.1` RPC options load the retained archive map because the requested chunk
+`v0.10.0` RPC options load the retained archive map because the requested chunk
 key is an RPC input and invocation-specific selective loads no longer exist.
 
 The browser begins with the Snapshot round, waits for `round > watermark`, uses
