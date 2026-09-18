@@ -93,6 +93,30 @@ class UpdateDexReleaseTests(unittest.TestCase):
             self.assertIn("DEXCLI_VERSION := v1.2.3", (root / "Makefile").read_text(encoding="utf-8"))
             self.assertIn("checksum=" + "4" * 64, (root / "script/install-dexcli.sh").read_text(encoding="utf-8"))
 
+            newer = copy.deepcopy(validated)
+            newer["release"] = "1.2.4"
+            newer["components"]["sdkGo"]["version"] = "1.2.4"
+            newer["components"]["cli"]["checksums"] = {
+                name.replace("1.2.3", "1.2.4"): checksum
+                for name, checksum in newer["components"]["cli"]["checksums"].items()
+            }
+            newer_url = url.replace("1.2.3", "1.2.4")
+            newer_digest = hashlib.sha256(json.dumps(newer).encode()).hexdigest()
+            MODULE.update_repository(root, newer_url, newer_digest, newer, server_only=True)
+            retained = json.loads((root / "dex-release.lock.json").read_text(encoding="utf-8"))
+            self.assertEqual(retained["release"], "1.2.4")
+            self.assertEqual(retained["sdkGoVersion"], "1.2.3")
+            self.assertEqual(retained["sdkManifest"], lock["manifest"])
+            self.assertEqual(retained["protocol"], lock["protocol"])
+            self.assertIn("sdk-go v1.2.3", (root / "go.mod").read_text(encoding="utf-8"))
+            self.assertIn("DEXCLI_VERSION := v1.2.4", (root / "Makefile").read_text(encoding="utf-8"))
+            newer["protocol"]["server"] = {"minimum": 4, "maximum": 4}
+            with self.assertRaisesRegex(MODULE.UpgradeError, "retained Go SDK.*incompatible"):
+                MODULE.update_repository(root, newer_url, newer_digest, newer, server_only=True)
+            self.assertEqual(
+                json.loads((root / "dex-release.lock.json").read_text(encoding="utf-8")), retained
+            )
+
     def test_rejects_tampering_and_incompatible_protocol(self) -> None:
         value = manifest()
         content = (json.dumps(value) + "\n").encode()

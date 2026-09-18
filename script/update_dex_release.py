@@ -91,8 +91,20 @@ def update_repository(
     manifest_url: str,
     manifest_sha256: str,
     manifest: dict[str, Any],
+    *,
+    server_only: bool = False,
 ) -> None:
     version = manifest["release"]
+    previous = None
+    if server_only:
+        previous = json.loads((root / "dex-release.lock.json").read_text(encoding="utf-8"))
+        server_protocol = manifest["protocol"]["server"]
+        sdk_protocol = previous["protocol"]
+        require(
+            max(server_protocol["minimum"], sdk_protocol["minimum"])
+            <= min(server_protocol["maximum"], sdk_protocol["maximum"]),
+            "retained Go SDK and new Server protocols are incompatible",
+        )
     checksums = manifest["components"]["cli"]["checksums"]
     archives = tuple(
         f"dexcli_v{version}_{platform}_{architecture}.tar.gz"
@@ -100,11 +112,12 @@ def update_repository(
         for architecture in ("amd64", "arm64")
     )
     require(set(checksums) == set(archives), "Dex CLI checksums are incomplete")
-    replace_once(
-        root / "go.mod",
-        r"(github\.com/superdurable/dex/sdk-go\s+)v[^\s]+",
-        rf"\g<1>v{version}",
-    )
+    if not server_only:
+        replace_once(
+            root / "go.mod",
+            r"(github\.com/superdurable/dex/sdk-go\s+)v[^\s]+",
+            rf"\g<1>v{version}",
+        )
     replace_once(root / "Makefile", r"^DEXCLI_VERSION := v[^\s]+$", f"DEXCLI_VERSION := v{version}")
     installer = root / "script/install-dexcli.sh"
     installer_content = installer.read_text(encoding="utf-8")
@@ -132,6 +145,10 @@ def update_repository(
         "persistenceCompatibility": manifest["persistenceCompatibility"],
         "openFlowsCompatibility": "cancel-required",
     }
+    if previous is not None:
+        lock["sdkGoVersion"] = previous["sdkGoVersion"]
+        lock["protocol"] = previous["protocol"]
+        lock["sdkManifest"] = previous.get("sdkManifest", previous["manifest"])
     (root / "dex-release.lock.json").write_text(
         json.dumps(lock, indent=2) + "\n",
         encoding="utf-8",
@@ -142,10 +159,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--manifest-sha256", required=True)
+    parser.add_argument("--server-only", action="store_true", help="Retain the locked Go SDK and verify protocol overlap")
     args = parser.parse_args()
     content = download(args.manifest_url)
     manifest = validate_manifest(args.manifest_url, args.manifest_sha256, content)
-    update_repository(ROOT, args.manifest_url, args.manifest_sha256, manifest)
+    update_repository(ROOT, args.manifest_url, args.manifest_sha256, manifest, server_only=args.server_only)
     print(f'Prepared SuperAgent for Dex {manifest["release"]}; open Flows require review')
 
 

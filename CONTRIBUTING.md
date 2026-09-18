@@ -18,8 +18,14 @@ the installed SDK source and the installed skill before changing resource
 projection or errors. Never infer an API from a design screenshot or unreleased
 branch.
 
-`dex-release.lock.json` binds the direct Go SDK requirement to one immutable
-Dex manifest. A Dex publication opens an automated upgrade PR with open Flow
+`dex-release.lock.json` binds Server and Go SDK versions to immutable
+Dex manifests. For a Server-only upgrade, run `script/update_dex_release.py`
+with `--server-only`, `--manifest-url`, and `--manifest-sha256`. This preserves
+the Go SDK and records its original manifest in `sdkManifest`. Validation checks
+both manifests and requires the SDK and Server protocol intervals to overlap.
+The Go SDK remains at `v0.9.0` because `v0.10.0` changes RPC registration and
+removes invocation-specific archive loading; that migration needs separate design.
+A Dex publication opens an automated upgrade PR with open Flow
 compatibility set to `cancel-required` for review. Publishing the subsequent
 SuperAgent release dispatches the reviewed IaC and SuperVerse upgrades.
 The automation opens the draft after asset validation and mechanical pin

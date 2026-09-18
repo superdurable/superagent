@@ -221,17 +221,19 @@ func (client *Client) GetSnapshot(
 	if statusErr == nil && current != nil && current.Status != dex.FlowRunning {
 		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
 	}
-	var inactiveErr error
+	var retryErr error
 	for range maximumSnapshotAttempts {
 		snapshot, err := client.invokeSnapshotRPC(ctx, flowID)
 		if err == nil {
 			return snapshot, nil
 		}
 		var inactive *dex.FlowNotActiveError
-		if !errors.As(err, &inactive) {
+		var pollTimeout *dex.LongPollTimeoutError
+		if !errors.As(err, &inactive) && !errors.As(err, &pollTimeout) {
 			return AgentSnapshot{}, err
 		}
-		inactiveErr = err
+		// Snapshot is read-only, so server long-poll expiry can safely retry within this bounded budget.
+		retryErr = err
 		current, statusErr = client.latestAgentRun(ctx, flowID)
 		if statusErr != nil {
 			return AgentSnapshot{}, errors.Join(err, statusErr)
@@ -241,7 +243,7 @@ func (client *Client) GetSnapshot(
 		}
 		return client.terminalSnapshot(ctx, flowID, RunID(current.RunID))
 	}
-	return AgentSnapshot{}, inactiveErr
+	return AgentSnapshot{}, retryErr
 }
 
 func (client *Client) invokeSnapshotRPC(ctx context.Context, flowID FlowID) (AgentSnapshot, error) {
