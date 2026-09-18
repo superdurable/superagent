@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted on 2026-09-14. Supersedes the synchronization policy in ADRs 0004,
-0006, and 0007. Supersedes ADR 0010's placement of credential maintenance.
+Accepted on 2026-09-14 and amended by ADR 0015. Supersedes the synchronization
+policy in ADRs 0004, 0006, and 0007. Supersedes ADR 0010's placement of
+credential maintenance.
 
 ## Context
 
@@ -36,9 +37,9 @@ completion. Other waits never change the round.
 The browser reads the initial round from Snapshot, waits for a strictly greater
 value, adopts the actual matched value as its next watermark, and requests a
 new Snapshot. It does not create an equality lifecycle probe after Snapshot.
-The Snapshot backend checks indexed Flow lifecycle before invoking its durable
-read RPC so a terminal Flow cannot return the last running projection. The
-visible-page fallback is configurable at runtime and defaults to 60 seconds.
+Snapshot reads only durable application state; ADR 0015 removes the indexed
+Flow lifecycle probe and terminal browser projection. The visible-page fallback
+is configurable at runtime and defaults to 60 seconds.
 
 Send payloads receive one stable application message ID before RPC retry.
 Steering preserves it. Snapshot exposes the application ID while Dex

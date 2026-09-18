@@ -886,9 +886,6 @@ components:
       additionalProperties: false
       required:
         - runId
-        - flowStatus
-        - errorType
-        - errorMessage
         - history
         - description
         - queued
@@ -896,21 +893,10 @@ components:
       properties:
         runId:
           $ref: "#/components/schemas/RunId"
-        flowStatus:
-          $ref: "#/components/schemas/FlowStatus"
-        errorType:
-          allOf:
-            - $ref: "#/components/schemas/FlowErrorType"
-          nullable: true
-        errorMessage:
-          type: string
-          nullable: true
         history:
           $ref: "#/components/schemas/HistoryPage"
         description:
-          allOf:
-            - $ref: "#/components/schemas/AgentDescription"
-          nullable: true
+          $ref: "#/components/schemas/AgentDescription"
         queued:
           type: array
           items:
@@ -935,24 +921,6 @@ components:
           allOf:
             - $ref: "#/components/schemas/Sequence"
           nullable: true
-    FlowStatus:
-      type: string
-      enum:
-        - running
-        - completed
-        - failed
-        - terminated
-        - canceled
-        - continued_as_new
-    FlowErrorType:
-      type: string
-      enum:
-        - step_decision
-        - client_api
-        - worker_method
-        - invalid_user_code
-        - internal
-        - timeout
     SequencedMessage:
       type: object
       additionalProperties: false

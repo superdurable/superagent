@@ -20,7 +20,6 @@ import {
   AgentStatus,
   EventKind,
   EventStream,
-  FlowStatus,
   MessageRole,
   PlanStatus,
   Provider,
@@ -107,9 +106,6 @@ const activeDescription: AgentDescription = {
 
 const snapshot: AgentSnapshot = {
   runId: "run-1",
-  flowStatus: FlowStatus.RUNNING,
-  errorType: null,
-  errorMessage: null,
   history: { messages: [], nextBeforeSequence: null },
   description: activeDescription,
   queued: [],
@@ -448,28 +444,6 @@ describe("App", () => {
       expect(observed).toEqual([1, 4]);
       expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
     });
-  });
-
-  it("shows a terminal Flow result without opening live subscriptions", async () => {
-    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
-      runId: "run-terminal",
-      flowStatus: FlowStatus.TERMINATED,
-      errorType: null,
-      errorMessage: "stopped by operator",
-      history: { messages: [], nextBeforeSequence: null },
-      description: null,
-      queued: [],
-      steered: [],
-    });
-    window.history.replaceState({}, "", "/?flowId=flow-existing");
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole("heading", { name: "Agent Terminated" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("stopped by operator")).toBeInTheDocument();
-    expect(readEvent).not.toHaveBeenCalled();
   });
 
   it("shows an optimistic queue item while message submission is pending", async () => {

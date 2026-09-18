@@ -130,8 +130,7 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-			return snapshot.Description != nil &&
-				snapshot.Description.Status == AgentStatusWaitingForToolRecovery &&
+			return snapshot.Description.Status == AgentStatusWaitingForToolRecovery &&
 				snapshot.Description.PendingToolRecovery != nil
 		})
 		pending := snapshot.Description.PendingToolRecovery
@@ -236,8 +235,7 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-			return snapshot.Description != nil &&
-				snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 				snapshot.Description.PendingToolRecovery == nil &&
 				historyHasMessage(
 					snapshot.History.Messages,
@@ -294,8 +292,7 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 			t.Fatalf("accepted concurrent recovery commands = %d, want 1", accepted)
 		}
 		waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-			return snapshot.Description != nil &&
-				snapshot.Description.Status == AgentStatusWaitingForMessage &&
+			return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 				snapshot.Description.PendingToolRecovery == nil
 		})
 	})
@@ -389,8 +386,7 @@ func TestAgentRejectsInvalidWriteTodosIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil &&
-			snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			historyContainsText(snapshot.History.Messages, string(toolErrorInvalidPlan)) &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration tool result acknowledged")
 	})
@@ -431,8 +427,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if initialSnapshot.RunID != runID {
 		t.Fatalf("Snapshot run ID = %q, want %q", initialSnapshot.RunID, runID)
 	}
-	if initialSnapshot.Description == nil ||
-		initialSnapshot.Description.Status != AgentStatusWaitingForMessage ||
+	if initialSnapshot.Description.Status != AgentStatusWaitingForMessage ||
 		len(initialSnapshot.History.Messages) != 0 ||
 		len(initialSnapshot.Queued) != 0 ||
 		len(initialSnapshot.Steered) != 0 {
@@ -479,7 +474,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		return event.Kind == EventKindSnapshotRequired
 	})
 	approvalSnapshot := readSnapshot(t, environment, flowID)
-	if approvalSnapshot.Description == nil || approvalSnapshot.Description.PendingApproval == nil {
+	if approvalSnapshot.Description.PendingApproval == nil {
 		t.Fatalf("Snapshot after approval control = %#v", approvalSnapshot)
 	}
 	approval := *approvalSnapshot.Description.PendingApproval
@@ -652,9 +647,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		if !errors.As(archiveErr, &notFound) {
 			t.Fatalf("trimmed archive error = %T %v", archiveErr, archiveErr)
 		}
-		if snapshot := readSnapshot(t, environment, flowID); snapshot.Description == nil {
-			t.Fatalf("Snapshot after trimmed archive read = %#v", snapshot)
-		}
+		_ = readSnapshot(t, environment, flowID)
 	}
 }
 
@@ -674,7 +667,7 @@ func TestAgentTimerSnapshotNotificationIntegration(t *testing.T) {
 		return event.Kind == EventKindSnapshotRequired
 	})
 	snapshot := readSnapshot(t, environment, flowID)
-	if snapshot.Description == nil || snapshot.Description.PendingTimer == nil {
+	if snapshot.Description.PendingTimer == nil {
 		t.Fatalf("Snapshot after timer control = %#v", snapshot)
 	}
 }
@@ -686,7 +679,7 @@ func TestAgentWaitingInputRoundIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := readSnapshot(t, environment, flowID)
-	if initial.Description == nil || initial.Description.WaitingInputRound != 1 {
+	if initial.Description.WaitingInputRound != 1 {
 		t.Fatalf("initial waiting input round = %#v, want 1", initial.Description)
 	}
 
@@ -707,7 +700,7 @@ func TestAgentWaitingInputRoundIntegration(t *testing.T) {
 		t.Fatalf("first round result = %#v", first)
 	}
 	snapshot := readSnapshot(t, environment, flowID)
-	if snapshot.Description == nil || snapshot.Description.WaitingInputRound != first.round ||
+	if snapshot.Description.WaitingInputRound != first.round ||
 		!historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: round cycle") {
 		t.Fatalf("reconciled Snapshot = %#v", snapshot)
 	}
@@ -886,7 +879,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil
+		return snapshot.Description.PendingUserInput != nil
 	})
 	if len(snapshot.Description.PendingUserInput.Questions) != 1 ||
 		snapshot.Description.PendingUserInput.Questions[0].Question != "What date should I use?" {
@@ -925,11 +918,11 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed := readSnapshot(t, environment, flowID)
-	if closed.Description == nil || closed.Description.PendingUserInput != nil {
+	if closed.Description.PendingUserInput != nil {
 		t.Fatalf("question remained after accepted answer: %#v", closed.Description)
 	}
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
+		return snapshot.Description.PendingUserInput == nil &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: September 12")
 	})
 	staleAnswer := environment.agent.AnswerQuestions(
@@ -948,7 +941,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot = waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil &&
+		return snapshot.Description.PendingUserInput != nil &&
 			len(snapshot.Description.PendingUserInput.Questions) == 1 &&
 			len(snapshot.Description.PendingUserInput.Questions[0].Options) == 2
 	})
@@ -962,7 +955,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
+		return snapshot.Description.PendingUserInput == nil &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: Production")
 	})
 
@@ -984,8 +977,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 		{QuestionID: "unknown", Answer: "Detailed"},
 	}}
 	assertAnswerRejected(t, environment.agent.AnswerQuestions(t.Context(), flowID, unknown))
-	if current := readSnapshot(t, environment, flowID); current.Description == nil ||
-		current.Description.PendingUserInput == nil || current.Description.PendingUserInput.CallID != multi.CallID {
+	if current := readSnapshot(t, environment, flowID); current.Description.PendingUserInput == nil || current.Description.PendingUserInput.CallID != multi.CallID {
 		t.Fatalf("invalid answer changed pending batch: %#v", current.Description)
 	}
 
@@ -1021,7 +1013,7 @@ func TestAgentUserInputIntegration(t *testing.T) {
 	}
 	const combinedAnswer = "**Region**: West\n\n**Pace**: Careful\n\n**Format**: Detailed"
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput == nil &&
+		return snapshot.Description.PendingUserInput == nil &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: "+combinedAnswer)
 	})
 
@@ -1070,7 +1062,7 @@ func TestAgentQuestionAnswerPriorityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage
+		return snapshot.Description.Status == AgentStatusWaitingForMessage
 	})
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
 		t.Fatal(err)
@@ -1092,7 +1084,7 @@ func TestAgentQuestionAnswerPriorityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil &&
+		return snapshot.Description.PendingUserInput != nil &&
 			snapshot.Description.WaitingInputRound > initial.Description.WaitingInputRound
 	})
 	if len(pendingSnapshot.Queued) != 2 {
@@ -1111,7 +1103,7 @@ func TestAgentQuestionAnswerPriorityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingSnapshot = waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.PendingUserInput != nil &&
+		return snapshot.Description.PendingUserInput != nil &&
 			len(snapshot.Steered) == 1 && len(snapshot.Queued) == 1
 	})
 	environment.replaceWorker(t, flowID)
@@ -1123,7 +1115,7 @@ func TestAgentQuestionAnswerPriorityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	completed := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			len(snapshot.Queued) == 0 && len(snapshot.Steered) == 0 &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: priority answer") &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: steered after question") &&
@@ -1193,7 +1185,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	revised := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Plan != nil &&
+		return snapshot.Description.Plan != nil &&
 			snapshot.Description.Plan.Revision > first.Revision
 	})
 	if revised.Description.Plan.Tasks[0].Content != "Plan the revised objective" {
@@ -1208,7 +1200,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan == nil
 	})
 
@@ -1218,7 +1210,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
 	})
 	if err := environment.agent.ExecutePlan(t.Context(), flowID, PlanExecutionRequest{
@@ -1227,7 +1219,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	active := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive
 	})
 	state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
@@ -1261,7 +1253,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	continued := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusActive &&
 			countHistoryMessages(
 				snapshot.History.Messages,
@@ -1280,7 +1272,7 @@ func TestAgentPlanGuardrailsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	afterBlockedTool := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			historyContainsText(snapshot.History.Messages, string(toolErrorUnknownOrDisabled))
 	})
 	if afterBlockedTool.Description.Plan == nil || afterBlockedTool.Description.Plan.Status != PlanStatusActive ||
@@ -1309,7 +1301,7 @@ func TestAgentRejectsPlanExecutionWhileBusyWithoutPublishing(t *testing.T) {
 		t.Fatal(err)
 	}
 	draftSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			snapshot.Description.Plan != nil && snapshot.Description.Plan.Status == PlanStatusDraft
 	})
 	draft := draftSnapshot.Description.Plan
@@ -1428,8 +1420,7 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 	}
 	queued := waitForQueuedMessages(t, environment, flowID, 2)
 	queuedSnapshot := readSnapshot(t, environment, flowID)
-	if initial.Description == nil || queuedSnapshot.Description == nil ||
-		queuedSnapshot.Description.WaitingInputRound != initial.Description.WaitingInputRound {
+	if queuedSnapshot.Description.WaitingInputRound != initial.Description.WaitingInputRound {
 		t.Fatalf("queued input created a false waiting round: initial=%#v queued=%#v", initial.Description, queuedSnapshot.Description)
 	}
 	for _, message := range queued {
@@ -1438,7 +1429,7 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 		}
 	}
 	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil && snapshot.Description.Status == AgentStatusWaitingForMessage &&
+		return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 			len(snapshot.Queued) == 0 && len(snapshot.Steered) == 0 &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: final replacement objective")
 	})
@@ -1460,9 +1451,9 @@ func TestAgentBatchSteeringIntegration(t *testing.T) {
 	)
 }
 
-func TestAgentTerminalSnapshotIntegration(t *testing.T) {
+func TestAgentSnapshotRemainsReadableAfterTerminationIntegration(t *testing.T) {
 	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
-	flowID := FlowID("agent-terminal-" + randomLocalID(t))
+	flowID := FlowID("agent-snapshot-after-termination-" + randomLocalID(t))
 	runID, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()})
 	if err != nil {
 		t.Fatal(err)
@@ -1472,7 +1463,7 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	})
 	if err := environment.sdk.StopFlow(t.Context(), string(flowID), dex.StopOptions{
 		Type:   dex.TerminateFlow,
-		Reason: "terminal Snapshot integration",
+		Reason: "Snapshot query after termination integration",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1486,16 +1477,12 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	if _, err := environment.agent.WaitForWaitingInputRound(t.Context(), flowID, 1); err == nil {
 		t.Fatal("waiting input round remained active after termination")
 	}
-
-	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.FlowStatus == FlowStatusTerminated
-	})
-	if snapshot.RunID != runID || snapshot.FlowStatus != FlowStatusTerminated {
-		t.Fatalf("terminal Snapshot identity = %#v", snapshot)
+	snapshot := readSnapshot(t, environment, flowID)
+	if snapshot.RunID != runID || snapshot.Description.Status != AgentStatusWaitingForMessage {
+		t.Fatalf("Snapshot after termination = %#v", snapshot)
 	}
-	if snapshot.Description != nil || snapshot.ErrorType != nil ||
-		len(snapshot.History.Messages) != 0 || len(snapshot.Queued) != 0 || len(snapshot.Steered) != 0 {
-		t.Fatalf("terminal Snapshot durable view = %#v", snapshot)
+	if len(snapshot.History.Messages) != 0 || len(snapshot.Queued) != 0 || len(snapshot.Steered) != 0 {
+		t.Fatalf("Snapshot durable view after termination = %#v", snapshot)
 	}
 }
 
@@ -1512,31 +1499,18 @@ func TestAgentSnapshotAfterContinueAsNewIntegration(t *testing.T) {
 	if err := environment.sdk.TriggerContinueAsNew(t.Context(), string(flowID)); err != nil {
 		t.Fatal(err)
 	}
+	var snapshot AgentSnapshot
 	waitUntil(t, environment, "continued Agent run", func() (bool, error) {
-		page, searchErr := environment.sdk.SearchFlows(
-			t.Context(),
-			"WorkflowId="+visibilityString(string(flowID)),
-			100,
-			"",
-		)
-		if searchErr != nil {
-			return false, searchErr
-		}
-		for _, candidate := range page.Flows {
-			if candidate.RunID == string(firstRunID) && candidate.Status == dex.FlowContinuedAsNew {
-				return true, nil
-			}
-		}
-		return false, nil
+		var snapshotErr error
+		snapshot, snapshotErr = environment.agent.GetSnapshot(t.Context(), flowID)
+		return snapshotErr == nil && snapshot.RunID != firstRunID, snapshotErr
 	})
-
-	snapshot := readSnapshot(t, environment, flowID)
-	if snapshot.RunID == firstRunID || snapshot.FlowStatus != FlowStatusRunning || snapshot.Description == nil {
+	if snapshot.RunID == firstRunID {
 		t.Fatalf("Snapshot after continue-as-new = %#v", snapshot)
 	}
 	environment.replaceWorker(t, flowID)
 	replaced := readSnapshot(t, environment, flowID)
-	if replaced.RunID != snapshot.RunID || replaced.FlowStatus != FlowStatusRunning {
+	if replaced.RunID != snapshot.RunID {
 		t.Fatalf("Snapshot after Worker replacement = %#v, want run %q", replaced, snapshot.RunID)
 	}
 }
@@ -2801,8 +2775,7 @@ func waitForPendingToolRecoveryForTestOnly(
 ) PendingToolRecovery {
 	t.Helper()
 	snapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
-		return snapshot.Description != nil &&
-			snapshot.Description.Status == AgentStatusWaitingForToolRecovery &&
+		return snapshot.Description.Status == AgentStatusWaitingForToolRecovery &&
 			snapshot.Description.PendingToolRecovery != nil &&
 			snapshot.Description.PendingToolRecovery.RecoveryID != previous
 	})

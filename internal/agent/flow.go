@@ -318,9 +318,8 @@ func (flow *Flow) GetSnapshot(ctx dex.Context, _ dex.None) (*dex.RPCResult[Agent
 	}
 	return &dex.RPCResult[AgentSnapshot]{Output: AgentSnapshot{
 		RunID:       RunID(ctx.RunID()),
-		FlowStatus:  FlowStatusRunning,
 		History:     history,
-		Description: &description,
+		Description: description,
 		Queued:      pendingUserMessages(queued),
 		Steered:     pendingUserMessages(steered),
 	}}, nil
@@ -540,10 +539,9 @@ func (flow *Flow) initializingSnapshot(
 	steered []dex.ChannelMessage[PendingUserMessage],
 ) AgentSnapshot {
 	return AgentSnapshot{
-		RunID:      RunID(ctx.RunID()),
-		FlowStatus: FlowStatusRunning,
-		History:    HistoryPage{Messages: []SequencedMessage{}},
-		Description: &AgentDescription{
+		RunID:   RunID(ctx.RunID()),
+		History: HistoryPage{Messages: []SequencedMessage{}},
+		Description: AgentDescription{
 			Status:                     AgentStatusInitializing,
 			WaitingInputRound:          0,
 			FirstRetainedSequence:      1,

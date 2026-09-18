@@ -931,8 +931,6 @@ function connectionLabel(connection: ConnectionState): string {
       return "Reconnecting";
     case "stale":
       return "Stale";
-    case "terminal":
-      return "Terminal";
   }
 }
 

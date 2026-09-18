@@ -28,10 +28,11 @@ locked. Unit compilation verifies the explicit RPC registration API. Real
 Server integration, visualization, complete checks, and browser E2E must pass
 before release.
 
-Earlier browser E2E exposed Snapshot long-poll expiry and continue-as-new
-visibility races. Snapshot retries typed read-only expiry errors and does not
-treat `ContinuedAsNew` as terminal. The regression scenarios remain release
-gates.
+Server implementation and real Temporal integration verify that a non-locking,
+non-transactional read-only RPC uses Query and remains readable after Flow
+closure. Snapshot therefore performs one RPC without visibility lookup,
+completion wait, or lifecycle-error retry. Continue-as-new remains a direct RPC
+regression gate.
 
 ## Documentation
 

@@ -80,22 +80,6 @@ const (
 )
 
 const (
-	FlowStatusRunning        = agentinternal.FlowStatusRunning
-	FlowStatusCompleted      = agentinternal.FlowStatusCompleted
-	FlowStatusFailed         = agentinternal.FlowStatusFailed
-	FlowStatusTerminated     = agentinternal.FlowStatusTerminated
-	FlowStatusCanceled       = agentinternal.FlowStatusCanceled
-	FlowStatusContinuedAsNew = agentinternal.FlowStatusContinuedAsNew
-
-	FlowErrorTypeStepDecision    = agentinternal.FlowErrorTypeStepDecision
-	FlowErrorTypeClientAPI       = agentinternal.FlowErrorTypeClientAPI
-	FlowErrorTypeWorkerMethod    = agentinternal.FlowErrorTypeWorkerMethod
-	FlowErrorTypeInvalidUserCode = agentinternal.FlowErrorTypeInvalidUserCode
-	FlowErrorTypeInternal        = agentinternal.FlowErrorTypeInternal
-	FlowErrorTypeTimeout         = agentinternal.FlowErrorTypeTimeout
-)
-
-const (
 	InteractionModeChat      = agentinternal.InteractionModeChat
 	InteractionModePlanning  = agentinternal.InteractionModePlanning
 	InteractionModeExecuting = agentinternal.InteractionModeExecuting
@@ -188,8 +172,6 @@ type (
 
 	AgentStatus               = agentinternal.AgentStatus
 	WaitingInputRound         = agentinternal.WaitingInputRound
-	FlowStatus                = agentinternal.FlowStatus
-	FlowErrorType             = agentinternal.FlowErrorType
 	InteractionMode           = agentinternal.InteractionMode
 	PlanStatus                = agentinternal.PlanStatus
 	TaskStatus                = agentinternal.TaskStatus

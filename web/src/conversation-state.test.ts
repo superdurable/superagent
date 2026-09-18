@@ -9,8 +9,6 @@ import { describe, expect, it } from "vitest";
 import {
   AgentStatus,
   EventKind,
-  FlowErrorType,
-  FlowStatus,
   MessageRole,
   TaskStatus,
   type AgentSnapshot,
@@ -101,30 +99,6 @@ describe("conversationReducer", () => {
       kind: "ready",
       connection: "live",
       subscriptionGeneration: 1,
-    });
-  });
-
-  it("renders a terminal Snapshot without inventing active Agent state", () => {
-    const state = conversationReducer(initialConversationState(), {
-      type: "snapshot-loaded",
-      snapshot: {
-        runId: "run-terminal",
-        flowStatus: FlowStatus.FAILED,
-        errorType: FlowErrorType.WORKER_METHOD,
-        errorMessage: "worker stopped",
-        history: { messages: [], nextBeforeSequence: null },
-        description: null,
-        queued: [],
-        steered: [],
-      },
-    });
-
-    expect(state).toMatchObject({
-      kind: "ready",
-      lifecycle: "terminal",
-      connection: "terminal",
-      snapshot: { runId: "run-terminal", description: null },
-      error: "worker stopped",
     });
   });
 
@@ -222,7 +196,6 @@ describe("conversationReducer", () => {
 
   it("removes only exact consumed queue IDs and replays idempotently", () => {
     const initial = snapshot("run-1", "queued-1", "first");
-    if (initial.description === null) throw new Error("expected description");
     initial.queued.push({
       messageId: "queued-moved",
       value: { content: "moved before consumption", planMode: false },
@@ -436,7 +409,7 @@ describe("conversationReducer", () => {
         },
       },
     });
-    if (state.kind !== "ready" || state.lifecycle !== "active") {
+    if (state.kind !== "ready") {
       throw new Error("expected active state");
     }
     expect(displayedPlanTaskStatus(state, 0)).toBe(TaskStatus.IN_PROGRESS);
@@ -462,7 +435,7 @@ describe("conversationReducer", () => {
         },
       },
     });
-    if (state.kind !== "ready" || state.lifecycle !== "active") {
+    if (state.kind !== "ready") {
       throw new Error("expected active state");
     }
     expect(displayedPlanTaskStatus(state, 0)).toBe(TaskStatus.IN_PROGRESS);
@@ -471,7 +444,7 @@ describe("conversationReducer", () => {
       type: "snapshot-loaded",
       snapshot: withPlan(initial, 5, TaskStatus.COMPLETED),
     });
-    if (state.kind !== "ready" || state.lifecycle !== "active") {
+    if (state.kind !== "ready") {
       throw new Error("expected active state");
     }
     expect(state.planProgress).toBeNull();
@@ -606,7 +579,7 @@ describe("conversationReducer", () => {
       type: "snapshot-loaded",
       snapshot: snapshot("run-1", "queued-1", "existing"),
     });
-    if (state.kind !== "ready" || state.lifecycle !== "active") {
+    if (state.kind !== "ready") {
       throw new Error("expected active state");
     }
     state = conversationReducer(state, {
@@ -720,8 +693,6 @@ describe("conversationReducer", () => {
       messageId: "queued-3",
       value: { content: "second", planMode: false },
     });
-    if (durable.description === null)
-      throw new Error("expected active Snapshot");
     durable.description.pendingQueuedMessageCount = 2;
     state = conversationReducer(state, {
       type: "snapshot-loaded",
@@ -732,8 +703,6 @@ describe("conversationReducer", () => {
 
   it("projects an accepted answer when its Activity arrives", () => {
     const pending = snapshot("run-1", "queued-1", "existing");
-    if (pending.description === null)
-      throw new Error("expected active Snapshot");
     pending.description.pendingUserInput = {
       callId: "input-call-1",
       questions: [
@@ -846,8 +815,6 @@ describe("conversationReducer", () => {
 
   it("preserves loaded archive chunks across Snapshot reconciliation", () => {
     const current = snapshot("run-1", "queued-1", "current");
-    if (current.description === null)
-      throw new Error("expected active Snapshot");
     current.history = {
       messages: [sequencedMessage(11, "current")],
       nextBeforeSequence: 11,
@@ -910,9 +877,6 @@ function snapshot(
 ): AgentSnapshot {
   return {
     runId,
-    flowStatus: FlowStatus.RUNNING,
-    errorType: null,
-    errorMessage: null,
     history: {
       messages: [
         {
@@ -960,7 +924,6 @@ function snapshot(
 
 function snapshotWithStatus(status: AgentStatus): AgentSnapshot {
   const value = snapshot("run-1", "queued-1", "hello");
-  if (value.description === null) throw new Error("expected active Snapshot");
   return {
     ...value,
     description: { ...value.description, status },
@@ -972,7 +935,6 @@ function withPlan(
   revision: number,
   status: TaskStatus,
 ): AgentSnapshot {
-  if (value.description === null) throw new Error("expected active Snapshot");
   return {
     ...value,
     description: {

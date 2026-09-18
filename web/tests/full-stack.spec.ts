@@ -12,11 +12,7 @@ import {
   type Request,
 } from "@playwright/test";
 
-import {
-  EventStream,
-  FlowStatus,
-  type AgentSnapshot,
-} from "../src/api/generated/index";
+import { EventStream, type AgentSnapshot } from "../src/api/generated/index";
 
 const apiOrigin =
   process.env["SUPERAGENT_E2E_API_ORIGIN"] ?? "http://127.0.0.1:8080";
@@ -768,7 +764,7 @@ test("reconciles stale queue, question, and approval controls without damaging t
     }),
   ).toHaveCount(1);
   const snapshot = await readAgentSnapshot(page, flowId);
-  expect(snapshot.flowStatus).toBe(FlowStatus.RUNNING);
+  expect(snapshot.description.status).toBe("waiting_for_message");
 });
 
 test("resumes each live Stream after interruption without duplicate timeline entries", async ({
@@ -1234,7 +1230,7 @@ test("recovers visibly after invalid write_todos arguments", async ({
   await expect(composer).toBeFocused();
 
   const snapshot = await readAgentSnapshot(page, await displayedFlowID(page));
-  expect(snapshot.description?.plan).toBeFalsy();
+  expect(snapshot.description.plan).toBeFalsy();
 });
 
 test("disables busy Plan actions and continues a stalled active Plan", async ({
@@ -1311,9 +1307,6 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   await expect(plan.getByText("Plan revision 1")).toBeVisible();
   await expect(continueAction).toBeEnabled({ timeout: 20_000 });
   const beforeContinue = await readAgentSnapshot(page, flowId);
-  if (beforeContinue.description === null) {
-    throw new Error("Plan Flow became terminal before Continue");
-  }
   const sequenceBeforeContinue = beforeContinue.description.lastSequence;
 
   const snapshotsBeforeContinue = snapshotStatuses.length;
@@ -1338,7 +1331,7 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   await expect
     .poll(async () => {
       const snapshot = await readAgentSnapshot(page, flowId);
-      return snapshot.description?.lastSequence ?? sequenceBeforeContinue;
+      return snapshot.description.lastSequence;
     })
     .toBeGreaterThan(sequenceBeforeContinue);
   expect(executeStatuses).toEqual([202, 202]);
@@ -1368,9 +1361,9 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
             `${apiOrigin}/products/ai-agent/snapshot?flowId=${flowId}`,
           );
           const body = (await response.json()) as {
-            description?: { plan?: { revision?: number } | null } | null;
+            description: { plan?: { revision?: number } | null };
           };
-          return body.description?.plan?.revision;
+          return body.description.plan?.revision;
         })
         .toBe(2);
     }

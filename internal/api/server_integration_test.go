@@ -108,7 +108,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	var snapshot transportapi.AgentSnapshot
 	snapshotURL := fmt.Sprintf("%s/products/ai-agent/snapshot?flowId=%s", baseURL, flowID)
 	requestJSON(t, http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot)
-	if snapshot.Description.IsNull() || len(snapshot.History.Messages) != 2 {
+	if len(snapshot.History.Messages) != 2 {
 		t.Fatalf("Snapshot = %#v", snapshot)
 	}
 	if snapshot.History.Messages[0].Message.Content != "through HTTP" ||
@@ -143,8 +143,8 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	}, http.StatusAccepted, nil)
 	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, flowID, waiting.WaitingInputRound), nil, http.StatusOK, &waiting)
 	requestJSON(t, http.MethodGet, snapshotURL, nil, http.StatusOK, &snapshot)
-	description, ok := snapshot.Description.Get()
-	if !ok || description.Plan.IsNull() {
+	description := snapshot.Description
+	if description.Plan.IsNull() {
 		t.Fatalf("Plan Snapshot = %#v", snapshot)
 	}
 	plan, ok := description.Plan.Get()
@@ -181,10 +181,7 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 		busyPlanFlowID,
 	)
 	requestJSON(t, http.MethodGet, busyPlanSnapshotURL, nil, http.StatusOK, &snapshot)
-	busyDescription, ok := snapshot.Description.Get()
-	if !ok {
-		t.Fatalf("busy Plan Snapshot = %#v", snapshot)
-	}
+	busyDescription := snapshot.Description
 	busyPlan, ok := busyDescription.Plan.Get()
 	if !ok {
 		t.Fatalf("busy Plan = %#v", busyDescription.Plan)
@@ -212,8 +209,8 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	}, http.StatusAccepted, nil)
 	requestJSON(t, http.MethodGet, waitingInputRoundURL(baseURL, questionFlowID, questionWaiting.WaitingInputRound), nil, http.StatusOK, &questionWaiting)
 	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
-	description, ok = snapshot.Description.Get()
-	if !ok || description.PendingUserInput.IsNull() {
+	description = snapshot.Description
+	if description.PendingUserInput.IsNull() {
 		t.Fatalf("question Snapshot = %#v", snapshot)
 	}
 	pendingInput, ok := description.PendingUserInput.Get()
@@ -233,8 +230,8 @@ func TestAgentHTTPServerIntegration(t *testing.T) {
 	}
 	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusAccepted, nil)
 	requestJSON(t, http.MethodGet, questionSnapshotURL, nil, http.StatusOK, &snapshot)
-	description, ok = snapshot.Description.Get()
-	if !ok || !description.PendingUserInput.IsNull() {
+	description = snapshot.Description
+	if !description.PendingUserInput.IsNull() {
 		t.Fatalf("question remained after accepted answer: %#v", snapshot)
 	}
 	requestJSON(t, http.MethodPost, answerURL, answer, http.StatusConflict, nil)

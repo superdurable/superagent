@@ -33,10 +33,11 @@ Attribute index synchronization or Worker binding. Deploy the Server before the
 Worker. Startup fails when `GetServerInfo` is missing, either interval is
 invalid, or the intervals do not overlap.
 
-Snapshot reads retry inactive-run and server long-poll expiry errors within a
-three-attempt budget. Snapshot is read-only, so these retries cannot duplicate
-commands or external effects. Caller cancellation and other errors still return
-immediately.
+Snapshot performs one read-only RPC. It does not query Dex visibility, wait for
+Flow completion, or retry lifecycle errors. Temporal Query serves the retained
+application state after Flow closure. Run ID identifies the execution generation
+so the browser can reset transient Stream and reconciliation state after
+continue-as-new.
 
 Renewable sandbox credentials are not an Agent Flow resource. A future,
 separately designed `SandboxLifecycleFlow` will own that lifecycle.
@@ -225,7 +226,8 @@ retained messages.
 
 Snapshot is one read-only Flow RPC that loads current history, the interaction
 description, and pending Channels. It returns `WaitingInputRound` and stable
-application message IDs. Archive paging returns exactly one immutable chunk and
+application message IDs. Snapshot contains application state only; it does not
+project Dex lifecycle or terminal failure metadata. Archive paging returns exactly one immutable chunk and
 the bounded sequence metadata needed for continuation. Its registered
 `v0.9.1` RPC options load the retained archive map because the requested chunk
 key is an RPC input and invocation-specific selective loads no longer exist.

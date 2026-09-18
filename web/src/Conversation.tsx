@@ -97,11 +97,9 @@ export function Conversation({
     await waitForNetworkCancellation();
   }, []);
   const nextHistoryRequestID = useRef(1);
-  const isTerminal = state.kind === "ready" && state.lifecycle === "terminal";
   const requestSnapshot = useSnapshotCoordinator(
     flowId,
     dispatch,
-    isTerminal,
     snapshotRefreshIntervalMilliseconds,
   );
   const runCommand = useCommandRunner(
@@ -144,18 +142,12 @@ export function Conversation({
 
   const canOpenLiveReads =
     state.kind === "ready" &&
-    state.lifecycle === "active" &&
     state.pendingCommand === null &&
     state.reconciliation === "open" &&
     isDocumentVisible;
   const subscriptionGeneration =
-    state.kind === "ready" && state.lifecycle === "active"
-      ? state.subscriptionGeneration
-      : -1;
-  const activeRunID =
-    state.kind === "ready" && state.lifecycle === "active"
-      ? state.snapshot.runId
-      : null;
+    state.kind === "ready" ? state.subscriptionGeneration : -1;
+  const activeRunID = state.kind === "ready" ? state.snapshot.runId : null;
   useEffect(() => {
     resetResumeTokens(resumeTokens.current);
   }, [flowId, activeRunID]);
@@ -242,9 +234,7 @@ export function Conversation({
   ]);
 
   const waitingInputRound =
-    state.kind === "ready" && state.lifecycle === "active"
-      ? state.snapshot.description.waitingInputRound
-      : 0;
+    state.kind === "ready" ? state.snapshot.description.waitingInputRound : 0;
   const waitingInputRoundRef = useRef(waitingInputRound);
   useEffect(() => {
     waitingInputRoundRef.current = waitingInputRound;
@@ -313,20 +303,6 @@ export function Conversation({
       />
     );
   }
-  if (state.lifecycle === "terminal") {
-    return (
-      <ConversationStatus
-        title={`Agent ${statusLabel(state.snapshot.flowStatus)}`}
-        detail={
-          state.snapshot.errorMessage ??
-          `Run ${state.snapshot.runId} is no longer active.`
-        }
-        action={onStartAnother}
-        actionLabel="Start another agent"
-      />
-    );
-  }
-
   const isBusy = state.pendingCommand !== null;
   const areMutationsDisabled = isBusy || state.reconciliation !== "open";
   const submitMessage = () => {
@@ -474,7 +450,6 @@ function ConversationStatus({
 function useSnapshotCoordinator(
   flowId: FlowId,
   dispatch: Dispatch<ConversationAction>,
-  isTerminal: boolean,
   refreshIntervalMilliseconds: number,
 ) {
   const coordinator = useRef<SnapshotCoordinator | null>(null);
@@ -511,9 +486,6 @@ function useSnapshotCoordinator(
       if (coordinator.current === current) coordinator.current = null;
     };
   }, [dispatch, flowId, refreshIntervalMilliseconds]);
-  useEffect(() => {
-    if (isTerminal) coordinator.current?.stop();
-  }, [isTerminal]);
   return useCallback((trigger: SnapshotTrigger) => {
     coordinator.current?.request(trigger);
   }, []);
@@ -662,13 +634,6 @@ function errorMessage(reason: unknown): string {
     return reason.detail;
   }
   return "The request could not be completed.";
-}
-
-function statusLabel(value: string): string {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 async function waitBeforeNextPoll(signal: AbortSignal): Promise<void> {
