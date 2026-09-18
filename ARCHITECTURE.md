@@ -75,10 +75,8 @@ prompts, and cumulative context summaries are separate typed Attributes.
 
 Snapshot is the only durable current-interaction and reconciliation read model.
 Archive paging is an immutable history continuation. Each page uses one
-read-only Flow RPC that loads `AgentState` and the retained archive map, then
-returns one exact chunk without loading current interaction state or pending
-Channels. Dex Go SDK `v0.10.0` fixes selective loads at RPC registration, so an
-input-selected AttributeMap instance cannot be loaded independently.
+read-only Flow RPC that loads `AgentState` and one exact archive chunk, without
+loading current interaction state or pending Channels.
 
 Commands follow Dex's transactional RPC model. There is no permanent command
 receipt, caller request ID, payload fingerprint, global mutation revision, or
@@ -330,7 +328,7 @@ Runtime metadata therefore remains stable for the logical call.
 
 `internal/app` owns every long-lived resource. Startup validates configuration,
 discovers MCP, constructs providers, opens BlobCache, starts the Worker, waits
-for its listener, marks readiness, and then serves the API. The Dex Go SDK `v0.10.0`
+for its listener, marks readiness, and then serves the API. The Dex `v0.9.0`
 Worker negotiates a compatible Server protocol before synchronizing indexes or
 binding. Any startup failure closes everything already constructed.
 

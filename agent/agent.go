@@ -125,9 +125,6 @@ const (
 	ToolOutcomeKnownFailure = agentinternal.ToolOutcomeKnownFailure
 	ToolOutcomeUnknown      = agentinternal.ToolOutcomeUnknown
 
-	ToolRunningTypeShortRunning = agentinternal.ToolRunningTypeShortRunning
-	ToolRunningTypeLongRunning  = agentinternal.ToolRunningTypeLongRunning
-
 	ToolRetryExhaustionPolicyManualRecovery      = agentinternal.ToolRetryExhaustionPolicyManualRecovery
 	ToolRetryExhaustionPolicyContinueWithUnknown = agentinternal.ToolRetryExhaustionPolicyContinueWithUnknown
 
@@ -197,7 +194,6 @@ type (
 	EventKind                 = agentinternal.EventKind
 	Provider                  = agentinternal.Provider
 	ToolOutcome               = agentinternal.ToolOutcome
-	ToolRunningType           = agentinternal.ToolRunningType
 	ToolRetryExhaustionPolicy = agentinternal.ToolRetryExhaustionPolicy
 	ToolRecoveryResolution    = agentinternal.ToolRecoveryResolution
 	ToolRecoveryAction        = agentinternal.ToolRecoveryAction

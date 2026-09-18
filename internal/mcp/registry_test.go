@@ -21,10 +21,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/superdurable/superagent/internal/agent"
 )
 
 func TestRegisteredToolDefaultsWritesToOneAttemptAndApproval(t *testing.T) {
@@ -41,31 +39,8 @@ func TestRegisteredToolDefaultsWritesToOneAttemptAndApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registeredTool() error = %v", err)
 	}
-	if !registered.Definition.RequiresApproval || registered.Definition.MaximumAttempts != 1 ||
-		registered.Definition.RunningType != agent.ToolRunningTypeShortRunning ||
-		registered.Definition.HeartbeatTimeout != time.Minute {
+	if !registered.Definition.RequiresApproval || registered.Definition.MaximumAttempts != 1 {
 		t.Fatalf("unsafe defaults = %+v", registered.Definition)
-	}
-}
-
-func TestRegisteredToolProjectsLongRunningPolicy(t *testing.T) {
-	registered, err := registeredTool(ServerConfig{
-		Name:      "build",
-		Transport: TransportStdio,
-		Command:   "server",
-		Tools: map[string]ToolPolicy{
-			"compile": {
-				RunningType:             RunningTypeLongRunning,
-				HeartbeatTimeoutSeconds: float64Pointer(900),
-			},
-		},
-	}, &mcpsdk.Tool{Name: "compile", InputSchema: map[string]any{"type": "object"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if registered.Definition.RunningType != agent.ToolRunningTypeLongRunning ||
-		registered.Definition.HeartbeatTimeout != 15*time.Minute {
-		t.Fatalf("definition = %+v", registered.Definition)
 	}
 }
 

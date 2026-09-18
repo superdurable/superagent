@@ -16,22 +16,7 @@
 
 package agent
 
-import (
-	"testing"
-
-	"github.com/superdurable/dex/sdk-go/dex"
-)
-
-func TestAgentStartFlowOptionsDefaultStepsToAsyncDurability(t *testing.T) {
-	t.Parallel()
-	options := newAgentStartFlowOptions(nil)
-	if options.ConfigOverride == nil || options.ConfigOverride.StepDurability == nil {
-		t.Fatalf("ConfigOverride = %+v", options.ConfigOverride)
-	}
-	if got := *options.ConfigOverride.StepDurability; got != dex.StepDurabilityAsync {
-		t.Fatalf("StepDurability = %v, want %v", got, dex.StepDurabilityAsync)
-	}
-}
+import "testing"
 
 func TestListRecentEventsRejectsInvalidLimits(t *testing.T) {
 	t.Parallel()
@@ -41,28 +26,5 @@ func TestListRecentEventsRejectsInvalidLimits(t *testing.T) {
 		if err == nil {
 			t.Fatalf("limit %d error = nil", limit)
 		}
-	}
-}
-
-func TestIsTerminalFlowStatusTreatsContinueAsNewAsActive(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name     string
-		status   dex.FlowStatus
-		terminal bool
-	}{
-		{name: "running", status: dex.FlowRunning},
-		{name: "continued as new", status: dex.FlowContinuedAsNew},
-		{name: "completed", status: dex.FlowCompleted, terminal: true},
-		{name: "failed", status: dex.FlowFailed, terminal: true},
-		{name: "canceled", status: dex.FlowCanceled, terminal: true},
-		{name: "terminated", status: dex.FlowTerminated, terminal: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := isTerminalFlowStatus(test.status); got != test.terminal {
-				t.Fatalf("isTerminalFlowStatus(%v) = %t, want %t", test.status, got, test.terminal)
-			}
-		})
 	}
 }

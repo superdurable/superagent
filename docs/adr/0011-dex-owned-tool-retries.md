@@ -19,11 +19,6 @@ Go error and use Dex retry. Exhaustion follows the tool definition's recovery
 policy. It defaults to the manual boundary introduced by ADR 0013; explicitly
 configured tools may route to `RecoverToolExecution` and continue with unknown.
 
-New Agent Flows default Step durability to ASYNC. Short-running tools inherit
-that default and may fall back to regular execution. Long-running tools override
-Execute durability to SYNC. Tool policy also supplies heartbeat timeout, while
-attempt timeout bounds both Dex execution and the registry child context.
-
 Approval and CallID remain stable across attempts. External effects promise
 recoverable at-least-once execution, not exactly-once execution.
 

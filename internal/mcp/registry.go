@@ -39,10 +39,9 @@ import (
 )
 
 const (
-	defaultToolTimeout          = 60 * time.Second
-	defaultToolHeartbeatTimeout = time.Minute
-	defaultRetryDuration        = 5 * time.Minute
-	maximumPublicNameSize       = 64
+	defaultToolTimeout    = 60 * time.Second
+	defaultRetryDuration  = 5 * time.Minute
+	maximumPublicNameSize = 64
 )
 
 var invalidNameCharacter = regexp.MustCompile(`[^A-Za-z0-9_]`)
@@ -442,11 +441,9 @@ func registeredTool(server ServerConfig, tool *mcpsdk.Tool) (agent.RegisteredToo
 	policy, configured := server.Tools[tool.Name]
 	if !configured {
 		policy = ToolPolicy{
-			TimeoutSeconds:          60,
-			RunningType:             RunningTypeShortRunning,
-			HeartbeatTimeoutSeconds: float64Pointer(60),
-			RetryTotalSeconds:       300,
-			RetryExhaustionPolicy:   RetryExhaustionPolicyManualRecovery,
+			TimeoutSeconds:        60,
+			RetryTotalSeconds:     300,
+			RetryExhaustionPolicy: RetryExhaustionPolicyManualRecovery,
 		}
 	}
 	readOnly := policy.ReadOnly
@@ -469,25 +466,12 @@ func registeredTool(server ServerConfig, tool *mcpsdk.Tool) (agent.RegisteredToo
 	if attemptTimeout == 0 {
 		attemptTimeout = defaultToolTimeout
 	}
-	heartbeatTimeout := defaultToolHeartbeatTimeout
-	if policy.HeartbeatTimeoutSeconds != nil {
-		heartbeatTimeout = time.Duration(*policy.HeartbeatTimeoutSeconds * float64(time.Second))
-	}
 	retryDuration := time.Duration(policy.RetryTotalSeconds * float64(time.Second))
 	if retryDuration == 0 {
 		retryDuration = defaultRetryDuration
 	}
-	if maximumAttempts <= 0 || attemptTimeout <= 0 || heartbeatTimeout <= 0 || retryDuration <= 0 {
+	if maximumAttempts <= 0 || attemptTimeout <= 0 || retryDuration <= 0 {
 		return agent.RegisteredTool{}, fmt.Errorf("invalid policy for %q", publicName)
-	}
-	var runningType agent.ToolRunningType
-	switch policy.RunningType {
-	case "", RunningTypeShortRunning:
-		runningType = agent.ToolRunningTypeShortRunning
-	case RunningTypeLongRunning:
-		runningType = agent.ToolRunningTypeLongRunning
-	default:
-		return agent.RegisteredTool{}, fmt.Errorf("invalid running type %q for %q", policy.RunningType, publicName)
 	}
 	inputSchema, err := schemaObject(tool.InputSchema)
 	if err != nil {
@@ -505,19 +489,13 @@ func registeredTool(server ServerConfig, tool *mcpsdk.Tool) (agent.RegisteredToo
 			Description:               description,
 			InputSchema:               inputSchema,
 			RequiresApproval:          readOnly == nil || !*readOnly,
-			RunningType:               runningType,
 			AttemptTimeout:            attemptTimeout,
-			HeartbeatTimeout:          heartbeatTimeout,
 			MaximumAttempts:           maximumAttempts,
 			RetryTotalDuration:        retryDuration,
 			SupportsParallelExecution: readOnly != nil && *readOnly,
 			RetryExhaustionPolicy:     retryExhaustionPolicy,
 		},
 	}, nil
-}
-
-func float64Pointer(value float64) *float64 {
-	return &value
 }
 
 func schemaObject(value any) (agent.JSONObject, error) {

@@ -17,11 +17,11 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -56,9 +56,8 @@ var (
 
 // Flow is the durable AI Agent state machine.
 type Flow struct {
-	modelClient               ModelClient
-	tools                     ToolRegistry
-	rpcDefinitionsForTestOnly []dex.RPCDef
+	modelClient ModelClient
+	tools       ToolRegistry
 }
 
 var _ dex.Flow = (*Flow)(nil)
@@ -92,6 +91,7 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(checkSteeredStep{flow: flow}),
 		dex.DefineStep(routeToolStep{flow: flow}),
 		dex.DefineStep(awaitToolApprovalStep{flow: flow}),
+		dex.DefineStep(executeToolStep{flow: flow}),
 		dex.DefineStep(executeToolWithRetryStep{flow: flow}),
 		dex.DefineStep(recoverToolExecutionStep{flow: flow}),
 		dex.DefineStep(executeParallelToolStep{flow: flow}),
@@ -101,58 +101,6 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(awaitManualToolRecoveryStep{flow: flow}),
 		dex.DefineStep(durableWaitStep{flow: flow}),
 	}
-}
-
-// GetRPCs registers synchronous Agent reads and commands with immutable execution policy.
-func (flow *Flow) GetRPCs() []dex.RPCDef {
-	definitions := []dex.RPCDef{
-		dex.DefineRPC(flow.SendMessage, &dex.RPCOptions{
-			Timeout:        defaultCommandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
-		}),
-		dex.DefineRPC(flow.AnswerQuestions, &dex.RPCOptions{
-			Timeout:        defaultCommandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingUserInputAttribute)},
-		}),
-		dex.DefineRPC(flow.SteerMessage, &dex.RPCOptions{
-			Timeout:         defaultCommandTimeout,
-			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
-			IsTransactional: true,
-			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
-		}),
-		dex.DefineRPC(flow.GetSnapshot, &dex.RPCOptions{
-			Timeout:           defaultSnapshotTimeout,
-			LoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
-			LoadChannels: []dex.ChannelDef{
-				queuedUserMessagesChannel,
-				steeredUserMessagesChannel,
-			},
-		}),
-		dex.DefineRPC(flow.GetArchivedMessages, &dex.RPCOptions{
-			Timeout:           defaultCommandTimeout,
-			LoadAttributeMaps: []dex.AttributeDef{archivedMessagesAttribute},
-		}),
-		dex.DefineRPC(flow.DeleteQueuedMessage, &dex.RPCOptions{
-			Timeout:         defaultCommandTimeout,
-			IsTransactional: true,
-			LoadChannels:    []dex.ChannelDef{queuedUserMessagesChannel},
-		}),
-		dex.DefineRPC(flow.ApproveTool, &dex.RPCOptions{
-			Timeout:         defaultCommandTimeout,
-			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(pendingApprovalAttribute)},
-			IsTransactional: true,
-		}),
-		dex.DefineRPC(flow.ResolveToolRecovery, &dex.RPCOptions{
-			Timeout:        defaultCommandTimeout,
-			LockAttributes: []dex.AttributeLock{dex.LockAttribute(pendingToolRecoveryAttribute)},
-		}),
-		dex.DefineRPC(flow.ExecutePlan, &dex.RPCOptions{
-			Timeout:         defaultCommandTimeout,
-			LockAttributes:  []dex.AttributeLock{dex.LockAttribute(agentStateAttribute)},
-			IsTransactional: true,
-		}),
-	}
-	return append(definitions, flow.rpcDefinitionsForTestOnly...)
 }
 
 // GetPersistenceSchema registers every durable value and best-effort stream.
@@ -608,10 +556,6 @@ func (flow *Flow) validateConfig(config AgentConfig) error {
 
 func validateToolExecutionPolicy(definition ToolDefinition) error {
 	policy := definition.RetryExhaustionPolicy.Effective()
-	runningType := definition.RunningType.Effective()
-	if err := runningType.Validate(); err != nil {
-		return err
-	}
 	switch {
 	case definition.MaximumAttempts <= 0:
 		return errors.New("maximum attempts must be positive")
@@ -619,8 +563,6 @@ func validateToolExecutionPolicy(definition ToolDefinition) error {
 		return errors.New("maximum attempts exceeds the Dex limit")
 	case definition.AttemptTimeout < 0:
 		return errors.New("attempt timeout must not be negative")
-	case definition.HeartbeatTimeout < 0:
-		return errors.New("heartbeat timeout must not be negative")
 	case definition.RetryTotalDuration < 0:
 		return errors.New("retry total duration must not be negative")
 	default:
@@ -664,8 +606,7 @@ func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	}
 	return &dex.StepOptions{
 		ExecuteMethodTimeout:     definition.AttemptTimeout,
-		HeartbeatTimeout:         effectiveToolHeartbeatTimeout(definition),
-		ExecuteDurability:        toolExecuteDurability(definition),
+		HeartbeatTimeout:         toolStepOptions.HeartbeatTimeout,
 		ExecuteLoadAttributeMaps: toolStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
 			// #nosec G115 -- validateToolExecutionPolicy rejects values outside int32.
@@ -679,31 +620,16 @@ func (flow *Flow) toolStepOptions(definition ToolDefinition) *dex.StepOptions {
 func (flow *Flow) parallelToolStepOptions(definition ToolDefinition) *dex.StepOptions {
 	return &dex.StepOptions{
 		ExecuteMethodTimeout: definition.AttemptTimeout,
-		HeartbeatTimeout:     effectiveToolHeartbeatTimeout(definition),
-		ExecuteDurability:    toolExecuteDurability(definition),
+		HeartbeatTimeout:     toolStepOptions.HeartbeatTimeout,
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: int32(definition.MaximumAttempts), // #nosec G115 -- validated before scheduling.
 			TotalDuration:   definition.RetryTotalDuration,
 		},
 		ExecuteFailure: dex.ProceedToOnExecuteFailure(
 			recoverParallelToolExecutionStep{flow: flow},
-			defaultStepOptions,
+			nil,
 		),
 	}
-}
-
-func effectiveToolHeartbeatTimeout(definition ToolDefinition) time.Duration {
-	if definition.HeartbeatTimeout == 0 {
-		return time.Minute
-	}
-	return definition.HeartbeatTimeout
-}
-
-func toolExecuteDurability(definition ToolDefinition) dex.StepDurability {
-	if definition.RunningType.Effective() == ToolRunningTypeLongRunning {
-		return dex.StepDurabilitySync
-	}
-	return dex.StepDurabilityDefault
 }
 
 func (flow *Flow) parallelToolMovements(
@@ -797,27 +723,11 @@ func (flow *Flow) invocationToolDefinition(config AgentConfig, state AgentState,
 	return ToolDefinition{}, fmt.Errorf("unknown or disabled tool %q", name)
 }
 
-func (flow *Flow) executeTool(
-	ctx dex.Context,
-	definition ToolDefinition,
-	invocation ToolInvocation,
-) (ToolExecutionResult, error) {
+func (flow *Flow) executeTool(ctx dex.Context, invocation ToolInvocation) (ToolExecutionResult, error) {
 	if invocation.Name == ToolNameSimulateFailure {
 		return ToolExecutionResult{}, simulatedToolFailureError{}
 	}
-	executionContext, cancel := newToolExecutionContext(ctx, definition.AttemptTimeout)
-	defer cancel()
-	return flow.tools.Execute(executionContext, invocation)
-}
-
-func newToolExecutionContext(
-	ctx context.Context,
-	attemptTimeout time.Duration,
-) (context.Context, context.CancelFunc) {
-	if attemptTimeout == 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, attemptTimeout)
+	return flow.tools.Execute(ctx, invocation)
 }
 
 func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) (Sequence, error) {
@@ -1666,6 +1576,7 @@ const (
 	continueCompactContext    continuation = "compact_context"
 	continueRouteTool         continuation = "route_tool"
 	continueAwaitToolApproval continuation = "await_tool_approval"
+	continueExecuteTool       continuation = "execute_tool"
 	continueExecuteToolRetry  continuation = "execute_tool_with_retry"
 	continueDurableWait       continuation = "durable_wait"
 
@@ -1677,6 +1588,7 @@ const (
 	stepTypeCheckSteered          stepType = "CheckSteered"
 	stepTypeRouteTool             stepType = "RouteTool"
 	stepTypeAwaitApproval         stepType = "AwaitToolApproval"
+	stepTypeExecuteTool           stepType = "ExecuteTool"
 	stepTypeExecuteRetry          stepType = "ExecuteToolWithRetry"
 	stepTypeRecoverTool           stepType = "RecoverToolExecution"
 	stepTypeExecuteParallel       stepType = "ExecuteParallelTool"
@@ -1756,13 +1668,7 @@ type awaitParallelToolResultsInput struct {
 }
 
 var (
-	defaultStepOptions = &dex.StepOptions{
-		WaitForMethodTimeout: time.Minute,
-		ExecuteMethodTimeout: time.Minute,
-	}
 	messageMutationStepOptions = &dex.StepOptions{
-		WaitForMethodTimeout:     time.Minute,
-		ExecuteMethodTimeout:     time.Minute,
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{currentMessagesAttribute},
 		ExecuteLockAttributes: []dex.AttributeLock{
 			dex.LockAttribute(pendingUserInputAttribute),
@@ -1771,8 +1677,6 @@ var (
 		},
 	}
 	awaitUserStepOptions = &dex.StepOptions{
-		WaitForMethodTimeout: time.Minute,
-		ExecuteMethodTimeout: time.Minute,
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{
 			currentMessagesAttribute,
 		},
@@ -1783,8 +1687,6 @@ var (
 		},
 	}
 	messageContextStepOptions = &dex.StepOptions{
-		WaitForMethodTimeout: time.Minute,
-		ExecuteMethodTimeout: time.Minute,
 		ExecuteLoadAttributeMaps: []dex.AttributeDef{
 			currentMessagesAttribute,
 			archivedMessagesAttribute,
@@ -1797,7 +1699,6 @@ var (
 	modelStepOptions = &dex.StepOptions{
 		ExecuteMethodTimeout:     10 * time.Minute,
 		HeartbeatTimeout:         5 * time.Minute,
-		ExecuteDurability:        dex.StepDurabilitySync,
 		ExecuteLoadAttributeMaps: messageContextStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: 3,
@@ -1806,15 +1707,13 @@ var (
 	}
 	toolStepOptions = &dex.StepOptions{
 		ExecuteMethodTimeout:     2 * time.Hour,
-		HeartbeatTimeout:         time.Minute,
+		HeartbeatTimeout:         5 * time.Minute,
 		ExecuteLoadAttributeMaps: messageMutationStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteRetry: &dex.RetryPolicy{
 			MaximumAttempts: 1,
 		},
 	}
 	manualToolRecoveryStepOptions = &dex.StepOptions{
-		WaitForMethodTimeout:     time.Minute,
-		ExecuteMethodTimeout:     time.Minute,
 		ExecuteLoadAttributeMaps: messageMutationStepOptions.ExecuteLoadAttributeMaps,
 		ExecuteLockAttributes: []dex.AttributeLock{
 			dex.LockAttribute(pendingToolRecoveryAttribute),
@@ -1830,8 +1729,6 @@ type initStep struct {
 var _ dex.Step[AgentConfig] = initStep{}
 
 func (initStep) GetStepType() string { return string(stepTypeInit) }
-
-func (initStep) GetStepOptions() *dex.StepOptions { return defaultStepOptions }
 
 func (step initStep) Execute(ctx dex.Context, input AgentConfig) (*dex.StepDecision, error) {
 	if err := step.flow.validateConfig(input); err != nil {
@@ -2304,6 +2201,8 @@ func (step checkSteeredStep) Execute(ctx dex.Context, input continuation) (*dex.
 		return dex.GoTo(routeToolStep{flow: step.flow}, nil), nil
 	case continueAwaitToolApproval:
 		return dex.GoTo(awaitToolApprovalStep{flow: step.flow}, nil), nil
+	case continueExecuteTool:
+		return dex.GoTo(executeToolStep{flow: step.flow}, nil), nil
 	case continueExecuteToolRetry:
 		options, err := step.flow.currentToolStepOptions(ctx)
 		if err != nil {
@@ -2620,6 +2519,65 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
 }
 
+type executeToolStep struct {
+	dex.StepDefaultsNoWaitFor[dex.None]
+	flow *Flow
+}
+
+var _ dex.Step[dex.None] = executeToolStep{}
+
+func (executeToolStep) GetStepType() string { return string(stepTypeExecuteTool) }
+
+func (executeToolStep) GetStepOptions() *dex.StepOptions { return toolStepOptions }
+
+func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
+	if statusErr := step.flow.updateStatus(ctx, AgentStatusExecutingTool); statusErr != nil {
+		return nil, statusErr
+	}
+	call, callErr := step.flow.currentToolCall(ctx)
+	if callErr != nil {
+		return nil, callErr
+	}
+	config, configErr := agentConfigAttribute.Get(ctx)
+	if configErr != nil {
+		return nil, configErr
+	}
+	runtimeMetadata, metadataErr := agentRuntimeMetadataAttribute.Get(ctx)
+	if isAttributeNotFound(metadataErr) {
+		runtimeMetadata = MustJSONObject(`{}`)
+	} else if metadataErr != nil {
+		return nil, metadataErr
+	}
+	progress := toolProgress{ctx: ctx, flow: step.flow, call: call}
+	result, executeErr := step.flow.executeTool(ctx, ToolInvocation{
+		FlowID:          FlowID(ctx.FlowID()),
+		RuntimeMetadata: runtimeMetadata,
+		Name:            call.Name,
+		Arguments:       call.Arguments,
+		EnabledServers:  config.EnabledMCPServers,
+		WriteProgress:   progress.write,
+		CallID:          call.ID,
+		Attempt:         ctx.Attempt(),
+		FirstAttemptAt:  ctx.FirstAttemptAt(),
+	})
+	if executeErr != nil {
+		failureResult, encodeErr := encodeToolResult(toolResultPayload{
+			Status:    toolResultStatusFailed,
+			Outcome:   ToolOutcomeUnknown,
+			ErrorType: errorTypeName(executeErr),
+		}, ToolOutcomeUnknown, true)
+		if encodeErr != nil {
+			return nil, errors.Join(executeErr, encodeErr)
+		}
+		result = failureResult
+	}
+	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
+	if finishErr != nil {
+		return nil, finishErr
+	}
+	return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+}
+
 func (flow *Flow) finishToolExecution(
 	ctx dex.Context,
 	call ToolCall,
@@ -2747,14 +2705,6 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	if err != nil {
 		return nil, err
 	}
-	state, err := agentStateAttribute.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-	definition, err := step.flow.invocationToolDefinition(config, state, call.Name)
-	if err != nil {
-		return nil, err
-	}
 	runtimeMetadata, err := agentRuntimeMetadataAttribute.Get(ctx)
 	if isAttributeNotFound(err) {
 		runtimeMetadata = MustJSONObject(`{}`)
@@ -2765,7 +2715,7 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	if writeErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", call.Name, ctx.Attempt())); writeErr != nil {
 		return nil, writeErr
 	}
-	result, err := step.flow.executeTool(ctx, definition, ToolInvocation{
+	result, err := step.flow.executeTool(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
 		Name:            call.Name,
@@ -2781,6 +2731,14 @@ func (step executeToolWithRetryStep) Execute(ctx dex.Context, _ dex.None) (*dex.
 	}
 	if validationErr := result.Outcome.Validate(); validationErr != nil {
 		return nil, fmt.Errorf("tool %q outcome: %w", call.Name, validationErr)
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	definition, err := step.flow.invocationToolDefinition(config, state, call.Name)
+	if err != nil {
+		return nil, err
 	}
 	if result.Outcome == ToolOutcomeUnknown &&
 		definition.RetryExhaustionPolicy.Effective() == ToolRetryExhaustionPolicyManualRecovery {
@@ -2863,7 +2821,7 @@ func (step executeParallelToolStep) GetStepOptions() *dex.StepOptions {
 		ExecuteRetry:         toolStepOptions.ExecuteRetry,
 		ExecuteFailure: dex.ProceedToOnExecuteFailure(
 			recoverParallelToolExecutionStep{flow: step.flow},
-			defaultStepOptions,
+			nil,
 		),
 	}
 }
@@ -2876,14 +2834,6 @@ func (step executeParallelToolStep) Execute(
 	if configErr != nil {
 		return nil, configErr
 	}
-	state, stateErr := agentStateAttribute.Get(ctx)
-	if stateErr != nil {
-		return nil, stateErr
-	}
-	definition, definitionErr := step.flow.invocationToolDefinition(config, state, input.Call.Name)
-	if definitionErr != nil {
-		return nil, definitionErr
-	}
 	runtimeMetadata, metadataErr := agentRuntimeMetadataAttribute.Get(ctx)
 	if isAttributeNotFound(metadataErr) {
 		runtimeMetadata = MustJSONObject(`{}`)
@@ -2894,7 +2844,7 @@ func (step executeParallelToolStep) Execute(
 	if progressErr := progress.write(fmt.Sprintf("Calling %s (attempt %d).", input.Call.Name, ctx.Attempt())); progressErr != nil {
 		return nil, progressErr
 	}
-	result, executeErr := step.flow.executeTool(ctx, definition, ToolInvocation{
+	result, executeErr := step.flow.executeTool(ctx, ToolInvocation{
 		FlowID:          FlowID(ctx.FlowID()),
 		RuntimeMetadata: runtimeMetadata,
 		Name:            input.Call.Name,
@@ -2938,9 +2888,7 @@ func (recoverParallelToolExecutionStep) GetStepType() string {
 	return string(stepTypeRecoverParallel)
 }
 
-func (recoverParallelToolExecutionStep) GetStepOptions() *dex.StepOptions {
-	return defaultStepOptions
-}
+func (recoverParallelToolExecutionStep) GetStepOptions() *dex.StepOptions { return nil }
 
 func (recoverParallelToolExecutionStep) Execute(
 	ctx dex.Context,
@@ -3458,4 +3406,18 @@ func toolProgressMessage(tool ToolName, message string) string {
 		return "Running " + string(tool) + "."
 	}
 	return condenseActivityMessage(message)
+}
+
+func errorTypeName(err error) string {
+	value := reflect.TypeOf(err)
+	if value == nil {
+		return "error"
+	}
+	for value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if value.Name() == "" {
+		return "error"
+	}
+	return value.Name()
 }

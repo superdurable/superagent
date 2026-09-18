@@ -9,11 +9,7 @@ servers:
     tools:
       brave_web_search:
         read_only: true
-        # Defaults to short_running. Use long_running when most calls exceed five seconds.
-        running_type: short_running
         timeout_seconds: 30
-        # Defaults to 60. Raise only for healthy tools with longer silent intervals.
-        heartbeat_timeout_seconds: 60
         maximum_attempts: 3
         retry_total_seconds: 120
         # Defaults to manual_recovery. Use this only when automatic progress is safe.

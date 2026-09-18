@@ -291,35 +291,6 @@ describe("App", () => {
     });
   });
 
-  it("reconciles when a recovered Stream tail requires a Snapshot", async () => {
-    vi.mocked(listRecentEvents).mockImplementation(({ query }) =>
-      Promise.resolve({
-        events:
-          query.stream === EventStream.ACTIVITY
-            ? [
-                activityEvent(
-                  "snapshot-required-recovered",
-                  EventKind.SNAPSHOT_REQUIRED,
-                  "Durable interaction state changed.",
-                  "2026-09-03T00:01:00Z",
-                ),
-              ]
-            : [],
-      }),
-    );
-    window.history.replaceState({}, "", "/?flowId=flow-existing");
-
-    render(<App />);
-
-    await screen.findByRole("heading", { name: "SuperAgent" });
-    await waitFor(() => {
-      expect(getAgentSnapshot).toHaveBeenCalledTimes(3);
-    });
-    expect(
-      screen.queryByText("Durable interaction state changed."),
-    ).not.toBeInTheDocument();
-  });
-
   it("starts through the generated client and loads one Snapshot", async () => {
     render(<App />);
     const button = await screen.findByRole("button", { name: "Start agent" });
