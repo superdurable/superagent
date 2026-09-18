@@ -83,13 +83,21 @@ func (*Flow) GetFlowType() string {
 
 // GetSteps registers the state-machine nodes.
 func (flow *Flow) GetSteps() []dex.StepDef {
-	// Tool calls enter routeToolStep after a checkSteeredStep safe boundary.
-	// Built-ins complete there; external writes may wait in awaitToolApprovalStep.
-	// Serial effects run in executeToolStep and use recoverToolExecutionStep for
-	// configured automatic recovery. Safe reads fan out through
-	// executeParallelToolStep, recover per branch, and join before shared state
-	// changes. prepareManualToolRecoveryStep and awaitManualToolRecoveryStep own
-	// operator decisions and retry selected calls with their original IDs.
+	// Tool-call Step topology:
+	//
+	// ModelReply.ToolCalls -> AgentState.PendingToolCalls -> routeToolStep
+	//   |- built-ins:
+	//   |    write_todos -> finish in routeToolStep
+	//   |    durable_wait -> checkSteeredStep -> durableWaitStep
+	//   |    request_user_input -> awaitUserStep
+	//   |- consecutive eligible external calls:
+	//   |    parallelToolMovements -> GoToMany(
+	//   |        awaitParallelToolResultsStep, executeParallelToolStep x N)
+	//   `- other external call:
+	//        awaitToolApprovalStep when required -> checkSteeredStep -> executeToolStep
+	//
+	// Serial failures recover through recoverToolExecutionStep or the manual
+	// recovery Steps. Parallel failures normalize per branch before the join.
 	return []dex.StepDef{
 		dex.DefineStartStep(initStep{flow: flow}),
 		dex.DefineStep(awaitUserStep{flow: flow}),

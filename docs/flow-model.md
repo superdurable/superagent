@@ -99,6 +99,40 @@ DurableWait
   -> CompactContext                            (steered)
 ```
 
+### Tool-call routing
+
+```text
+ModelReply.ToolCalls
+        |
+        v
+AgentState.PendingToolCalls
+        |
+        v
+RouteTool
+  |- built-ins
+  |    |- write_todos -> completes in RouteTool
+  |    |- durable_wait -> CheckSteered -> DurableWait
+  |    `- request_user_input -> AwaitUser
+  |
+  |- two or more consecutive eligible external calls
+  |    Conditions: no approval, SupportsParallelExecution, parallel limit > 1
+  |    -> parallelToolMovements
+  |    -> GoToMany(
+  |         AwaitParallelToolResults,
+  |         ExecuteParallelTool x N
+  |       )
+  |
+  `- any other external call
+       -> AwaitToolApproval, when required
+       -> CheckSteered
+       -> ExecuteTool
+```
+
+Built-ins never enter an external tool execution Step. `RouteTool` applies these
+branches to the current pending call. Parallel routing only consumes the
+consecutive eligible prefix, bounded by `MaxParallelToolCalls`. The join
+restores model order before shared Agent state changes.
+
 `CheckSteered` is the safe-boundary router. It never cancels an in-flight model
 or MCP call. A steered message clears stale approval, timer, and pending input
 state, persists cancellation results for abandoned calls, enters application
