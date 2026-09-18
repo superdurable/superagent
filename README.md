@@ -89,7 +89,7 @@ and resource model.
 
 - Go matching [`go.mod`](go.mod)
 - Node.js and npm compatible with [`web/package-lock.json`](web/package-lock.json)
-- A Dex `v0.9.0` server
+- A Dex Server compatible with Dex Go SDK `v0.10.0`
 - A writable directory for disposable Dex BlobCache data
 
 ## Quick start
@@ -102,9 +102,7 @@ make build-api
 make build-web
 ```
 
-Start a compatible Dex server. Dex `v0.9.0` Workers require the Server
-compatibility RPC, so upgrade the Server before the Worker. Then run the API and
-Worker:
+Start a compatible Dex server, then run the API and Worker:
 
 ```bash
 SUPERAGENT_HTTP_ALLOWED_ORIGINS=http://127.0.0.1:3000 ./bin/superagent
@@ -151,6 +149,12 @@ Each provider accepts a trusted HTTPS origin override named
 persisted in Dex state or logged. Copy
 [`web/mcp-servers.example.yaml`](web/mcp-servers.example.yaml) to configure
 trusted MCP servers.
+
+Each configured tool defaults to `running_type: short_running` and a 60-second
+heartbeat timeout. Use `long_running` when more than half of expected calls
+exceed five seconds. This is a Dex placement optimization, not a timeout or
+SLA; short-running calls may fall back and complete normally. Keep the
+heartbeat default unless a healthy tool can remain silent longer.
 
 For a cross-origin frontend deployment, add its exact origin to
 `SUPERAGENT_HTTP_ALLOWED_ORIGINS`. Wildcards and credentialed cross-origin

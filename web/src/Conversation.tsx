@@ -174,10 +174,15 @@ export function Conversation({
           const newest = recent.events.at(-1);
           resumeToken = newest?.resumeToken;
           resumeTokens.current[stream] = resumeToken;
-          dispatch({
-            type: "stream-recovered",
-            updates: recent.events.map((event) => liveUpdate(stream, event)),
-          });
+          const updates = recent.events.map((event) =>
+            liveUpdate(stream, event),
+          );
+          dispatch({ type: "stream-recovered", updates });
+          if (updates.some(shouldReconcileAfter)) {
+            requestSnapshot({ blocking: false });
+            // Stream visibility can precede the durable wait commit.
+            requestSnapshot({ blocking: false });
+          }
         } catch (reason: unknown) {
           if (isAbortError(reason)) return;
           isCurrent = false;

@@ -34,6 +34,7 @@ import (
 const (
 	maximumToolAttempts     = 10
 	maximumToolTimeout      = 24 * 60 * 60
+	maximumHeartbeatTimeout = 24 * 60 * 60
 	maximumToolRetrySeconds = 7 * 24 * 60 * 60
 )
 
@@ -117,12 +118,48 @@ func (policy *RetryExhaustionPolicy) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// RunningType selects the preferred Dex execution path for one MCP tool.
+type RunningType string
+
+const (
+	RunningTypeShortRunning RunningType = "short_running"
+	RunningTypeLongRunning  RunningType = "long_running"
+)
+
+// Validate rejects unknown running types.
+func (runningType RunningType) Validate() error {
+	switch runningType {
+	case RunningTypeShortRunning, RunningTypeLongRunning:
+		return nil
+	default:
+		return fmt.Errorf("unsupported running type %q", runningType)
+	}
+}
+
+// UnmarshalYAML decodes and validates one running type.
+func (runningType *RunningType) UnmarshalYAML(node *yaml.Node) error {
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	decoded := RunningType(value)
+	if err := decoded.Validate(); err != nil {
+		return err
+	}
+	*runningType = decoded
+	return nil
+}
+
 // ToolPolicy configures safety and bounded retries for one tool.
 type ToolPolicy struct {
 	// ReadOnly overrides the tool annotation; nil means unknown.
 	ReadOnly *bool `yaml:"read_only"`
 	// TimeoutSeconds defaults to 60 and bounds one attempt.
 	TimeoutSeconds float64 `yaml:"timeout_seconds"`
+	// RunningType defaults to short_running for ASYNC local execution with fallback.
+	RunningType RunningType `yaml:"running_type"`
+	// HeartbeatTimeoutSeconds defaults to 60 for regular execution.
+	HeartbeatTimeoutSeconds *float64 `yaml:"heartbeat_timeout_seconds"`
 	// MaximumAttempts defaults to three for trusted reads and one otherwise.
 	MaximumAttempts *int `yaml:"maximum_attempts"`
 	// RetryTotalSeconds defaults to 300 and bounds all attempts.
@@ -217,6 +254,13 @@ func applyDefaults(server *ServerConfig) {
 		if policy.RetryTotalSeconds == 0 {
 			policy.RetryTotalSeconds = 300
 		}
+		if policy.RunningType == "" {
+			policy.RunningType = RunningTypeShortRunning
+		}
+		if policy.HeartbeatTimeoutSeconds == nil {
+			value := float64(60)
+			policy.HeartbeatTimeoutSeconds = &value
+		}
 		if policy.RetryExhaustionPolicy == "" {
 			policy.RetryExhaustionPolicy = RetryExhaustionPolicyManualRecovery
 		}
@@ -267,6 +311,17 @@ func validateServer(server ServerConfig) error {
 		}
 		if !isFinitePositive(policy.TimeoutSeconds) || policy.TimeoutSeconds > maximumToolTimeout {
 			return fmt.Errorf("timeout_seconds for %q must be positive and at most %d", name, maximumToolTimeout)
+		}
+		if err := policy.RunningType.Validate(); err != nil {
+			return fmt.Errorf("running_type for %q: %w", name, err)
+		}
+		if policy.HeartbeatTimeoutSeconds == nil || !isFinitePositive(*policy.HeartbeatTimeoutSeconds) ||
+			*policy.HeartbeatTimeoutSeconds > maximumHeartbeatTimeout {
+			return fmt.Errorf(
+				"heartbeat_timeout_seconds for %q must be positive and at most %d",
+				name,
+				maximumHeartbeatTimeout,
+			)
 		}
 		if !isFinitePositive(policy.RetryTotalSeconds) || policy.RetryTotalSeconds > maximumToolRetrySeconds {
 			return fmt.Errorf("retry_total_seconds for %q must be positive and at most %d", name, maximumToolRetrySeconds)
@@ -326,6 +381,10 @@ func cloneToolPolicies(source map[string]ToolPolicy) map[string]ToolPolicy {
 		if policy.MaximumAttempts != nil {
 			attempts := *policy.MaximumAttempts
 			policy.MaximumAttempts = &attempts
+		}
+		if policy.HeartbeatTimeoutSeconds != nil {
+			heartbeatTimeout := *policy.HeartbeatTimeoutSeconds
+			policy.HeartbeatTimeoutSeconds = &heartbeatTimeout
 		}
 		if policy.ReadOnly != nil {
 			readOnly := *policy.ReadOnly

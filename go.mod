@@ -12,7 +12,7 @@ require (
 	github.com/ogen-go/ogen v1.24.0
 	github.com/openai/openai-go/v3 v3.55.0
 	github.com/superdurable/dex/blob-cache-go v0.1.0
-	github.com/superdurable/dex/sdk-go v0.9.0
+	github.com/superdurable/dex/sdk-go v0.10.0
 	golang.org/x/net v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -54,4 +54,5 @@ require (
 )
 
 tool github.com/ogen-go/ogen/cmd/ogen
+
 tool github.com/ogen-go/ogen/cmd/jschemagen

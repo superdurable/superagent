@@ -1577,10 +1577,32 @@ type agentIntegrationEnvironment struct {
 	agent         *Client
 }
 
+func registerRPCDefinitionsForTestOnly(flow *Flow) {
+	flow.rpcDefinitionsForTestOnly = []dex.RPCDef{
+		dex.DefineRPC(flow.GetFlowStateForTestOnly, &dex.RPCOptions{
+			Timeout:      defaultCommandTimeout,
+			LoadChannels: []dex.ChannelDef{queuedUserMessagesChannel},
+		}),
+		dex.DefineRPC(flow.GetPlanExecutionMessagesForTestOnly, &dex.RPCOptions{
+			Timeout:         defaultCommandTimeout,
+			LoadChannelMaps: []dex.ChannelDef{planExecutionsChannel},
+		}),
+		dex.DefineRPC(flow.GetMessagesAfterForTestOnly, &dex.RPCOptions{
+			Timeout: defaultCommandTimeout,
+			LoadAttributeMaps: []dex.AttributeDef{
+				currentMessagesAttribute,
+				archivedMessagesAttribute,
+			},
+		}),
+	}
+}
+
 func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools ToolRegistry) *agentIntegrationEnvironment {
 	t.Helper()
+	flow := NewFlow(modelClient, tools)
+	registerRPCDefinitionsForTestOnly(flow)
 	environment := &agentIntegrationEnvironment{
-		flow:          NewFlow(modelClient, tools),
+		flow:          flow,
 		address:       availableLocalAddress(t, t.Context()),
 		serverAddress: os.Getenv("DEX_FLOW_SERVICE_ADDRESS"),
 	}
