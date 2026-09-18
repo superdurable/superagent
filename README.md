@@ -203,6 +203,11 @@ and rejects every visualizer diagnostic.
 - [ARCHITECTURE.md](ARCHITECTURE.md): package and deployment boundaries
 - [docs/flow-model.md](docs/flow-model.md): Flow resources and transitions
 
+## Community
+
+Join the [SuperDurable SuperAgent community on Slack](https://join.slack.com/t/superdurableworkspace/shared_invite/zt-4aby5e0b6-6rNT9zN6BzbroHZpGyia0A)
+to ask questions, share ideas, and connect with other contributors and users.
+
 Read [`AGENTS.md`](AGENTS.md) before making changes. Work involving Dex Flows,
 Steps, RPCs, Channels, Streams, Timers, retries, or recovery must also follow
 the installed [Dex Developer skill](https://docs.superdurable.io/build-with-ai/dex-developer-skill).
