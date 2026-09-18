@@ -33,6 +33,11 @@ Attribute index synchronization or Worker binding. Deploy the Server before the
 Worker. Startup fails when `GetServerInfo` is missing, either interval is
 invalid, or the intervals do not overlap.
 
+Snapshot reads retry inactive-run and server long-poll expiry errors within a
+three-attempt budget. Snapshot is read-only, so these retries cannot duplicate
+commands or external effects. Caller cancellation and other errors still return
+immediately.
+
 Renewable sandbox credentials are not an Agent Flow resource. A future,
 separately designed `SandboxLifecycleFlow` will own that lifecycle.
 

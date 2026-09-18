@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> None:
     lock = json.loads((ROOT / "dex-release.lock.json").read_text(encoding="utf-8"))
-    if set(lock) != {
+    if set(lock) - {"sdkManifest"} != {
         "schemaVersion",
         "release",
         "manifest",
@@ -46,6 +46,12 @@ def main() -> None:
     manifest = update_dex_release.validate_manifest(
         lock["manifest"]["url"], lock["manifest"]["sha256"], content
     )
+    sdk_manifest = manifest
+    if "sdkManifest" in lock:
+        source = lock["sdkManifest"]
+        sdk_manifest = update_dex_release.validate_manifest(
+            source["url"], source["sha256"], update_dex_release.download(source["url"])
+        )
     requirements = dict(
         re.findall(r"(?m)^\s*([^\s()]+)\s+(v[^\s]+)(?:\s+//.*)?$", (ROOT / "go.mod").read_text(encoding="utf-8"))
     )
@@ -55,7 +61,7 @@ def main() -> None:
         lock["sourceCommit"] == manifest["sourceCommit"], "Dex source commit mismatch"
     )
     update_dex_release.require(
-        lock["sdkGoVersion"] == manifest["components"]["sdkGo"]["version"],
+        lock["sdkGoVersion"] == sdk_manifest["components"]["sdkGo"]["version"],
         "Dex Go SDK version mismatch",
     )
     update_dex_release.require(
@@ -63,8 +69,14 @@ def main() -> None:
         "SuperAgent must directly require the locked Dex Go SDK",
     )
     update_dex_release.require(
-        lock["protocol"] == manifest["protocol"]["clients"]["sdkGo"],
+        lock["protocol"] == sdk_manifest["protocol"]["clients"]["sdkGo"],
         "Dex protocol mismatch",
+    )
+    server_protocol = manifest["protocol"]["server"]
+    update_dex_release.require(
+        max(lock["protocol"]["minimum"], server_protocol["minimum"])
+        <= min(lock["protocol"]["maximum"], server_protocol["maximum"]),
+        "locked Go SDK and Server protocols are incompatible",
     )
     for field in ("runningFlowsCompatibility", "persistenceCompatibility"):
         update_dex_release.require(lock[field] == manifest[field], f"Dex {field} mismatch")
@@ -72,7 +84,7 @@ def main() -> None:
         lock["openFlowsCompatibility"] in {"compatible", "cancel-required"},
         "invalid open Flow compatibility",
     )
-    print(f'SuperAgent directly requires locked Dex {lock["release"]}')
+    print(f'SuperAgent locks Dex Server {lock["release"]} and Go SDK {lock["sdkGoVersion"]}')
 
 
 if __name__ == "__main__":
