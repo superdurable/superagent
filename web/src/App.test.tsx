@@ -20,7 +20,6 @@ import {
   AgentStatus,
   EventKind,
   EventStream,
-  FlowStatus,
   MessageRole,
   PlanStatus,
   Provider,
@@ -107,9 +106,6 @@ const activeDescription: AgentDescription = {
 
 const snapshot: AgentSnapshot = {
   runId: "run-1",
-  flowStatus: FlowStatus.RUNNING,
-  errorType: null,
-  errorMessage: null,
   history: { messages: [], nextBeforeSequence: null },
   description: activeDescription,
   queued: [],
@@ -291,35 +287,6 @@ describe("App", () => {
     });
   });
 
-  it("reconciles when a recovered Stream tail requires a Snapshot", async () => {
-    vi.mocked(listRecentEvents).mockImplementation(({ query }) =>
-      Promise.resolve({
-        events:
-          query.stream === EventStream.ACTIVITY
-            ? [
-                activityEvent(
-                  "snapshot-required-recovered",
-                  EventKind.SNAPSHOT_REQUIRED,
-                  "Durable interaction state changed.",
-                  "2026-09-03T00:01:00Z",
-                ),
-              ]
-            : [],
-      }),
-    );
-    window.history.replaceState({}, "", "/?flowId=flow-existing");
-
-    render(<App />);
-
-    await screen.findByRole("heading", { name: "SuperAgent" });
-    await waitFor(() => {
-      expect(getAgentSnapshot).toHaveBeenCalledTimes(3);
-    });
-    expect(
-      screen.queryByText("Durable interaction state changed."),
-    ).not.toBeInTheDocument();
-  });
-
   it("starts through the generated client and loads one Snapshot", async () => {
     render(<App />);
     const button = await screen.findByRole("button", { name: "Start agent" });
@@ -477,28 +444,6 @@ describe("App", () => {
       expect(observed).toEqual([1, 4]);
       expect(getAgentSnapshot).toHaveBeenCalledTimes(2);
     });
-  });
-
-  it("shows a terminal Flow result without opening live subscriptions", async () => {
-    vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
-      runId: "run-terminal",
-      flowStatus: FlowStatus.TERMINATED,
-      errorType: null,
-      errorMessage: "stopped by operator",
-      history: { messages: [], nextBeforeSequence: null },
-      description: null,
-      queued: [],
-      steered: [],
-    });
-    window.history.replaceState({}, "", "/?flowId=flow-existing");
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole("heading", { name: "Agent Terminated" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("stopped by operator")).toBeInTheDocument();
-    expect(readEvent).not.toHaveBeenCalled();
   });
 
   it("shows an optimistic queue item while message submission is pending", async () => {

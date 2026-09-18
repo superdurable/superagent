@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "release": "0.10.0",
+  "manifest": {
+    "url": "https://github.com/superdurable/dex/releases/download/server/v0.10.0/dex-compatibility-v0.10.0.json",
+    "sha256": "dec8dd6d9a3734e8afbf14acfb740830dc63c361d4957d1fa9f4810a61f311d9"
+  },
+  "sourceCommit": "90dbc4ef121d575e4f79505cde0889cf49583fc2",
+  "sdkGoVersion": "0.9.1",
+  "protocol": {
+    "minimum": 1,
+    "maximum": 1
+  },
+  "runningFlowsCompatibility": "compatible",
+  "persistenceCompatibility": "compatible",
+  "openFlowsCompatibility": "cancel-required",
+  "sdkGoRelease": {
+    "tag": "sdk-go/v0.9.1",
+    "sourceCommit": "81e0ddf014b40065f23cd1e9ada8849aa55df4ff",
+    "moduleChecksum": "h1:j7q+gpS1E8i0JvrR1gmpBUnWBHDZr6iTqYAOiwPzC2U=",
+    "goModChecksum": "h1:8Wj5wPf9dyb7hDnA40j8xISR/zjhX57NrUDVcXgf5x8="
+  }
+}

@@ -14,7 +14,7 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK `v0.10.0`. Each
+The implementation requires Dex Go SDK `v0.9.1` and Server `v0.10.0`. Each
 `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
@@ -24,19 +24,20 @@ that default. `CompactContext`, `CallModel`, and tools declared long-running
 override Execute durability to SYNC. A short-running tool may fall back from
 local to regular execution; that is an expected optimization path and does not
 change its ASYNC durability. Registry policy supplies each tool's attempt,
-heartbeat, retry, and recovery settings. Ordinary Step methods use a one-minute
-timeout, while model methods retain their explicit ten-minute timeout and
-five-minute heartbeat.
+retry, and recovery settings. Every regular attempt uses a one-minute heartbeat
+timeout. Ordinary Step methods use a one-minute method timeout, while model
+methods retain their explicit ten-minute method timeout.
 
 The Worker negotiates the highest common protocol with the Server before
-Attribute index synchronization or Worker binding. Startup fails when
-`GetServerInfo` is missing, either interval is invalid, or the intervals do not
-overlap. Release automation does not duplicate this runtime check.
+Attribute index synchronization or Worker binding. Deploy the Server before the
+Worker. Startup fails when `GetServerInfo` is missing, either interval is
+invalid, or the intervals do not overlap.
 
-Snapshot reads retry inactive-run and server long-poll expiry errors within a
-three-attempt budget. Snapshot is read-only, so these retries cannot duplicate
-commands or external effects. Caller cancellation and other errors still return
-immediately.
+Snapshot performs one read-only RPC. It does not query Dex visibility, wait for
+Flow completion, or retry lifecycle errors. Temporal Query serves the retained
+application state after Flow closure. Run ID identifies the execution generation
+so the browser can reset transient Stream and reconciliation state after
+continue-as-new.
 
 Renewable sandbox credentials are not an Agent Flow resource. A future,
 separately designed `SandboxLifecycleFlow` will own that lifecycle.
@@ -58,21 +59,21 @@ CallModel
 
 RouteTool
   -> CheckSteered -> AwaitToolApproval         (untrusted write)
-  -> CheckSteered -> ExecuteToolWithRetry      (approved/read-only external tool)
+  -> CheckSteered -> ExecuteTool               (approved/read-only external tool)
   -> ExecuteParallelTool + AwaitParallelToolResults (bounded contiguous safe reads)
   -> CheckSteered -> DurableWait               (timer tool)
   -> AwaitUser                                  (durable input tool)
   -> next tool or CompactContext               (built-in/result)
 
 AwaitToolApproval
-  -> CheckSteered -> ExecuteToolWithRetry      (approved)
+  -> CheckSteered -> ExecuteTool               (approved)
   -> next tool or CompactContext               (rejected)
   -> CompactContext                            (steered)
 
-ExecuteToolWithRetry
+ExecuteTool
   -> next tool or CompactContext               (success or known failure)
   -> RecoverToolExecution                      (configured automatic unknown)
-  -> PrepareManualToolRecovery                 (default retry exhaustion)
+  -> PrepareManualToolRecovery                 (manual unknown or retry exhaustion)
 
 RecoverToolExecution
   -> next tool or CompactContext               (one unknown outcome)
@@ -98,6 +99,40 @@ DurableWait
   -> CompactContext                            (steered)
 ```
 
+### Tool-call routing
+
+```text
+ModelReply.ToolCalls
+        |
+        v
+AgentState.PendingToolCalls
+        |
+        v
+RouteTool
+  |- built-ins
+  |    |- write_todos -> completes in RouteTool
+  |    |- durable_wait -> CheckSteered -> DurableWait
+  |    `- request_user_input -> AwaitUser
+  |
+  |- two or more consecutive eligible external calls
+  |    Conditions: no approval, SupportsParallelExecution, parallel limit > 1
+  |    -> parallelToolMovements
+  |    -> GoToMany(
+  |         AwaitParallelToolResults,
+  |         ExecuteParallelTool x N
+  |       )
+  |
+  `- any other external call
+       -> AwaitToolApproval, when required
+       -> CheckSteered
+       -> ExecuteTool
+```
+
+Built-ins never enter an external tool execution Step. `RouteTool` applies these
+branches to the current pending call. Parallel routing only consumes the
+consecutive eligible prefix, bounded by `MaxParallelToolCalls`. The join
+restores model order before shared Agent state changes.
+
 `CheckSteered` is the safe-boundary router. It never cancels an in-flight model
 or MCP call. A steered message clears stale approval, timer, and pending input
 state, persists cancellation results for abandoned calls, enters application
@@ -115,16 +150,41 @@ history, and makes the model replan.
 | `CheckSteered`         | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                       |
 | `RouteTool`            | none                                                                                | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                                                            |
 | `AwaitToolApproval`    | exact call-ID approval or steering                                                  | Persist waiting status; consume one decision or replan on steering                                                                                         |
-| `ExecuteToolWithRetry` | none                                                                                | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                                  |
+| `ExecuteTool`          | none                                                                                | Perform one external tool attempt under dynamically selected Dex timeout and retry policy                                                                  |
 | `RecoverToolExecution` | none                                                                                | Record one unknown result for an explicitly configured automatic recovery, then continue                                                                   |
 | `ExecuteParallelTool`  | none                                                                                | Perform one bounded-wave branch effect and publish exactly one typed result without shared-state mutation                                                   |
-| `RecoverParallelToolExecution` | none                                                                        | Convert one exhausted branch to an unknown typed result and publish it                                                                                      |
+| `RecoverParallelToolExecution` | none                                                                        | Normalize one returned-unknown or exhausted branch and publish its typed result                                                                             |
 | `AwaitParallelToolResults` | all started branch results                                                                 | Join results, preserve model order, and either commit the batch or enter one manual recovery                                                                |
-| `PrepareManualToolRecovery` | none                                                                            | Capture the serial exhausted call and redacted Dex error type                                                                                               |
+| `PrepareManualToolRecovery` | none                                                                            | Capture a serial returned-unknown or exhausted call and its redacted error type                                                                              |
 | `AwaitManualToolRecovery` | exact recovery decision or steering                                               | Persist recovery state; retry selected calls, continue unknowns, stop the sequence, or replan                                                               |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
 
-Dex Server `v0.10.0` and Go SDK `v0.10.0` expose Channel size metadata in `WaitFor` and
+### Tool StepOptions resolution
+
+`ExecuteTool` and `ExecuteParallelTool` register without static StepOptions.
+Their execution policy is resolved for each movement from the selected
+`ToolDefinition`, so a prior call cannot leak policy into the next call.
+
+For a serial call, `CheckSteered` re-reads the current call, Agent config, and
+state after approval and steering boundaries. It schedules `ExecuteTool` with
+`WithStepOptions`. For a parallel wave, `RouteTool` creates one
+`ExecuteParallelTool` movement per call with its own options. Manual retries
+re-resolve each selected definition and use the same parallel movement path.
+
+Each movement supplies attempt timeout, the fixed one-minute heartbeat, retry
+attempts and total duration, durability, and exhausted-retry routing. Serial
+execution also loads the retained message map that it may append to. Each
+failure target carries its own StepOptions. Parallel exhaustion becomes a typed
+branch result so the join can decide whether the batch needs manual recovery.
+
+Dex merges movement options over registered options. Because these execution
+Steps register `nil`, the movement is their complete Step-level policy. A
+short-running definition leaves Execute durability unset and therefore inherits
+the Flow's ASYNC default. A long-running definition explicitly selects SYNC.
+ASYNC fallback changes where the attempt runs; it does not change that resolved
+durability.
+
+Dex Server `v0.10.0` and Go SDK `v0.9.1` expose Channel size metadata in `WaitFor` and
 `Execute`. `AwaitUser.WaitFor` reads the
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
@@ -225,9 +285,10 @@ retained messages.
 
 Snapshot is one read-only Flow RPC that loads current history, the interaction
 description, and pending Channels. It returns `WaitingInputRound` and stable
-application message IDs. Archive paging returns exactly one immutable chunk and
+application message IDs. Snapshot contains application state only; it does not
+project Dex lifecycle or terminal failure metadata. Archive paging returns exactly one immutable chunk and
 the bounded sequence metadata needed for continuation. Its registered
-`v0.10.0` RPC options load the retained archive map because the requested chunk
+`v0.9.1` RPC options load the retained archive map because the requested chunk
 key is an RPC input and invocation-specific selective loads no longer exist.
 
 The browser begins with the Snapshot round, waits for `round > watermark`, uses
@@ -237,14 +298,14 @@ every completed Snapshot read. Hidden pages pause the timer and live reads.
 
 ## External effects and recovery
 
-- Tool execution policy is copied from `ToolDefinition` into Dex StepOptions.
+- Tool execution policy is copied from `ToolDefinition` into movement-scoped
+  Dex StepOptions immediately before scheduling each execution.
 - `short_running` is the default and inherits Flow ASYNC durability. Use
   `long_running` when more than half of expected calls are likely to exceed five
   seconds; it overrides Execute durability to SYNC. This classification is an
   optimization hint, not a runtime guarantee.
-- Tool heartbeat defaults to one minute. Increase it only when healthy regular
-  execution can remain silent for longer. `AttemptTimeout` also bounds the
-  registry context because ASYNC local execution ignores Dex method timeouts.
+- Tool heartbeat timeout is one minute. `AttemptTimeout` also bounds the registry
+  context because ASYNC local execution ignores Dex method timeouts.
 - The `mock/dex` model alone exposes `simulate_tool_failure`; `/tool-failure`
   uses it to verify retry exhaustion and the manual recovery surface locally.
 - Known business failures return a normal tool result. Transient or ambiguous

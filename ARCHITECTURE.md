@@ -77,7 +77,7 @@ Snapshot is the only durable current-interaction and reconciliation read model.
 Archive paging is an immutable history continuation. Each page uses one
 read-only Flow RPC that loads `AgentState` and the retained archive map, then
 returns one exact chunk without loading current interaction state or pending
-Channels. Dex Go SDK `v0.10.0` fixes selective loads at RPC registration, so an
+Channels. Dex Go SDK `v0.9.1` fixes selective loads at RPC registration, so an
 input-selected AttributeMap instance cannot be loaded independently.
 
 Commands follow Dex's transactional RPC model. There is no permanent command
@@ -140,11 +140,11 @@ replacement. They also receive Dex attempt metadata.
 
 The browser performs one generated `GET /products/ai-agent/snapshot` on load and
 atomically replaces history, description, queued messages, steered messages,
-and Run identity through one reducer action. Before invoking the Snapshot RPC,
-the backend checks the indexed Flow lifecycle so a terminated Flow cannot return
-its last running projection. It then lists the configured recent tail of each
-Stream, applies those events chronologically, and long-polls from the newest
-returned resume token. The browser orders every
+and Run identity through one reducer action. Snapshot is an application-state
+query, not a Dex lifecycle projection. It remains readable from retained closed
+Flow history and returns the last durable application view. The browser then
+lists the configured recent tail of each Stream, applies those events
+chronologically, and long-polls from the newest returned resume token. The browser orders every
 observed activity event, reasoning summary, live assistant response, and durable
 message in one timeline by creation time. Reasoning entries are keyed by the
 producing model invocation source. Completion activity marks later text from
@@ -159,9 +159,7 @@ pending question increments it only when `AnsweredUserInputs` is empty, then
 waits exclusively for an answer. The
 browser takes the first Snapshot round as a watermark, then long-polls
 for `round > watermark`. Each response returns the actual matched round, which
-becomes the next watermark before requesting Snapshot. The ongoing round wait
-also discovers Flow closure; Snapshot's lifecycle guard remains the terminal
-recovery path.
+becomes the next watermark before requesting Snapshot.
 
 Every consumed queued message, steered message, or Plan execution request emits
 one `input_consumed` Activity event with exact application IDs or revision and
@@ -190,8 +188,6 @@ reconcile also close this gate. Ordinary Stream events other than explicit
 Snapshot controls do not request Snapshot. A visible-page configurable
 single-shot freshness timer defaults to 60 seconds and starts only after the
 prior Snapshot finishes, so an intervening read resets the complete delay.
-Terminal reconciliation stops Streams, Attribute waits, Snapshot work, and the
-timer.
 
 Resume tokens belong to the live subscription and are not durable UI state.
 Activity events are independent timeline rows keyed by resume token. A page
@@ -330,7 +326,7 @@ Runtime metadata therefore remains stable for the logical call.
 
 `internal/app` owns every long-lived resource. Startup validates configuration,
 discovers MCP, constructs providers, opens BlobCache, starts the Worker, waits
-for its listener, marks readiness, and then serves the API. The Dex Go SDK `v0.10.0`
+for its listener, marks readiness, and then serves the API. The Dex Go SDK `v0.9.1`
 Worker negotiates a compatible Server protocol before synchronizing indexes or
 binding. Any startup failure closes everything already constructed.
 

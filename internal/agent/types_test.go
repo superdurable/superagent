@@ -97,8 +97,6 @@ func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
 		target   json.Unmarshaler
 	}{
 		{name: "Agent status", typeName: "AgentStatus", target: new(AgentStatus)},
-		{name: "Flow status", typeName: "FlowStatus", target: new(FlowStatus)},
-		{name: "Flow error type", typeName: "FlowErrorType", target: new(FlowErrorType)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -111,12 +109,6 @@ func TestEnumsRejectUnknownJSONWithTypedError(t *testing.T) {
 				t.Fatalf("validation error = %+v", validationErr)
 			}
 		})
-	}
-}
-
-func TestVisibilityStringQuotesApostrophes(t *testing.T) {
-	if got := visibilityString("customer's-flow"); got != `'customer''s-flow'` {
-		t.Fatalf("visibilityString() = %q", got)
 	}
 }
 

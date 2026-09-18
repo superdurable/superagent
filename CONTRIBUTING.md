@@ -12,17 +12,25 @@ against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
 Snapshot, Stream, Channel size snapshot, and Attribute wait code target Dex Go
-SDK `v0.10.0`. Workers negotiate the Server protocol before binding. Recheck
+SDK `v0.9.1` and Server `v0.10.0`. Workers negotiate the Server protocol before
+binding, so deployments upgrade the Server before the Worker. Recheck
 the installed SDK source and the installed skill before changing resource
 projection or errors. Never infer an API from a design screenshot or unreleased
 branch.
 
-Dex Go SDK and dexcli are independent direct dependencies. Run
-`script/update_dex_versions.py` with explicit component versions, then run
-`script/check_dex_versions.py`. The updater reads dexcli's native
-`checksums.txt`; SuperAgent does not consume a cross-component compatibility
-manifest. Resolve SDK API changes in the same pull request. Normal compilation,
-real-Server integration, and browser E2E are the merge gates.
+`dex-release.lock.json` binds the Server to its immutable compatibility manifest.
+It binds an independently released Go SDK patch to its tag, source commit, and
+Go module checksums. For a Server-only upgrade, run
+`script/update_dex_release.py` with `--server-only`, `--manifest-url`, and
+`--manifest-sha256`. This preserves either SDK lock form and requires the SDK
+and Server protocol intervals to overlap. Dex Go SDK `v0.9.1` registers RPCs
+explicitly and fixes their execution options at Flow registration.
+A Dex publication opens an automated upgrade PR with open Flow
+compatibility set to `cancel-required` for review. Publishing the subsequent
+SuperAgent release dispatches the reviewed IaC and SuperVerse upgrades.
+The automation opens the draft after asset validation and mechanical pin
+updates, before product compilation. Resolve breaking SDK API migrations in
+that draft; normal pull-request CI remains the merge gate.
 
 ## Deployment boundary
 

@@ -9,7 +9,6 @@ import {
   EventKind,
   MessageRole,
   type TaskStatus,
-  type AgentDescription,
   type AgentEvent,
   type AgentSnapshot,
   type CallId,
@@ -22,7 +21,7 @@ import {
 } from "./api/generated";
 
 export type ActiveConnectionState = "live" | "reconnecting" | "stale";
-export type ConnectionState = ActiveConnectionState | "terminal";
+export type ConnectionState = ActiveConnectionState;
 export type ReconciliationState = "open" | "syncing" | "stale";
 export type QueueCommandAction = "delete" | "steer" | "edit";
 
@@ -116,9 +115,6 @@ interface PlanProgressHint {
   tasks: PlanTaskProgress[];
 }
 
-type ActiveSnapshot = AgentSnapshot & { description: AgentDescription };
-type TerminalSnapshot = AgentSnapshot & { description: null };
-
 interface ReadyConversationBase {
   kind: "ready";
   subscriptionGeneration: number;
@@ -140,19 +136,11 @@ interface ReadyConversationBase {
 }
 
 export interface ActiveConversationState extends ReadyConversationBase {
-  lifecycle: "active";
-  snapshot: ActiveSnapshot;
+  snapshot: AgentSnapshot;
   connection: ActiveConnectionState;
 }
 
-export interface TerminalConversationState extends ReadyConversationBase {
-  lifecycle: "terminal";
-  snapshot: TerminalSnapshot;
-  connection: "terminal";
-}
-
-export type ReadyConversationState =
-  ActiveConversationState | TerminalConversationState;
+export type ReadyConversationState = ActiveConversationState;
 
 export type ConversationState =
   | { kind: "loading" }
@@ -197,7 +185,6 @@ export function conversationReducer(
           message: action.message,
         };
       }
-      if (state.lifecycle === "terminal") return state;
       return {
         ...state,
         connection: "stale",
@@ -206,7 +193,6 @@ export function conversationReducer(
       };
     case "snapshot-requested":
       if (state.kind === "ready") {
-        if (state.lifecycle === "terminal") return state;
         return {
           ...state,
           connection: action.connection,
@@ -215,7 +201,7 @@ export function conversationReducer(
       }
       return { kind: "loading" };
     case "older-requested":
-      return state.kind === "ready" && state.lifecycle === "active"
+      return state.kind === "ready"
         ? {
             ...state,
             historyRequest: {
@@ -227,28 +213,22 @@ export function conversationReducer(
     case "older-loaded":
       return mergeOlderHistory(state, action.id, action.page);
     case "older-failed":
-      if (
-        state.kind !== "ready" ||
-        state.lifecycle === "terminal" ||
-        state.historyRequest?.id !== action.id
-      ) {
+      if (state.kind !== "ready" || state.historyRequest?.id !== action.id) {
         return state;
       }
       return { ...state, historyRequest: null, error: action.message };
     case "stream-update":
-      return state.kind === "ready" && state.lifecycle === "active"
+      return state.kind === "ready"
         ? applyLiveUpdate(state, action.update)
         : state;
     case "stream-recovered":
       return action.updates.reduce<ConversationState>(
         (current, update) =>
-          current.kind === "ready" && current.lifecycle === "active"
-            ? applyLiveUpdate(current, update)
-            : current,
+          current.kind === "ready" ? applyLiveUpdate(current, update) : current,
         state,
       );
     case "stream-failed":
-      if (state.kind !== "ready" || state.lifecycle === "terminal") {
+      if (state.kind !== "ready") {
         return state;
       }
       return {
@@ -257,28 +237,20 @@ export function conversationReducer(
         error: action.message,
       };
     case "composer-changed":
-      return state.kind === "ready" && state.lifecycle === "active"
+      return state.kind === "ready"
         ? { ...state, composer: action.value }
         : state;
     case "plan-mode-changed":
-      return state.kind === "ready" && state.lifecycle === "active"
+      return state.kind === "ready"
         ? { ...state, isPlanMode: action.value }
         : state;
     case "command-started":
-      if (
-        state.kind !== "ready" ||
-        state.lifecycle === "terminal" ||
-        state.pendingCommand !== null
-      ) {
+      if (state.kind !== "ready" || state.pendingCommand !== null) {
         return state;
       }
       return beginCommand(state, action.id, action.command);
     case "command-succeeded":
-      if (
-        state.kind !== "ready" ||
-        state.lifecycle === "terminal" ||
-        state.pendingCommand?.id !== action.id
-      ) {
+      if (state.kind !== "ready" || state.pendingCommand?.id !== action.id) {
         return state;
       }
       return completeCommand(state, action.id);
@@ -291,11 +263,7 @@ function reconcileSnapshot(
   state: ConversationState,
   snapshot: AgentSnapshot,
 ): ReadyConversationState {
-  if (snapshot.description === null) {
-    return terminalState({ ...snapshot, description: null }, state);
-  }
-  const previous =
-    state.kind === "ready" && state.lifecycle === "active" ? state : null;
+  const previous = state.kind === "ready" ? state : null;
   const previousRun =
     previous?.snapshot.runId === snapshot.runId ? previous : null;
   const history =
@@ -356,7 +324,6 @@ function reconcileSnapshot(
     snapshot.description.status !== AgentStatus.CALLING_MODEL;
   return {
     kind: "ready",
-    lifecycle: "active",
     snapshot: activeSnapshot,
     connection: "live",
     subscriptionGeneration:
@@ -393,45 +360,12 @@ function reconcileSnapshot(
   };
 }
 
-function terminalState(
-  snapshot: AgentSnapshot & { description: null },
-  previous: ConversationState,
-): TerminalConversationState {
-  const priorReady = previous.kind === "ready" ? previous : null;
-  return {
-    kind: "ready",
-    lifecycle: "terminal",
-    snapshot,
-    connection: "terminal",
-    reconciliation: "open",
-    subscriptionGeneration: priorReady?.subscriptionGeneration ?? 0,
-    historyRequest: null,
-    pendingCommand: null,
-    pendingAnsweredUserInput: null,
-    optimisticSubmissions: [],
-    composer: priorReady?.composer ?? "",
-    isPlanMode: priorReady?.isPlanMode ?? false,
-    assistant: null,
-    reasoning: completeReasoning(priorReady?.reasoning ?? []),
-    activities: priorReady?.activities ?? [],
-    consumedUserMessages: [],
-    planProgress: null,
-    isWaitingForInput: false,
-    commandError: null,
-    error: snapshot.errorMessage,
-  };
-}
-
 function mergeOlderHistory(
   state: ConversationState,
   requestID: number,
   page: HistoryPage,
 ): ConversationState {
-  if (
-    state.kind !== "ready" ||
-    state.lifecycle === "terminal" ||
-    state.historyRequest?.id !== requestID
-  ) {
+  if (state.kind !== "ready" || state.historyRequest?.id !== requestID) {
     return state;
   }
   return {
@@ -633,11 +567,7 @@ function failCommand(
   id: number,
   message: string,
 ): ConversationState {
-  if (
-    state.kind !== "ready" ||
-    state.lifecycle === "terminal" ||
-    state.pendingCommand?.id !== id
-  ) {
+  if (state.kind !== "ready" || state.pendingCommand?.id !== id) {
     return state;
   }
   const command = state.pendingCommand.command;
@@ -660,7 +590,7 @@ function failCommand(
 
 function reconcileOptimisticSubmissions(
   submissions: OptimisticSubmission[],
-  snapshot: AgentSnapshot & { description: AgentDescription },
+  snapshot: AgentSnapshot,
 ): OptimisticSubmission[] {
   const claimed = new Set<string>();
   return submissions.filter((submission) => {

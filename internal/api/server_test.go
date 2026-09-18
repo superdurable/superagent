@@ -87,12 +87,11 @@ func TestPortalEncodesEmptyMCPArrays(t *testing.T) {
 func TestSnapshotResponseCannotBeCached(t *testing.T) {
 	t.Parallel()
 	service := &fakeAgentService{snapshot: agent.AgentSnapshot{
-		RunID:      "run-1",
-		FlowStatus: agent.FlowStatusRunning,
+		RunID: "run-1",
 		History: agent.HistoryPage{
 			Messages: []agent.SequencedMessage{},
 		},
-		Description: &agent.AgentDescription{
+		Description: agent.AgentDescription{
 			Status:              agent.AgentStatusInitializing,
 			WaitingInputRound:   0,
 			Model:               "mock/reliable",

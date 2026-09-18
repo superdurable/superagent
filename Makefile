@@ -1,4 +1,4 @@
-.PHONY: audit-web build-api build-web check check-agent-rules check-dex-versions check-flow-definition \
+.PHONY: audit-web build-api build-web check check-agent-rules check-flow-definition \
 	check-generated copyright-check flow-visualize format-check fuzz generate \
 	generate-go generate-web governance-check install-dexcli install-osv-scanner install-temporal lint lint-go lint-web lint-workflows \
 	test test-agent test-api test-app test-config test-dex-integration test-mcp test-model test-openai-live \
@@ -48,9 +48,6 @@ copyright-check:
 
 governance-check: check-agent-rules copyright-check
 
-check-dex-versions:
-	@python3 script/check_dex_versions.py
-
 install-dexcli: $(DEXCLI_BINARY)
 
 $(DEXCLI_BINARY): script/install-dexcli.sh
@@ -83,8 +80,8 @@ check-flow-definition: install-dexcli
 			sed -n '/"diagnostics"/,$$p' "$${flow_definition}" >&2; \
 			exit 1; \
 		fi; \
-		if grep -Fq '"name": "ExecuteTool"' "$${flow_definition}"; then \
-			echo "Flow definition must not contain the removed ExecuteTool Step" >&2; \
+		if ! grep -Fq '"name": "ExecuteTool"' "$${flow_definition}"; then \
+			echo "Flow definition must contain the canonical ExecuteTool Step" >&2; \
 			exit 1; \
 		fi; \
 		for channel in answeredUserInputsChannel queuedUserMessagesChannel steeredUserMessagesChannel toolApprovalsChannel toolRecoveryDecisionsChannel parallelToolResultsChannel planExecutionsChannel; do \
@@ -171,4 +168,4 @@ test-web:
 test-openai-live:
 	@GOCACHE=$(GO_BUILD_CACHE) GOWORK=off go test -tags=live -count=1 -run '^TestLiveOpenAIResponses$$' ./internal/model
 
-check: governance-check check-dex-versions check-generated format-check build-api build-web vet lint test test-race test-web vulnerability-check audit-web
+check: governance-check check-generated format-check build-api build-web vet lint test test-race test-web vulnerability-check audit-web
