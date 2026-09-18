@@ -148,7 +148,10 @@ def update_repository(
     if previous is not None:
         lock["sdkGoVersion"] = previous["sdkGoVersion"]
         lock["protocol"] = previous["protocol"]
-        lock["sdkManifest"] = previous.get("sdkManifest", previous["manifest"])
+        if "sdkGoRelease" in previous:
+            lock["sdkGoRelease"] = previous["sdkGoRelease"]
+        else:
+            lock["sdkManifest"] = previous.get("sdkManifest", previous["manifest"])
     (root / "dex-release.lock.json").write_text(
         json.dumps(lock, indent=2) + "\n",
         encoding="utf-8",

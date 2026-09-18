@@ -1499,6 +1499,48 @@ func TestAgentTerminalSnapshotIntegration(t *testing.T) {
 	}
 }
 
+func TestAgentSnapshotAfterContinueAsNewIntegration(t *testing.T) {
+	environment := newAgentIntegrationEnvironment(t, integrationModel{}, newIntegrationToolRegistry())
+	flowID := FlowID("agent-continue-as-new-" + randomLocalID(t))
+	firstRunID, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+		return state.Status == AgentStatusWaitingForMessage
+	})
+	if err := environment.sdk.TriggerContinueAsNew(t.Context(), string(flowID)); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, environment, "continued Agent run", func() (bool, error) {
+		page, searchErr := environment.sdk.SearchFlows(
+			t.Context(),
+			"WorkflowId="+visibilityString(string(flowID)),
+			100,
+			"",
+		)
+		if searchErr != nil {
+			return false, searchErr
+		}
+		for _, candidate := range page.Flows {
+			if candidate.RunID == string(firstRunID) && candidate.Status == dex.FlowContinuedAsNew {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+
+	snapshot := readSnapshot(t, environment, flowID)
+	if snapshot.RunID == firstRunID || snapshot.FlowStatus != FlowStatusRunning || snapshot.Description == nil {
+		t.Fatalf("Snapshot after continue-as-new = %#v", snapshot)
+	}
+	environment.replaceWorker(t, flowID)
+	replaced := readSnapshot(t, environment, flowID)
+	if replaced.RunID != snapshot.RunID || replaced.FlowStatus != FlowStatusRunning {
+		t.Fatalf("Snapshot after Worker replacement = %#v, want run %q", replaced, snapshot.RunID)
+	}
+}
+
 func readSnapshot(
 	t *testing.T,
 	environment *agentIntegrationEnvironment,
@@ -1577,10 +1619,32 @@ type agentIntegrationEnvironment struct {
 	agent         *Client
 }
 
+func registerRPCDefinitionsForTestOnly(flow *Flow) {
+	flow.rpcDefinitionsForTestOnly = []dex.RPCDef{
+		dex.DefineRPC(flow.GetFlowStateForTestOnly, &dex.RPCOptions{
+			Timeout:      defaultCommandTimeout,
+			LoadChannels: []dex.ChannelDef{queuedUserMessagesChannel},
+		}),
+		dex.DefineRPC(flow.GetPlanExecutionMessagesForTestOnly, &dex.RPCOptions{
+			Timeout:         defaultCommandTimeout,
+			LoadChannelMaps: []dex.ChannelDef{planExecutionsChannel},
+		}),
+		dex.DefineRPC(flow.GetMessagesAfterForTestOnly, &dex.RPCOptions{
+			Timeout: defaultCommandTimeout,
+			LoadAttributeMaps: []dex.AttributeDef{
+				currentMessagesAttribute,
+				archivedMessagesAttribute,
+			},
+		}),
+	}
+}
+
 func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools ToolRegistry) *agentIntegrationEnvironment {
 	t.Helper()
+	flow := NewFlow(modelClient, tools)
+	registerRPCDefinitionsForTestOnly(flow)
 	environment := &agentIntegrationEnvironment{
-		flow:          NewFlow(modelClient, tools),
+		flow:          flow,
 		address:       availableLocalAddress(t, t.Context()),
 		serverAddress: os.Getenv("DEX_FLOW_SERVICE_ADDRESS"),
 	}

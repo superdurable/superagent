@@ -1,53 +1,43 @@
 # Dex Server v0.10.0 upgrade
 
-Status: blocked before changing the production release lock.
+Status: implementation and verification in progress.
 
 ## Scope
 
-Upgrade Server and CLI to v0.10.0. Retain Go SDK v0.9.0 for this Server-only
-change. SDK v0.10.0 removes invocation-specific RPC options, including the
-single-instance archive load used by GetArchivedMessages. Its migration needs
-a separate design that preserves bounded history reads.
+Upgrade Server and CLI to v0.10.0 and Go SDK to v0.9.1. The SDK explicitly
+registers RPCs and fixes their execution options at registration. It removes
+invocation-specific selective loads, including the former single-instance load
+used by `GetArchivedMessages`.
 
-The new `--server-only` upgrade option preserves the SDK's original immutable
-manifest. Release validation verifies both manifests and their protocol overlap.
+The Server lock uses its immutable compatibility manifest. The SDK-only patch
+has no Server manifest, so its lock records the release tag, source commit, and
+Go module checksums. Validation also requires the SDK and Server protocol
+intervals to overlap.
 
 ## Release prerequisite
 
-The [v0.10.0 publication](https://github.com/superdurable/dex/actions/runs/35303789151)
-succeeded, but skipped its compatibility manifest job. That job requires every
-SDK to be selected for publication. Java, Python, Rust, and TypeScript were
-unchanged and skipped. The Server release therefore has no
-`dex-compatibility-v0.10.0.json` asset.
-
-The audited upgrade needs that official manifest and its SHA-256. Keep the
-current release pins until partial-component releases can publish a manifest
-recording the actual versions of all components.
+The missing Server v0.10.0 manifest was backfilled after the Dex partial-release
+workflow was corrected. SuperAgent pins that asset and its SHA-256. The
+`sdk-go/v0.9.1` release is pinned independently because compatibility manifests
+are Server release contracts and the patch published only the Go SDK.
 
 ## Tests
 
-Verified the published CLI v0.10.0 archive checksum and started its embedded
-Server using isolated databases. Go SDK v0.9.0 passed Agent and HTTP integration
-tests against that Server. Flow visualization completed without diagnostics.
-Server-only updater tests, formatting, workflow lint, Agent unit tests, and vet
-passed.
+The published CLI v0.10.0 archive checksums and SDK v0.9.1 module checksums are
+locked. Unit compilation verifies the explicit RPC registration API. Real
+Server integration, visualization, complete checks, and browser E2E must pass
+before release.
 
-Browser E2E exposed a read-only Snapshot long-poll expiry returning HTTP 503.
-Snapshot now retries that typed error within its existing three-attempt budget.
-The affected browser reconciliation scenario passed after the fix. The last
-full E2E run passed 18 of 19 tests; the archive-history scenario still timed
-out. Preserve that failure and resolve it before release. The run log is
-`/tmp/superagent-dex-v010-e2e-retry-fix.log` on the verification host.
-
-After the manifest is available, update the immutable pins, validate the release
-lock, rerun real-Server integration and the complete browser suite, and commit
-the final version change before publishing SuperAgent v0.4.0.
+Earlier browser E2E exposed Snapshot long-poll expiry and continue-as-new
+visibility races. Snapshot retries typed read-only expiry errors and does not
+treat `ContinuedAsNew` as terminal. The regression scenarios remain release
+gates.
 
 ## Documentation
 
-CONTRIBUTING documents Server-only manifest validation. The Flow model documents
-bounded Snapshot retry behavior. Update the prerequisites and version references
-when the release lock can be finalized.
+CONTRIBUTING documents the mixed Server/SDK lock. The Flow model and ADR 0014
+document immutable registered RPC options and the whole-map archive load imposed
+by the v0.9.1 contract.
 
 ## UI/UX
 

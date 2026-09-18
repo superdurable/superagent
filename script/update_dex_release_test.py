@@ -136,6 +136,48 @@ class UpdateDexReleaseTests(unittest.TestCase):
                 incompatible_content,
             )
 
+    def test_server_only_upgrade_preserves_checksum_locked_sdk_release(self) -> None:
+        value = manifest()
+        content = (json.dumps(value) + "\n").encode()
+        digest = hashlib.sha256(content).hexdigest()
+        url = (
+            "https://github.com/superdurable/dex/releases/download/server/v1.2.3/"
+            "dex-compatibility-v1.2.3.json"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "script").mkdir()
+            (root / "go.mod").write_text(
+                "require github.com/superdurable/dex/sdk-go v0.9.1\n", encoding="utf-8"
+            )
+            (root / "Makefile").write_text("DEXCLI_VERSION := v1.2.2\n", encoding="utf-8")
+            (root / "script/install-dexcli.sh").write_text(
+                "case x in\n"
+                + "\n".join(f"  dexcli_v1.2.2_{name}.tar.gz) checksum=old ;;" for name in (
+                    "darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"
+                ))
+                + "\nesac\n",
+                encoding="utf-8",
+            )
+            sdk_release = {
+                "tag": "sdk-go/v0.9.1",
+                "sourceCommit": "b" * 40,
+                "moduleChecksum": "h1:module",
+                "goModChecksum": "h1:gomod",
+            }
+            (root / "dex-release.lock.json").write_text(json.dumps({
+                "sdkGoVersion": "0.9.1",
+                "protocol": {"minimum": 2, "maximum": 3},
+                "sdkGoRelease": sdk_release,
+            }), encoding="utf-8")
+
+            MODULE.update_repository(root, url, digest, value, server_only=True)
+
+            lock = json.loads((root / "dex-release.lock.json").read_text(encoding="utf-8"))
+            self.assertEqual(lock["sdkGoVersion"], "0.9.1")
+            self.assertEqual(lock["sdkGoRelease"], sdk_release)
+            self.assertNotIn("sdkManifest", lock)
+
     def test_upgrade_workflow_opens_a_draft_before_product_ci(self) -> None:
         workflow = (MODULE.ROOT / ".github/workflows/dex-release-upgrade.yml").read_text(
             encoding="utf-8"

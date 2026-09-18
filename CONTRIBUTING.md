@@ -12,19 +12,19 @@ against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.
 
 Snapshot, Stream, Channel size snapshot, and Attribute wait code target Dex Go
-SDK and Server `v0.9.0`. Version `v0.9.0` Workers negotiate the Server protocol
-before binding, so deployments upgrade the Server before the Worker. Recheck
+SDK `v0.9.1` and Server `v0.10.0`. Workers negotiate the Server protocol before
+binding, so deployments upgrade the Server before the Worker. Recheck
 the installed SDK source and the installed skill before changing resource
 projection or errors. Never infer an API from a design screenshot or unreleased
 branch.
 
-`dex-release.lock.json` binds Server and Go SDK versions to immutable
-Dex manifests. For a Server-only upgrade, run `script/update_dex_release.py`
-with `--server-only`, `--manifest-url`, and `--manifest-sha256`. This preserves
-the Go SDK and records its original manifest in `sdkManifest`. Validation checks
-both manifests and requires the SDK and Server protocol intervals to overlap.
-The Go SDK remains at `v0.9.0` because `v0.10.0` changes RPC registration and
-removes invocation-specific archive loading; that migration needs separate design.
+`dex-release.lock.json` binds the Server to its immutable compatibility manifest.
+It binds an independently released Go SDK patch to its tag, source commit, and
+Go module checksums. For a Server-only upgrade, run
+`script/update_dex_release.py` with `--server-only`, `--manifest-url`, and
+`--manifest-sha256`. This preserves either SDK lock form and requires the SDK
+and Server protocol intervals to overlap. Dex Go SDK `v0.9.1` registers RPCs
+explicitly and fixes their execution options at Flow registration.
 A Dex publication opens an automated upgrade PR with open Flow
 compatibility set to `cancel-required` for review. Publishing the subsequent
 SuperAgent release dispatches the reviewed IaC and SuperVerse upgrades.

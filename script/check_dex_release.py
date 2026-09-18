@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> None:
     lock = json.loads((ROOT / "dex-release.lock.json").read_text(encoding="utf-8"))
-    if set(lock) - {"sdkManifest"} != {
+    if set(lock) - {"sdkManifest", "sdkGoRelease"} != {
         "schemaVersion",
         "release",
         "manifest",
@@ -42,6 +42,10 @@ def main() -> None:
         "openFlowsCompatibility",
     }:
         raise update_dex_release.UpgradeError("Dex release lock has unexpected fields")
+    update_dex_release.require(
+        not ({"sdkManifest", "sdkGoRelease"} <= set(lock)),
+        "Dex release lock cannot use two SDK sources",
+    )
     content = update_dex_release.download(lock["manifest"]["url"])
     manifest = update_dex_release.validate_manifest(
         lock["manifest"]["url"], lock["manifest"]["sha256"], content
@@ -52,6 +56,31 @@ def main() -> None:
         sdk_manifest = update_dex_release.validate_manifest(
             source["url"], source["sha256"], update_dex_release.download(source["url"])
         )
+    sdk_release = lock.get("sdkGoRelease")
+    if sdk_release is not None:
+        update_dex_release.require(
+            set(sdk_release) == {"tag", "sourceCommit", "moduleChecksum", "goModChecksum"},
+            "Dex Go SDK release lock has unexpected fields",
+        )
+        version = lock["sdkGoVersion"]
+        update_dex_release.require(
+            sdk_release["tag"] == f"sdk-go/v{version}",
+            "Dex Go SDK tag mismatch",
+        )
+        update_dex_release.require(
+            re.fullmatch(r"[0-9a-f]{40}", sdk_release["sourceCommit"]) is not None,
+            "Dex Go SDK source commit is invalid",
+        )
+        update_dex_release.require(
+            re.fullmatch(r"h1:[A-Za-z0-9+/]+={0,2}", sdk_release["moduleChecksum"])
+            is not None,
+            "Dex Go SDK module checksum is invalid",
+        )
+        update_dex_release.require(
+            re.fullmatch(r"h1:[A-Za-z0-9+/]+={0,2}", sdk_release["goModChecksum"])
+            is not None,
+            "Dex Go SDK go.mod checksum is invalid",
+        )
     requirements = dict(
         re.findall(r"(?m)^\s*([^\s()]+)\s+(v[^\s]+)(?:\s+//.*)?$", (ROOT / "go.mod").read_text(encoding="utf-8"))
     )
@@ -60,18 +89,31 @@ def main() -> None:
     update_dex_release.require(
         lock["sourceCommit"] == manifest["sourceCommit"], "Dex source commit mismatch"
     )
-    update_dex_release.require(
-        lock["sdkGoVersion"] == sdk_manifest["components"]["sdkGo"]["version"],
-        "Dex Go SDK version mismatch",
-    )
+    if sdk_release is None:
+        update_dex_release.require(
+            lock["sdkGoVersion"] == sdk_manifest["components"]["sdkGo"]["version"],
+            "Dex Go SDK version mismatch",
+        )
     update_dex_release.require(
         requirements.get("github.com/superdurable/dex/sdk-go") == f'v{lock["sdkGoVersion"]}',
         "SuperAgent must directly require the locked Dex Go SDK",
     )
-    update_dex_release.require(
-        lock["protocol"] == sdk_manifest["protocol"]["clients"]["sdkGo"],
-        "Dex protocol mismatch",
-    )
+    if sdk_release is None:
+        update_dex_release.require(
+            lock["protocol"] == sdk_manifest["protocol"]["clients"]["sdkGo"],
+            "Dex protocol mismatch",
+        )
+    else:
+        sums = (ROOT / "go.sum").read_text(encoding="utf-8").splitlines()
+        module = f'github.com/superdurable/dex/sdk-go v{lock["sdkGoVersion"]}'
+        update_dex_release.require(
+            f'{module} {sdk_release["moduleChecksum"]}' in sums,
+            "Dex Go SDK module checksum mismatch",
+        )
+        update_dex_release.require(
+            f'{module}/go.mod {sdk_release["goModChecksum"]}' in sums,
+            "Dex Go SDK go.mod checksum mismatch",
+        )
     server_protocol = manifest["protocol"]["server"]
     update_dex_release.require(
         max(lock["protocol"]["minimum"], server_protocol["minimum"])

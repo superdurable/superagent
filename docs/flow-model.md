@@ -14,7 +14,7 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK and Server `v0.9.0`. Each
+The implementation requires Dex Go SDK `v0.9.1` and Server `v0.10.0`. Each
 `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
@@ -28,7 +28,7 @@ heartbeat, retry, and recovery settings. Ordinary Step methods use a one-minute
 timeout, while model methods retain their explicit ten-minute timeout and
 five-minute heartbeat.
 
-The `v0.9.0` Worker negotiates the highest common protocol with the Server before
+The Worker negotiates the highest common protocol with the Server before
 Attribute index synchronization or Worker binding. Deploy the Server before the
 Worker. Startup fails when `GetServerInfo` is missing, either interval is
 invalid, or the intervals do not overlap.
@@ -124,7 +124,7 @@ history, and makes the model replan.
 | `AwaitManualToolRecovery` | exact recovery decision or steering                                               | Persist recovery state; retry selected calls, continue unknowns, stop the sequence, or replan                                                               |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
 
-Dex Server and Go SDK `v0.9.0` expose Channel size metadata in `WaitFor` and
+Dex Server `v0.10.0` and Go SDK `v0.9.1` expose Channel size metadata in `WaitFor` and
 `Execute`. `AwaitUser.WaitFor` reads the
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
@@ -225,8 +225,10 @@ retained messages.
 
 Snapshot is one read-only Flow RPC that loads current history, the interaction
 description, and pending Channels. It returns `WaitingInputRound` and stable
-application message IDs. Archive paging loads exactly one immutable chunk and
-the bounded sequence metadata needed for continuation.
+application message IDs. Archive paging returns exactly one immutable chunk and
+the bounded sequence metadata needed for continuation. Its registered
+`v0.9.1` RPC options load the retained archive map because the requested chunk
+key is an RPC input and invocation-specific selective loads no longer exist.
 
 The browser begins with the Snapshot round, waits for `round > watermark`, uses
 the actual matched round as the next watermark, then refreshes Snapshot. A

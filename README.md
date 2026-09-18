@@ -89,7 +89,7 @@ and resource model.
 
 - Go matching [`go.mod`](go.mod)
 - Node.js and npm compatible with [`web/package-lock.json`](web/package-lock.json)
-- A Dex `v0.9.0` server
+- A Dex Server `v0.10.0`
 - A writable directory for disposable Dex BlobCache data
 
 ## Quick start
@@ -102,7 +102,7 @@ make build-api
 make build-web
 ```
 
-Start a compatible Dex server. Dex `v0.9.0` Workers require the Server
+Start a compatible Dex server. Dex Go SDK `v0.9.1` Workers require the Server
 compatibility RPC, so upgrade the Server before the Worker. Then run the API and
 Worker:
 
