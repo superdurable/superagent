@@ -102,7 +102,7 @@ make build-api
 make build-web
 ```
 
-Start a compatible Dex server. Dex Go SDK `v0.9.1` Workers require the Server
+Start a compatible Dex server. Dex Go SDK `v0.10.0` Workers require the Server
 compatibility RPC, so upgrade the Server before the Worker. Then run the API and
 Worker:
 
