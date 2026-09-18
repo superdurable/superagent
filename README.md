@@ -1,4 +1,5 @@
 # SuperAgent
+> ⚠️ **Pre-launch:** SuperAgent has not formally launched yet. You can use it for testing, but breaking changes may be introduced before the official launch.
 
 SuperAgent is a production-grade AI agent built on [Dex](https://github.com/superdurable/dex)
 durable execution and the released Dex Go SDK. It combines a Go API and Worker
