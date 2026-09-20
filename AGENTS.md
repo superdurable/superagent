@@ -273,3 +273,16 @@ Keep these documents current with the code:
   and OpenAPI files use the repository Apache-2.0 header.
 - Generated files and the vendored Dex skill follow their own recorded license
   and are excluded from header rewriting.
+
+## @superdurable/superagent-ui releases
+
+GitHub Release tags and npm publishes for `@superdurable/superagent-ui` must
+target a commit that is already on `origin/main`.
+
+- Never create a `vX.Y.Z` tag, GitHub Release, or npm publish from a feature
+  branch, PR head, or any commit that is not an ancestor of `origin/main`.
+- Merge the change to `main` first. Only then tag `vX.Y.Z` on that `main`
+  commit and publish the Release so `npm-release.yml` and
+  `github-release-ui.yml` can pass their main-ancestor checks.
+- If a tag was created from a feature branch by mistake, do not reuse it.
+  Delete or supersede it and cut the next patch version from `main`.
