@@ -5,7 +5,7 @@
  */
 
 export type PlanTaskStatusValue = "pending" | "in_progress" | "completed";
-export type PlanStatusValue = "draft" | "active" | "completed" | string;
+export type PlanStatusValue = string;
 
 export interface PlanActionGates {
   planStatus: PlanStatusValue;

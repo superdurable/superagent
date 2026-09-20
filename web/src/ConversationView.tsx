@@ -305,12 +305,12 @@ export function ConversationView({
                   return null;
                 }
                 const visibleToolCalls = message.toolCalls.filter(
-                  (call) => !builtInToolNames.has(call.name as ToolName),
+                  (call) => !builtInToolNames.has(call.name),
                 );
                 if (
                   (message.role === MessageRole.TOOL &&
                     message.toolName !== null &&
-                    builtInToolNames.has(message.toolName as ToolName)) ||
+                    builtInToolNames.has(message.toolName)) ||
                   (message.content === "" && visibleToolCalls.length === 0)
                 ) {
                   return null;

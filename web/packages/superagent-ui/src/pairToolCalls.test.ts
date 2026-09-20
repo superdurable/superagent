@@ -45,8 +45,13 @@ describe("pairToolCallsById", () => {
     expect(paired.pairs).toHaveLength(1);
     expect(paired.pairs[0]?.result?.content).toContain("changed_paths");
     expect(paired.orphanToolMessages).toHaveLength(0);
+    const toolResult = messages[1];
+    expect(toolResult).toBeDefined();
+    if (toolResult === undefined) {
+      throw new Error("expected paired tool result message");
+    }
     expect(
-      isPairedToolResultMessage(messages[1]!.message, paired.pairedToolCallIds),
+      isPairedToolResultMessage(toolResult.message, paired.pairedToolCallIds),
     ).toBe(true);
   });
 

@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+const ANSI_ESCAPE = new RegExp(
+  `${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`,
+  "g",
+);
+
 export function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+  return value.replace(ANSI_ESCAPE, "");
 }
 
 export function formatShellCommand(argv: readonly string[]): string {
