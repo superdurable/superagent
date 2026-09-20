@@ -45,7 +45,9 @@ export function activityLabel(kind: string, toolName: string | null): string {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-  return toolName === null || toolName === "" ? label : `${label} · ${toolName}`;
+  return toolName === null || toolName === ""
+    ? label
+    : `${label} · ${toolName}`;
 }
 
 export function formatActivityTime(value: string): string {

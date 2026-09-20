@@ -116,7 +116,8 @@ export function ConversationView({
     description.pendingToolRecovery !== null ||
     description.pendingTimer !== null ||
     description.plan !== null;
-  const timelineMessages = snapshot.history.messages as TimelineSequencedMessage[];
+  const timelineMessages = snapshot.history
+    .messages as TimelineSequencedMessage[];
   const { pairedToolCallIds } = pairToolCallsById(timelineMessages);
   const toolResultsByCallId = indexToolResultsByCallId(timelineMessages);
   const liveContentVersion = [
@@ -229,11 +230,13 @@ export function ConversationView({
               state.reasoning.length === 0 &&
               state.assistant === null &&
               state.consumedUserMessages.length === 0 && (
-              <div className="empty-state">
-                <h2>Start the conversation</h2>
-                <p>Your messages and durable Agent replies will appear here.</p>
-              </div>
-            )}
+                <div className="empty-state">
+                  <h2>Start the conversation</h2>
+                  <p>
+                    Your messages and durable Agent replies will appear here.
+                  </p>
+                </div>
+              )}
             <ConversationTimeline
               className="sa-conversation-timeline conversation-timeline"
               messages={timelineMessages}

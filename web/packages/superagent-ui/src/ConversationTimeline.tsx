@@ -44,7 +44,7 @@ export function ConversationTimeline({
   renderAssistant,
   renderConsumedUser,
   className = "sa-conversation-timeline",
-  "aria-label": ariaLabel = "Conversation history",
+  "aria-label": ariaLabel,
 }: ConversationTimelineProps) {
   const timeline = buildConversationTimeline(
     messages,
@@ -54,14 +54,19 @@ export function ConversationTimeline({
     assistant,
   );
   return (
-    <section className={className} aria-label={ariaLabel}>
-      {timeline.map((entry) => renderTimelineEntry(entry, {
-        renderMessage,
-        renderActivity,
-        renderReasoning,
-        renderAssistant,
-        renderConsumedUser,
-      }))}
+    <section
+      className={className}
+      {...(ariaLabel !== undefined ? { "aria-label": ariaLabel } : {})}
+    >
+      {timeline.map((entry) =>
+        renderTimelineEntry(entry, {
+          renderMessage,
+          renderActivity,
+          renderReasoning,
+          renderAssistant,
+          renderConsumedUser,
+        }),
+      )}
     </section>
   );
 }

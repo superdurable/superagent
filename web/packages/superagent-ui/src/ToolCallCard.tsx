@@ -122,8 +122,7 @@ export function ApplyPatchDiff({ file }: { file: PatchFileDiff }) {
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
-  const marker =
-    line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " ";
+  const marker = line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " ";
   const lineNumber =
     line.kind === "add"
       ? line.newLineNumber
@@ -176,13 +175,11 @@ export function ExecCommandCard({
         (entry): entry is string => typeof entry === "string",
       )
     : [];
-  const command = argv.length > 0 ? formatShellCommand(argv) : call.argumentsJson;
+  const command =
+    argv.length > 0 ? formatShellCommand(argv) : call.argumentsJson;
   const summary =
-    argv.length > 0
-      ? `Ran ${argv[0] ?? "command"}`
-      : `Ran ${call.name}`;
-  const output =
-    result === null ? null : projectCommandOutput(result.content);
+    argv.length > 0 ? `Ran ${argv[0] ?? "command"}` : `Ran ${call.name}`;
+  const output = result === null ? null : projectCommandOutput(result.content);
   return (
     <details className="sa-tool-call" open={defaultOpen}>
       <summary className="sa-tool-call-summary">
@@ -215,7 +212,12 @@ function HighlightedShell({ command }: { command: string }) {
         if (token.trim() === "") {
           return <span key={String(index)}>{token}</span>;
         }
-        if (token === "&&" || token === "||" || token === "|" || token === ";") {
+        if (
+          token === "&&" ||
+          token === "||" ||
+          token === "|" ||
+          token === ";"
+        ) {
           return (
             <span className="sa-exec-operator" key={String(index)}>
               {token}

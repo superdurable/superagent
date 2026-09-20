@@ -13,10 +13,7 @@ import {
   stripAnsi,
 } from "./toolPayload";
 import { planActionPresentation } from "./planAction";
-import {
-  mergeActivityEvent,
-  mergeSequencedMessages,
-} from "./viewStateMerge";
+import { mergeActivityEvent, mergeSequencedMessages } from "./viewStateMerge";
 
 describe("parsePatchDiff", () => {
   it("parses unified diffs with add and remove lines", () => {
@@ -54,7 +51,11 @@ describe("toolPayload", () => {
     expect(
       projectCommandOutput(
         JSON.stringify({
-          stdout: { head: "\u001b[32mok\u001b[39m", tail: "", omitted_bytes: 0 },
+          stdout: {
+            head: "\u001b[32mok\u001b[39m",
+            tail: "",
+            omitted_bytes: 0,
+          },
           stderr: { head: "", tail: "", omitted_bytes: 0 },
         }),
       ),
@@ -77,15 +78,15 @@ describe("planActionPresentation", () => {
       isWaitingForInput: true,
       isWaitingForMessage: true,
     } as const;
-    expect(planActionPresentation({ ...base, hasPendingUserInput: true }).label).toBe(
-      "Answer questions first",
-    );
+    expect(
+      planActionPresentation({ ...base, hasPendingUserInput: true }).label,
+    ).toBe("Answer questions first");
     expect(
       planActionPresentation({ ...base, hasPendingToolRecovery: true }).label,
     ).toBe("Resolve tool recovery");
-    expect(planActionPresentation({ ...base, hasPendingApproval: true }).label).toBe(
-      "Resolve approval first",
-    );
+    expect(
+      planActionPresentation({ ...base, hasPendingApproval: true }).label,
+    ).toBe("Resolve approval first");
     expect(planActionPresentation(base).label).toBe("Continue plan");
   });
 });

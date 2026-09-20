@@ -40,8 +40,7 @@ export function PlanPanel({
   className = "sa-plan-panel",
 }: PlanPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const statuses =
-    taskStatuses ?? tasks.map((task) => task.status);
+  const statuses = taskStatuses ?? tasks.map((task) => task.status);
   const completedCount = statuses.filter(
     (taskStatus) => taskStatus === "completed",
   ).length;

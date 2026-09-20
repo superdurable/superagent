@@ -7,10 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TimelineSequencedMessage } from "./conversationTimeline";
-import {
-  isPairedToolResultMessage,
-  pairToolCallsById,
-} from "./pairToolCalls";
+import { isPairedToolResultMessage, pairToolCallsById } from "./pairToolCalls";
 
 describe("pairToolCallsById", () => {
   it("pairs assistant tool calls with tool results by call id", () => {
@@ -49,10 +46,7 @@ describe("pairToolCallsById", () => {
     expect(paired.pairs[0]?.result?.content).toContain("changed_paths");
     expect(paired.orphanToolMessages).toHaveLength(0);
     expect(
-      isPairedToolResultMessage(
-        messages[1]!.message,
-        paired.pairedToolCallIds,
-      ),
+      isPairedToolResultMessage(messages[1]!.message, paired.pairedToolCallIds),
     ).toBe(true);
   });
 
