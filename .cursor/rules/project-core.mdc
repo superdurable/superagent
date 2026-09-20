@@ -22,5 +22,15 @@ semantically synchronized.
 - Domain packages prohibit `any`, dynamic maps, and raw string states.
 - Never export Dex resource getters solely to expose descriptors.
 - Keep provider, MCP, Dex, application, transport, and UI boundaries separate.
+- Assume a second consumer (SuperVerse Studio / agent-server). Application-
+  visible conversation UI, merge/sort helpers, and Tool presentation belong in
+  `@superdurable/superagent-ui` with `sa-*` / slots; portal `web/src` stays
+  transport, orchestration, branding, and thin mappers. Do not ship portal-only
+  UI to extract later. Public Go/OpenAPI surfaces stay in `agent` / `model`.
 - Never commit or log `.env` or credentials.
 - Every changing turn ends with a meaningful commit and clean worktree.
+- `@superdurable/superagent-ui` GitHub Release tags and npm publishes must
+  target a commit already on `origin/main`. Never tag or publish from a
+  feature branch or PR head. Merge to `main` first, then tag `vX.Y.Z`. If a
+  tag was cut from a feature branch by mistake, supersede it with the next
+  patch from `main`.

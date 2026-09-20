@@ -125,6 +125,12 @@ strict `vX.Y.Z` tag on `main`. The release workflows derive the package version
 from the tag in the temporary runner checkout. The committed workspace version
 does not require a manual release bump.
 
+Never create the release tag from a feature branch or PR head. Merge to
+`origin/main` first, then tag that main commit. Both `npm-release.yml` and
+`github-release-ui.yml` reject tags whose commit is not an ancestor of
+`origin/main`. A mistaken feature-branch tag must not be reused; cut the next
+patch version from `main` instead.
+
 The npm package must trust the `superdurable/superagent` GitHub repository with
 workflow filename `npm-release.yml`, no environment, and direct `npm publish`
 permission. The workflow uses npm trusted publishing and GitHub OIDC. Do not add

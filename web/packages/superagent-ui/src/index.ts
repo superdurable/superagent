@@ -7,11 +7,40 @@
 "use client";
 
 export {
+  ActivityRow,
+  activityIcon,
+  activityLabel,
+  formatActivityTime,
+  type ActivityRowProps,
+} from "./ActivityRow.js";
+export {
+  ApprovalCard,
+  TimerCard,
+  type ApprovalCardProps,
+  type TimerCardProps,
+} from "./ApprovalTimerCards.js";
+export {
   ConversationComposer,
   type ConversationComposerProps,
   type ConversationSubmitShortcut,
 } from "./ConversationComposer.js";
+export {
+  ConversationTimeline,
+  type ConversationTimelineProps,
+} from "./ConversationTimeline.js";
 export { MarkdownContent } from "./MarkdownContent.js";
+export {
+  PlanPanel,
+  type PlanPanelProps,
+  type PlanPanelTask,
+} from "./PlanPanel.js";
+export {
+  planActionPresentation,
+  type PlanActionGates,
+  type PlanActionPresentation,
+  type PlanStatusValue,
+  type PlanTaskStatusValue,
+} from "./planAction.js";
 export {
   PendingQuestionBatch,
   type PendingQuestion,
@@ -34,3 +63,57 @@ export {
   type ToolRecoveryPanelProps,
   type ToolRecoveryResolution,
 } from "./ToolRecoveryPanel.js";
+export {
+  ToolCallCard,
+  ApplyPatchDiff,
+  ExecCommandCard,
+  type ToolCallCardProps,
+} from "./ToolCallCard.js";
+export {
+  buildConversationTimeline,
+  type ConversationTimelineEntry,
+  type TimelineActivityEntry,
+  type TimelineActivityEvent,
+  type TimelineConsumedUserEntry,
+  type TimelineLiveTextEntry,
+  type TimelineMessage,
+  type TimelineMessageRole,
+  type TimelineSequencedMessage,
+  type TimelineToolCall,
+} from "./conversationTimeline.js";
+export {
+  indexToolResultsByCallId,
+  isPairedToolResultMessage,
+  pairToolCallsById,
+  type ToolCallPair,
+  type ToolCallResultView,
+} from "./pairToolCalls.js";
+export {
+  parsePatchDiff,
+  summarizePatchFiles,
+  type DiffLine,
+  type DiffLineKind,
+  type PatchFileDiff,
+} from "./parsePatchDiff.js";
+export {
+  formatShellCommand,
+  parseJsonObject,
+  parseToolArguments,
+  projectCommandOutput,
+  stripAnsi,
+} from "./toolPayload.js";
+export {
+  appendLiveText,
+  completeLiveText,
+  mergeActivityEvent,
+  mergeSequencedMessages,
+  type ActivityEventLike,
+  type LiveTextLike,
+  type SequencedMessageLike,
+} from "./viewStateMerge.js";
+export {
+  useTimelineFollow,
+  type ScrollRoot,
+  type TimelineFollowOptions,
+  type TimelineFollowState,
+} from "./useTimelineFollow.js";

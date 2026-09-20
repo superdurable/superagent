@@ -656,7 +656,7 @@ test("reconciles accepted commands when their browser responses are lost", async
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(approval).toHaveCount(0);
   await expect(
-    history.locator(".message-bubble.tool").filter({
+    history.locator(".sa-tool-call").filter({
       hasText: '"echo":"ambiguous approval"',
     }),
   ).toHaveCount(1);
@@ -1178,9 +1178,7 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
   await expect(
-    page
-      .locator(".message-bubble.tool")
-      .filter({ hasText: '"echo":"approved"' }),
+    page.locator(".sa-tool-call").filter({ hasText: '"echo":"approved"' }),
   ).toBeVisible();
   await expect(
     activity.filter({ hasText: "Model requested fixture__echo." }),
@@ -1201,9 +1199,7 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   await approval.getByRole("button", { name: "Reject" }).click();
   await expect(approval).toHaveCount(0);
   await expect(
-    page
-      .locator(".message-bubble.tool")
-      .filter({ hasText: "rejected_by_user" }),
+    page.locator(".sa-tool-call").filter({ hasText: "rejected_by_user" }),
   ).toBeVisible();
 });
 
@@ -1546,9 +1542,7 @@ test("retries an external tool through Dex without requesting approval twice", a
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
   await expect(
-    page
-      .locator(".message-bubble.tool")
-      .filter({ hasText: '"echo":"retry once"' }),
+    page.locator(".sa-tool-call").filter({ hasText: '"echo":"retry once"' }),
   ).toBeVisible();
   const activity = page.locator(".activity-entry");
   await expect(
@@ -1573,7 +1567,9 @@ test("persists manual tool recovery and resumes only after a user decision", asy
   await expect(
     recovery.getByRole("heading", { name: "Execution outcome is unknown" }),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator(".message-bubble.tool")).toHaveCount(0);
+  await expect(
+    page.locator(".sa-tool-call").filter({ hasText: '"outcome":' }),
+  ).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Agent status" })).toContainText(
     "Waiting For Tool Recovery",
   );
@@ -1617,7 +1613,7 @@ test("persists manual tool recovery and resumes only after a user decision", asy
 
   await expect(recovery).toHaveCount(0, { timeout: 30_000 });
   await expect(
-    page.locator(".message-bubble.tool").filter({
+    page.locator(".sa-tool-call").filter({
       hasText: '"outcome":"unknown"',
     }),
   ).toBeVisible();
@@ -1649,9 +1645,7 @@ async function expectAgentWaitingForMessage(page: Page): Promise<void> {
 }
 
 async function directTimelineText(history: Locator): Promise<string[]> {
-  return history
-    .locator(":scope > article, :scope > details")
-    .allTextContents();
+  return history.locator(".conversation-timeline > *").allTextContents();
 }
 
 async function expectMessageQueueExpanded(queue: Locator): Promise<void> {
@@ -1660,17 +1654,15 @@ async function expectMessageQueueExpanded(queue: Locator): Promise<void> {
 }
 
 async function directTimelineTimes(history: Locator): Promise<number[]> {
-  return history
-    .locator(":scope > article, :scope > details")
-    .evaluateAll((rows) =>
-      rows.map((row) => {
-        const dateTime = row.querySelector("time")?.getAttribute("datetime");
-        if (dateTime === undefined || dateTime === null) {
-          throw new Error("timeline row is missing a datetime");
-        }
-        return Date.parse(dateTime);
-      }),
-    );
+  return history.locator(".conversation-timeline > *").evaluateAll((rows) =>
+    rows.map((row) => {
+      const dateTime = row.querySelector("time")?.getAttribute("datetime");
+      if (dateTime === undefined || dateTime === null) {
+        throw new Error("timeline row is missing a datetime");
+      }
+      return Date.parse(dateTime);
+    }),
+  );
 }
 
 async function abortSuccessfulResponseOnce(

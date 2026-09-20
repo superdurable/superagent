@@ -26,14 +26,52 @@ remain unchanged.
 
 ```tsx
 import {
+  ActivityRow,
+  ApprovalCard,
   ConversationComposer,
+  ConversationTimeline,
   MarkdownContent,
   PendingMessageQueue,
   PendingQuestionBatch,
+  PlanPanel,
+  TimerCard,
+  ToolCallCard,
   ToolRecoveryPanel,
+  buildConversationTimeline,
+  pairToolCallsById,
+  planActionPresentation,
+  useTimelineFollow,
 } from "@superdurable/superagent-ui";
 import "@superdurable/superagent-ui/styles.css";
 ```
+
+## Conversation timeline
+
+`buildConversationTimeline` merges durable messages, consumed-user projections,
+reasoning, activities, and the live assistant into one chronologically ordered
+list. `ConversationTimeline` applies that order and renders through slots
+(`renderMessage`, `renderActivity`, `renderReasoning`, `renderAssistant`,
+`renderConsumedUser`) so Studio can keep its own markup while sharing sort
+logic.
+
+## Tool call cards
+
+`pairToolCallsById` joins assistant `toolCalls` to `role=tool` messages by call
+id. `ToolCallCard` collapses request and result by default:
+
+- `apply_patch` → red/green patch diff from the request `patch` field
+- `exec_short_command` / `exec_long_command` → highlighted `$` command plus grey
+  stdout/stderr (ANSI stripped)
+- other tools → generic JSON request/result
+
+Override with `renderToolCall` when a product needs a custom row.
+
+## Shared chrome and helpers
+
+Also exported: `ActivityRow`, `PlanPanel` / `planActionPresentation`,
+`ApprovalCard`, `TimerCard`, `mergeSequencedMessages`, `mergeActivityEvent`,
+live-text helpers, and `useTimelineFollow` (optional element scroll root for
+panel scrollers).
 
 `ConversationComposer` is controlled. `PendingMessageQueue` receives plain view
 models and reports semantic actions by item ID, so it has no knowledge of Dex,

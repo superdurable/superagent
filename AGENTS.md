@@ -213,10 +213,45 @@ execution history.
   vulnerability checks, generated-code drift, TypeScript strict checking,
   type-aware lint, component tests, and browser E2E.
 
+## Embedder and SuperVerse reuse
+
+Assume a second consumer (SuperVerse Studio / agent-server) for application-
+visible behavior. Do not implement that behavior only in the portal `web/src`
+tree or only under `internal/`.
+
+### Frontend
+
+- New or changed Agent conversation presentation, interaction controls, and
+  pure view-model merge or sort logic belong in `@superdurable/superagent-ui`
+  first.
+- Portal `web/src` keeps transport, Snapshot and stream orchestration, product
+  shell or branding, and thin mappers into package view models.
+- Shared components must be extensible: transport-free props, default `sa-*` /
+  `--sa-*` styling, and render slots or equivalent extension points so Studio
+  can customize row markup without forking sort or pairing logic.
+- Plans and PRs that touch Agent conversation UI must state the shared package
+  surface and how Studio consumes or customizes it. Do not ship portal-only UI
+  with a promise to extract later.
+
+### Backend
+
+- Application-visible APIs, types, and constructors go through the public
+  `agent` / `model` packages and OpenAPI.
+- Embedder extension points use constructor injection, interfaces, or
+  configuration. Do not require copying Flows or hand-rolling parallel HTTP.
+- Do not hide SuperVerse-needed semantics behind portal-only side paths.
+
+### Documentation
+
+When changing the public UI package or public Go/OpenAPI surface, update
+`ARCHITECTURE.md` and `web/packages/superagent-ui/README.md` in the same change.
+
 ## Plans and documentation
 
 Every implementation plan includes concrete `Tests`, `Documentation`, and
-`UI/UX` sections. Use `N/A` only with a specific reason.
+`UI/UX` sections. Use `N/A` only with a specific reason. Plans that touch Agent
+conversation UI or a public API must also answer the shared-surface and
+extension-point checklist under Embedder and SuperVerse reuse.
 
 Keep these documents current with the code:
 
@@ -238,3 +273,16 @@ Keep these documents current with the code:
   and OpenAPI files use the repository Apache-2.0 header.
 - Generated files and the vendored Dex skill follow their own recorded license
   and are excluded from header rewriting.
+
+## @superdurable/superagent-ui releases
+
+GitHub Release tags and npm publishes for `@superdurable/superagent-ui` must
+target a commit that is already on `origin/main`.
+
+- Never create a `vX.Y.Z` tag, GitHub Release, or npm publish from a feature
+  branch, PR head, or any commit that is not an ancestor of `origin/main`.
+- Merge the change to `main` first. Only then tag `vX.Y.Z` on that `main`
+  commit and publish the Release so `npm-release.yml` and
+  `github-release-ui.yml` can pass their main-ancestor checks.
+- If a tag was created from a feature branch by mistake, do not reuse it.
+  Delete or supersede it and cut the next patch version from `main`.
