@@ -14,24 +14,33 @@ import {
   type SyntheticEvent,
 } from "react";
 import {
+  ActivityRow,
+  ApprovalCard,
   ConversationComposer,
+  ConversationTimeline,
   PendingMessageQueue,
   PendingQuestionBatch,
+  TimerCard,
+  ToolCallCard,
   ToolRecoveryPanel,
+  indexToolResultsByCallId,
+  isPairedToolResultMessage,
+  pairToolCallsById,
+  planActionPresentation as sharedPlanActionPresentation,
+  useTimelineFollow,
   type PendingMessageQueueItem,
   type PendingQuestion,
   type PendingQuestionAnswer,
+  type TimelineSequencedMessage,
 } from "@superdurable/superagent-ui";
 
 import {
   AgentStatus,
-  EventKind,
   MessageRole,
   PlanStatus,
   TaskStatus,
   ToolRecoveryAction as TransportToolRecoveryAction,
   ToolRecoveryResolution as TransportToolRecoveryResolution,
-  type AgentEvent,
   type CallId,
   type FlowId,
   type PendingUserMessage,
@@ -48,8 +57,6 @@ import {
   type QueueCommandAction,
   type ActiveConversationState,
 } from "./conversation-state";
-import { buildConversationTimeline } from "./conversation-timeline";
-import { useTimelineFollow } from "./useTimelineFollow";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("@superdurable/superagent-ui");
@@ -109,13 +116,9 @@ export function ConversationView({
     description.pendingToolRecovery !== null ||
     description.pendingTimer !== null ||
     description.plan !== null;
-  const timeline = buildConversationTimeline(
-    snapshot.history.messages,
-    state.consumedUserMessages,
-    state.reasoning,
-    state.activities,
-    state.assistant,
-  );
+  const timelineMessages = snapshot.history.messages as TimelineSequencedMessage[];
+  const { pairedToolCallIds } = pairToolCallsById(timelineMessages);
+  const toolResultsByCallId = indexToolResultsByCallId(timelineMessages);
   const liveContentVersion = [
     String(state.activities.length),
     state.activities.at(-1)?.resumeToken ?? "",
@@ -221,164 +224,143 @@ export function ConversationView({
                   : "Loading history…"}
               </button>
             )}
-            {timeline.length === 0 && (
+            {snapshot.history.messages.length === 0 &&
+              state.activities.length === 0 &&
+              state.reasoning.length === 0 &&
+              state.assistant === null &&
+              state.consumedUserMessages.length === 0 && (
               <div className="empty-state">
                 <h2>Start the conversation</h2>
                 <p>Your messages and durable Agent replies will appear here.</p>
               </div>
             )}
-            {timeline.map((entry) => {
-              if (entry.kind === "reasoning") {
-                return (
-                  <details
-                    className="reasoning-card"
-                    key={`reasoning:${entry.value.source}`}
-                    open={!entry.value.isComplete}
-                    onToggle={revealOpenedDetails}
-                  >
-                    <summary>
-                      Reasoning summary ·{" "}
-                      <time dateTime={entry.value.createdAt}>
-                        {formatTime(entry.value.createdAt)}
-                      </time>{" "}
-                      · {entry.value.isComplete ? "Complete" : "Streaming"}
-                    </summary>
-                    <RichText value={entry.value.value} />
-                  </details>
-                );
-              }
-              if (entry.kind === "activity") {
-                return (
-                  <article
-                    className={`activity-entry ${entry.value.value.kind}`}
-                    key={`activity:${entry.value.resumeToken}`}
-                  >
-                    <span className="activity-icon" aria-hidden="true">
-                      {activityIcon(entry.value.value.kind)}
-                    </span>
-                    <div>
-                      <strong>{activityLabel(entry.value.value)}</strong>
-                      <span>{entry.value.value.message}</span>
-                    </div>
-                    <time dateTime={entry.value.createdAt}>
-                      {formatTime(entry.value.createdAt)}
-                    </time>
-                  </article>
-                );
-              }
-              if (entry.kind === "assistant") {
-                return (
-                  <article
-                    className="message-bubble assistant live-message"
-                    key={`assistant:${entry.value.source}`}
-                  >
-                    <div className="message-meta">
-                      <strong>Assistant</strong>
-                      <span>
-                        {formatTime(entry.value.createdAt)} ·{" "}
-                        {entry.value.isComplete ? "Finalizing" : "Streaming"}
-                      </span>
-                    </div>
-                    <RichText value={entry.value.value} />
-                  </article>
-                );
-              }
-              if (entry.kind === "consumed-user") {
-                return (
-                  <article
-                    className="message-bubble user"
-                    key={`consumed-user:${entry.value.messageId}`}
-                  >
-                    <div className="message-meta">
-                      <strong>User</strong>
-                      <time dateTime={entry.value.createdAt}>
-                        {formatTime(entry.value.createdAt)}
-                      </time>
-                    </div>
-                    <p>{entry.value.value.content}</p>
-                  </article>
-                );
-              }
-              const { sequence, message } = entry.value;
-              const visibleToolCalls = message.toolCalls.filter(
-                (call) => !builtInToolNames.has(call.name),
-              );
-              if (
-                (message.role === MessageRole.TOOL &&
-                  message.toolName !== null &&
-                  builtInToolNames.has(message.toolName)) ||
-                (message.content === "" && visibleToolCalls.length === 0)
-              ) {
-                return null;
-              }
-              return (
+            <ConversationTimeline
+              className="sa-conversation-timeline conversation-timeline"
+              messages={timelineMessages}
+              consumedUserMessages={state.consumedUserMessages}
+              reasoning={state.reasoning}
+              activities={state.activities}
+              assistant={state.assistant}
+              renderConsumedUser={(entry) => (
                 <article
-                  className={`message-bubble ${message.role}`}
-                  key={`message:${String(sequence)}`}
+                  className="message-bubble user"
+                  key={`consumed-user:${entry.messageId}`}
                 >
                   <div className="message-meta">
-                    <strong>{messageRoleLabel(message.role)}</strong>
-                    <time dateTime={message.createdAt}>
-                      {formatTime(message.createdAt)}
+                    <strong>User</strong>
+                    <time dateTime={entry.createdAt}>
+                      {formatTime(entry.createdAt)}
                     </time>
                   </div>
-                  {message.content !== "" &&
-                    (message.role === MessageRole.ASSISTANT ? (
-                      <RichText value={message.content} />
-                    ) : (
-                      <p>{message.content}</p>
-                    ))}
-                  {visibleToolCalls.map((call) => (
-                    <details
-                      key={call.id}
-                      className="tool-call"
-                      onToggle={revealOpenedDetails}
-                    >
-                      <summary>Tool request · {call.name}</summary>
-                      <pre>{call.argumentsJson}</pre>
-                    </details>
-                  ))}
+                  <p>{entry.value.content}</p>
                 </article>
-              );
-            })}
+              )}
+              renderReasoning={(entry) => (
+                <details
+                  className="reasoning-card"
+                  key={`reasoning:${entry.source}`}
+                  open={!entry.isComplete}
+                  onToggle={revealOpenedDetails}
+                >
+                  <summary>
+                    Reasoning summary ·{" "}
+                    <time dateTime={entry.createdAt}>
+                      {formatTime(entry.createdAt)}
+                    </time>{" "}
+                    · {entry.isComplete ? "Complete" : "Streaming"}
+                  </summary>
+                  <RichText value={entry.value} />
+                </details>
+              )}
+              renderActivity={(entry) => (
+                <ActivityRow
+                  key={`activity:${entry.resumeToken}`}
+                  className={`sa-activity-row activity-entry ${entry.value.kind}`}
+                  kind={entry.value.kind}
+                  message={entry.value.message}
+                  createdAt={entry.createdAt}
+                  toolName={entry.value.toolName ?? null}
+                />
+              )}
+              renderAssistant={(entry) => (
+                <article
+                  className="message-bubble assistant live-message"
+                  key={`assistant:${entry.source}`}
+                >
+                  <div className="message-meta">
+                    <strong>Assistant</strong>
+                    <span>
+                      {formatTime(entry.createdAt)} ·{" "}
+                      {entry.isComplete ? "Finalizing" : "Streaming"}
+                    </span>
+                  </div>
+                  <RichText value={entry.value} />
+                </article>
+              )}
+              renderMessage={({ sequence, message }) => {
+                if (isPairedToolResultMessage(message, pairedToolCallIds)) {
+                  return null;
+                }
+                const visibleToolCalls = message.toolCalls.filter(
+                  (call) => !builtInToolNames.has(call.name as ToolName),
+                );
+                if (
+                  (message.role === MessageRole.TOOL &&
+                    message.toolName !== null &&
+                    builtInToolNames.has(message.toolName as ToolName)) ||
+                  (message.content === "" && visibleToolCalls.length === 0)
+                ) {
+                  return null;
+                }
+                return (
+                  <article
+                    className={`message-bubble ${message.role}`}
+                    key={`message:${String(sequence)}`}
+                  >
+                    <div className="message-meta">
+                      <strong>{messageRoleLabel(message.role)}</strong>
+                      <time dateTime={message.createdAt}>
+                        {formatTime(message.createdAt)}
+                      </time>
+                    </div>
+                    {message.content !== "" &&
+                      (message.role === MessageRole.ASSISTANT ? (
+                        <RichText value={message.content} />
+                      ) : (
+                        <p>{message.content}</p>
+                      ))}
+                    {visibleToolCalls.map((call) => (
+                      <ToolCallCard
+                        key={call.id}
+                        call={call}
+                        result={toolResultsByCallId.get(call.id) ?? null}
+                      />
+                    ))}
+                  </article>
+                );
+              }}
+            />
           </section>
         </div>
 
         {hasSidebar && (
           <aside className="conversation-sidebar">
             {description.pendingApproval !== null && (
-              <section className="side-card approval-card">
-                <p className="eyebrow">Approval required</p>
-                <h2>{description.pendingApproval.toolName}</h2>
-                <pre>{description.pendingApproval.argumentsJson}</pre>
-                <div className="button-row">
-                  <button
-                    type="button"
-                    disabled={areMutationsDisabled}
-                    onClick={() => {
-                      const callId = description.pendingApproval?.callId;
-                      if (callId !== undefined) onApproveTool(callId, true);
-                    }}
-                  >
-                    {state.pendingCommand?.command.kind === "approve"
-                      ? "Processing…"
-                      : "Approve"}
-                  </button>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    disabled={areMutationsDisabled}
-                    onClick={() => {
-                      const callId = description.pendingApproval?.callId;
-                      if (callId !== undefined) onApproveTool(callId, false);
-                    }}
-                  >
-                    {state.pendingCommand?.command.kind === "approve"
-                      ? "Processing…"
-                      : "Reject"}
-                  </button>
-                </div>
-              </section>
+              <ApprovalCard
+                className="sa-approval-card side-card approval-card"
+                toolName={description.pendingApproval.toolName}
+                argumentsJson={description.pendingApproval.argumentsJson}
+                disabled={areMutationsDisabled}
+                isSubmitting={state.pendingCommand?.command.kind === "approve"}
+                onApprove={() => {
+                  const callId = description.pendingApproval?.callId;
+                  if (callId !== undefined) onApproveTool(callId, true);
+                }}
+                onReject={() => {
+                  const callId = description.pendingApproval?.callId;
+                  if (callId !== undefined) onApproveTool(callId, false);
+                }}
+              />
             )}
 
             {description.pendingToolRecovery !== null && (
@@ -414,12 +396,11 @@ export function ConversationView({
             )}
 
             {description.pendingTimer !== null && (
-              <section className="side-card timer-card">
-                <p className="eyebrow">Durable timer</p>
-                <h2>{description.pendingTimer.durationSeconds}s</h2>
-                <p>{description.pendingTimer.reason}</p>
-                <small>Steering interrupts this wait at a safe boundary.</small>
-              </section>
+              <TimerCard
+                className="sa-timer-card side-card timer-card"
+                durationSeconds={description.pendingTimer.durationSeconds}
+                reason={description.pendingTimer.reason}
+              />
             )}
 
             {description.plan !== null && (
@@ -683,88 +664,24 @@ function planActionPresentation(
 ): PlanActionPresentation {
   const { description } = state.snapshot;
   const plan = description.plan;
-  if (plan === null || plan.status === PlanStatus.COMPLETED) {
+  if (plan === null) {
     return { label: "Plan completed", isDisabled: true, reason: null };
   }
-  if (state.pendingCommand?.command.kind === "execute-plan") {
-    return {
-      label: "Requesting execution…",
-      isDisabled: true,
-      reason: "Waiting for the execution request to finish.",
-    };
-  }
-  if (description.isPlanExecutionRequested) {
-    return {
-      label: "Execution requested",
-      isDisabled: true,
-      reason: "The Agent will start this Plan from its durable wait.",
-    };
-  }
-  if (areMutationsDisabled) {
-    return {
-      label: "Syncing plan…",
-      isDisabled: true,
-      reason: "Waiting for the current durable state reconciliation.",
-    };
-  }
-  if (description.pendingUserInput !== null) {
-    return {
-      label: "Answer questions first",
-      isDisabled: true,
-      reason: "Submit the requested answers before continuing this Plan.",
-    };
-  }
-  if (description.pendingApproval !== null) {
-    return {
-      label: "Resolve approval first",
-      isDisabled: true,
-      reason: "Approve or reject the pending tool before continuing this Plan.",
-    };
-  }
-  if (description.pendingToolRecovery !== null) {
-    return {
-      label: "Resolve tool recovery",
-      isDisabled: true,
-      reason: "Resolve the unknown tool outcomes before continuing this Plan.",
-    };
-  }
-  if (description.pendingTimer !== null) {
-    return {
-      label: "Timer is active",
-      isDisabled: true,
-      reason:
-        "The Plan can continue after the durable Timer finishes or is steered.",
-    };
-  }
-  if (
-    description.pendingQueuedMessageCount > 0 ||
-    description.pendingSteeredMessageCount > 0
-  ) {
-    return {
-      label: "Resolve queued messages",
-      isDisabled: true,
-      reason:
-        "The Agent must consume or remove queued messages before continuing this Plan.",
-    };
-  }
-  if (
-    !state.isWaitingForInput ||
-    description.status !== AgentStatus.WAITING_FOR_MESSAGE
-  ) {
-    const isDraft = plan.status === PlanStatus.DRAFT;
-    return {
-      label: isDraft ? "Preparing plan…" : "Plan running…",
-      isDisabled: true,
-      reason: isDraft
-        ? "Execute becomes available after the Agent reaches its next durable wait."
-        : "Continue becomes available if unfinished tasks remain at the next durable wait.",
-    };
-  }
-  return {
-    label: plan.status === PlanStatus.DRAFT ? "Execute plan" : "Continue plan",
-    isDisabled: false,
-    reason: null,
-  };
+  return sharedPlanActionPresentation({
+    planStatus: plan.status,
+    isExecutePlanPending: state.pendingCommand?.command.kind === "execute-plan",
+    isPlanExecutionRequested: description.isPlanExecutionRequested,
+    areMutationsDisabled,
+    hasPendingUserInput: description.pendingUserInput !== null,
+    hasPendingApproval: description.pendingApproval !== null,
+    hasPendingToolRecovery: description.pendingToolRecovery !== null,
+    hasPendingTimer: description.pendingTimer !== null,
+    hasPendingQueue:
+      description.pendingQueuedMessageCount > 0 ||
+      description.pendingSteeredMessageCount > 0,
+    isWaitingForInput: state.isWaitingForInput,
+    isWaitingForMessage: description.status === AgentStatus.WAITING_FOR_MESSAGE,
+  });
 }
 
 function TaskStatusIndicator({ status }: { status: TaskStatus }) {
@@ -941,46 +858,8 @@ function statusLabel(value: string): string {
     .join(" ");
 }
 
-function messageRoleLabel(role: MessageRole): string {
+function messageRoleLabel(role: string): string {
   return role === "tool" ? "Tool result" : statusLabel(role);
-}
-
-function activityLabel(event: AgentEvent): string {
-  const label = statusLabel(event.kind);
-  return event.toolName === null ? label : `${label} · ${event.toolName}`;
-}
-
-function activityIcon(kind: AgentEvent["kind"]): string {
-  switch (kind) {
-    case EventKind.PLAN_STARTED:
-    case EventKind.PLAN_UPDATED:
-    case EventKind.PLAN_TASK_UPDATED:
-      return "☷";
-    case EventKind.INPUT_CONSUMED:
-      return "⇥";
-    case EventKind.USER_INPUT_ANSWERED:
-      return "✓";
-    case EventKind.SNAPSHOT_REQUIRED:
-      return "↻";
-    case EventKind.STEERING_APPLIED:
-      return "↪";
-    case EventKind.COMPACTION_FAILED:
-    case EventKind.COMPACTED:
-      return "↻";
-    case EventKind.MODEL_STARTED:
-    case EventKind.MODEL_FAILED:
-    case EventKind.MODEL_COMPLETED:
-      return "✦";
-    case EventKind.MODEL_TOOL_CALL:
-    case EventKind.TOOL_PROGRESS:
-    case EventKind.TOOL_FAILED:
-    case EventKind.TOOL_COMPLETED:
-    case EventKind.TOOL_RECOVERY_REQUIRED:
-    case EventKind.TOOL_RECOVERY_RESOLVED:
-      return "⚙";
-    case EventKind.USER_INPUT_REQUESTED:
-      return "?";
-  }
 }
 
 function taskIcon(status: TaskStatus): string {

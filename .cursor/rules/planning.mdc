@@ -8,3 +8,8 @@ alwaysApply: true
 Every implementation plan includes concrete Tests, Documentation, and UI/UX
 sections. Use `N/A` only with a specific reason. Plans that touch Dex must name
 the required skill references and visualization evidence.
+
+Plans that touch Agent conversation UI or a public API must answer: which
+shared package or OpenAPI surface owns the change, and which extension points
+(`sa-*`, slots, constructor injection) Studio or other embedders use. Do not
+plan portal-only UI with a later-extraction step.

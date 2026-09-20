@@ -14,3 +14,6 @@ alwaysApply: false
 - Keep components focused and preserve accessibility, keyboard, responsive,
   reconnecting, stale, terminal, and failure states.
 - Do not suppress type-aware, Hooks, or accessibility lint failures.
+- Agent conversation presentation, ToolCall cards, and view-model merge/sort
+  logic live in `@superdurable/superagent-ui` with transport-free props and
+  render slots. Portal code maps generated types into those view models.

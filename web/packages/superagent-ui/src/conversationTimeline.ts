@@ -1,40 +1,82 @@
 /*
- * Copyright (c) 2022-2026 Super Durable, Inc.
+ * Copyright (c) 2026 Super Durable, Inc.
  * Licensed under the Apache License, Version 2.0.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  EventKind,
-  MessageRole,
-  type Sequence,
-  type SequencedMessage,
-} from "./api/generated";
-import type {
-  ActivityEntry,
-  AssistantEntry,
-  ConsumedUserEntry,
-  ReasoningEntry,
-} from "./conversation-state";
+export type TimelineMessageRole = "system" | "user" | "assistant" | "tool";
+
+export interface TimelineToolCall {
+  id: string;
+  name: string;
+  argumentsJson: string;
+}
+
+export interface TimelineMessage {
+  role: TimelineMessageRole;
+  content: string;
+  toolCalls: readonly TimelineToolCall[];
+  toolCallId: string | null;
+  toolName: string | null;
+  createdAt: string;
+}
+
+export interface TimelineSequencedMessage {
+  sequence: number;
+  message: TimelineMessage;
+}
+
+export interface TimelineConsumedUserEntry {
+  messageId: string;
+  value: { content: string; planMode?: boolean };
+  createdAt: string;
+  consumedAfterSequence: number;
+}
+
+export interface TimelineLiveTextEntry {
+  source: string;
+  createdAt: string;
+  value: string;
+  isComplete: boolean;
+}
+
+export interface TimelineActivityEvent {
+  kind: string;
+  message: string;
+  callId?: string | null;
+  toolName?: string | null;
+  messageSequence: number | null;
+}
+
+export interface TimelineActivityEntry {
+  resumeToken: string;
+  source: string;
+  createdAt: string;
+  value: TimelineActivityEvent;
+}
 
 export type ConversationTimelineEntry =
-  | { kind: "message"; value: SequencedMessage }
-  | { kind: "consumed-user"; value: ConsumedUserEntry }
-  | { kind: "reasoning"; value: ReasoningEntry }
-  | { kind: "activity"; value: ActivityEntry }
-  | { kind: "assistant"; value: AssistantEntry };
+  | { kind: "message"; value: TimelineSequencedMessage }
+  | { kind: "consumed-user"; value: TimelineConsumedUserEntry }
+  | { kind: "reasoning"; value: TimelineLiveTextEntry }
+  | { kind: "activity"; value: TimelineActivityEntry }
+  | { kind: "assistant"; value: TimelineLiveTextEntry };
 
 interface ModelWindow {
   startedAt: number | null;
   finishedAt: number | null;
 }
 
+const MODEL_STARTED = "model_started";
+const MODEL_COMPLETED = "model_completed";
+const MODEL_FAILED = "model_failed";
+
 export function buildConversationTimeline(
-  messages: readonly SequencedMessage[],
-  consumedUserMessages: readonly ConsumedUserEntry[],
-  reasoning: readonly ReasoningEntry[],
-  activities: readonly ActivityEntry[],
-  assistant: AssistantEntry | null,
+  messages: readonly TimelineSequencedMessage[],
+  consumedUserMessages: readonly TimelineConsumedUserEntry[],
+  reasoning: readonly TimelineLiveTextEntry[],
+  activities: readonly TimelineActivityEntry[],
+  assistant: TimelineLiveTextEntry | null,
 ): ConversationTimelineEntry[] {
   const explicitSequences = modelMessageSequences(activities);
   const modelWindows = completedModelWindows(activities);
@@ -62,8 +104,8 @@ export function buildConversationTimeline(
 function compareTimelineEntries(
   left: ConversationTimelineEntry,
   right: ConversationTimelineEntry,
-  messages: readonly SequencedMessage[],
-  explicitSequences: ReadonlyMap<string, Sequence>,
+  messages: readonly TimelineSequencedMessage[],
+  explicitSequences: ReadonlyMap<string, number>,
   modelWindows: ReadonlyMap<string, ModelWindow>,
 ): number {
   const inputOrder = compareConsumedInputToDurableHistory(left, right);
@@ -111,8 +153,8 @@ function compareConsumedInputToDurableHistory(
 function compareReasoningToAssistant(
   left: ConversationTimelineEntry,
   right: ConversationTimelineEntry,
-  messages: readonly SequencedMessage[],
-  explicitSequences: ReadonlyMap<string, Sequence>,
+  messages: readonly TimelineSequencedMessage[],
+  explicitSequences: ReadonlyMap<string, number>,
   modelWindows: ReadonlyMap<string, ModelWindow>,
 ): number {
   if (left.kind === "reasoning" && right.kind === "message") {
@@ -141,11 +183,11 @@ function compareReasoningToAssistant(
 }
 
 function reasoningSequence(
-  entry: ReasoningEntry,
-  messages: readonly SequencedMessage[],
-  explicitSequences: ReadonlyMap<string, Sequence>,
+  entry: TimelineLiveTextEntry,
+  messages: readonly TimelineSequencedMessage[],
+  explicitSequences: ReadonlyMap<string, number>,
   modelWindows: ReadonlyMap<string, ModelWindow>,
-): Sequence | undefined {
+): number | undefined {
   return (
     explicitSequences.get(entry.source) ??
     inferMessageSequence(entry.source, messages, modelWindows)
@@ -161,7 +203,7 @@ function entryCreatedAt(entry: ConversationTimelineEntry): string {
 function entryRank(entry: ConversationTimelineEntry): number {
   switch (entry.kind) {
     case "message":
-      return entry.value.message.role === MessageRole.ASSISTANT ? 3 : 0;
+      return entry.value.message.role === "assistant" ? 3 : 0;
     case "consumed-user":
       return 0;
     case "activity":
@@ -189,9 +231,9 @@ function entryIdentity(entry: ConversationTimelineEntry): string {
 }
 
 function modelMessageSequences(
-  activities: readonly ActivityEntry[],
-): ReadonlyMap<string, Sequence> {
-  const result = new Map<string, Sequence>();
+  activities: readonly TimelineActivityEntry[],
+): ReadonlyMap<string, number> {
+  const result = new Map<string, number>();
   for (const activity of activities) {
     if (activity.value.messageSequence !== null) {
       result.set(activity.source, activity.value.messageSequence);
@@ -201,7 +243,7 @@ function modelMessageSequences(
 }
 
 function completedModelWindows(
-  activities: readonly ActivityEntry[],
+  activities: readonly TimelineActivityEntry[],
 ): ReadonlyMap<string, ModelWindow> {
   const result = new Map<string, ModelWindow>();
   for (const activity of activities) {
@@ -211,14 +253,14 @@ function completedModelWindows(
       startedAt: null,
       finishedAt: null,
     };
-    if (activity.value.kind === EventKind.MODEL_STARTED) {
+    if (activity.value.kind === MODEL_STARTED) {
       window.startedAt =
         window.startedAt === null
           ? timestamp
           : Math.min(window.startedAt, timestamp);
     } else if (
-      activity.value.kind === EventKind.MODEL_COMPLETED ||
-      activity.value.kind === EventKind.MODEL_FAILED
+      activity.value.kind === MODEL_COMPLETED ||
+      activity.value.kind === MODEL_FAILED
     ) {
       window.finishedAt =
         window.finishedAt === null
@@ -232,9 +274,9 @@ function completedModelWindows(
 
 function inferMessageSequence(
   source: string,
-  messages: readonly SequencedMessage[],
+  messages: readonly TimelineSequencedMessage[],
   modelWindows: ReadonlyMap<string, ModelWindow>,
-): Sequence | undefined {
+): number | undefined {
   const window = modelWindows.get(source);
   if (window === undefined) return undefined;
   const { startedAt, finishedAt } = window;
@@ -242,7 +284,7 @@ function inferMessageSequence(
     return undefined;
   }
   const candidates = messages.filter(({ message }) => {
-    if (message.role !== MessageRole.ASSISTANT) return false;
+    if (message.role !== "assistant") return false;
     const timestamp = parseTimestamp(message.createdAt);
     return (
       timestamp !== null && timestamp >= startedAt && timestamp <= finishedAt
