@@ -14,7 +14,7 @@
   `GetArchivedMessages`
 - Browser synchronization Attribute: `WaitingInputRound`
 
-The implementation requires Dex Go SDK `v0.10.0` and Server `v0.10.0`. Each
+The implementation requires Dex Go SDK `v0.10.2` and Server `v0.11.0`. Each
 `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commit.
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
@@ -184,7 +184,7 @@ the Flow's ASYNC default. A long-running definition explicitly selects SYNC.
 ASYNC fallback changes where the attempt runs; it does not change that resolved
 durability.
 
-Dex Server `v0.10.0` and Go SDK `v0.10.0` expose Channel size metadata in `WaitFor` and
+Dex Server `v0.11.0` and Go SDK `v0.10.2` expose Channel size metadata in `WaitFor` and
 `Execute`. `AwaitUser.WaitFor` reads the
 sizes of `SteeredUserMessages`, `QueuedUserMessages`, and the current
 `PlanExecutions` instance without loading message payloads. It increments
