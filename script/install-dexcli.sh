@@ -22,10 +22,10 @@ esac
 
 archive_name="dexcli_${version}_${operating_system}_${architecture}.tar.gz"
 case "$archive_name" in
-  dexcli_v0.10.0_darwin_amd64.tar.gz) checksum=927d48d360da5183b4956823e827f890fde6da8756a954e5f647098e0e6c348a ;;
-  dexcli_v0.10.0_darwin_arm64.tar.gz) checksum=1f9c12be1a8b4c7f65af57b93db2a125ff70be63daaf98e902a2b792b095bf97 ;;
-  dexcli_v0.10.0_linux_amd64.tar.gz) checksum=0cee3b0795147b581c45d2258b0c2d581cd35ce75c515027e2d9b294ce364e2d ;;
-  dexcli_v0.10.0_linux_arm64.tar.gz) checksum=6ce2d4cdc8a2d91b6fba0c549bdf238ef8d210de69cd140bf60deef59c1412f4 ;;
+  dexcli_v0.11.0_darwin_amd64.tar.gz) checksum=acb32194d47987b85236e7bb285d2012a672889fd517548c06d43bf40c47c349 ;;
+  dexcli_v0.11.0_darwin_arm64.tar.gz) checksum=4eaa3d02a1ef44600e2956e0c3572f39fab9c06d12349e4ca27e2904328f4bbe ;;
+  dexcli_v0.11.0_linux_amd64.tar.gz) checksum=c2d8af0b18755d5b184efc9428f2ca15ae9b6b8a2ba047c6986689f976fe5f24 ;;
+  dexcli_v0.11.0_linux_arm64.tar.gz) checksum=c30316874abd8249790ee365669a82f9f2c96db3820585f5d4eabdae2e4e665d ;;
   *) echo "no checksum is pinned for $archive_name" >&2; exit 1 ;;
 esac
 

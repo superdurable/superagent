@@ -75,7 +75,7 @@ Consumed IDs suppress stale queue data until durable history replaces the
 temporary projection. Snapshot remains the only authoritative durable
 reconciliation model.
 
-Deployments must use Dex Server `v0.10.0` and Go SDK `v0.10.0`, and the matching
+Deployments must use Dex Server `v0.11.0` and Go SDK `v0.10.2`, and the matching
 Worker and browser behavior together. The Server must be upgraded first because
 Workers reject Servers without protocol negotiation. Deployments must stop or
 clear Agent Flows created with the removed schema before rollout; there is no
