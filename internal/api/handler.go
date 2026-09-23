@@ -38,7 +38,7 @@ type AgentService interface {
 	SendMessage(context.Context, agent.FlowID, agent.UserMessage) error
 	AnswerQuestions(context.Context, agent.FlowID, agent.AnswerQuestionsRequest) error
 	GetSnapshot(context.Context, agent.FlowID) (agent.AgentSnapshot, error)
-	GetArchivedMessages(context.Context, agent.FlowID, agent.Sequence) (agent.HistoryPage, error)
+	GetArchivedMessageRange(context.Context, agent.FlowID, agent.Sequence, int) (agent.HistoryPage, error)
 	WaitForWaitingInputRound(context.Context, agent.FlowID, agent.WaitingInputRound) (agent.WaitingInputRound, error)
 	DeleteQueuedMessage(context.Context, agent.FlowID, agent.MessageID) error
 	SteerMessage(context.Context, agent.FlowID, agent.SteerMessageRequest) error
@@ -244,7 +244,7 @@ func (handler *Handler) GetAgentSnapshot(
 	}, nil
 }
 
-// GetArchivedMessages reads one exact archived history chunk.
+// GetArchivedMessages reads a bounded range of immutable archived history.
 func (handler *Handler) GetArchivedMessages(
 	ctx context.Context,
 	params transportapi.GetArchivedMessagesParams,
@@ -254,7 +254,15 @@ func (handler *Handler) GetArchivedMessages(
 		return (*transportapi.GetArchivedMessagesBadRequest)(&problem), nil
 	}
 	flowID := agent.FlowID(params.FlowId)
-	page, err := handler.agent.GetArchivedMessages(ctx, flowID, agent.Sequence(params.BeforeSequence))
+	limit := 10
+	if value, ok := params.Limit.Get(); ok {
+		limit = value
+	}
+	if limit < 10 || limit > 200 || limit%10 != 0 {
+		problem := newProblem(400, "Bad Request", "limit must be 10 through 200 in increments of 10")
+		return (*transportapi.GetArchivedMessagesBadRequest)(&problem), nil
+	}
+	page, err := handler.agent.GetArchivedMessageRange(ctx, flowID, agent.Sequence(params.BeforeSequence), limit)
 	if err != nil {
 		return handler.archivedMessagesError(ctx, flowID, err), nil
 	}
@@ -595,14 +603,21 @@ func transportAgentMessage(message agent.AgentMessage) (transportapi.AgentMessag
 	} else {
 		toolName.SetTo(transportapi.ToolName(*message.ToolName))
 	}
+	answeredInputCallID := transportapi.OptNilCallID{}
+	if message.AnsweredInputCallID == nil {
+		answeredInputCallID.SetToNull()
+	} else {
+		answeredInputCallID.SetTo(transportapi.CallID(*message.AnsweredInputCallID))
+	}
 	return transportapi.AgentMessage{
-		Role:       role,
-		Content:    message.Content,
-		ToolCalls:  toolCalls,
-		ToolCallId: toolCallID,
-		ToolName:   toolName,
-		CreatedAt:  message.CreatedAt,
-		StartedAt:  transportOptionalDateTime(message.StartedAt),
+		Role:                role,
+		Content:             message.Content,
+		ToolCalls:           toolCalls,
+		ToolCallId:          toolCallID,
+		ToolName:            toolName,
+		AnsweredInputCallId: answeredInputCallID,
+		CreatedAt:           message.CreatedAt,
+		StartedAt:           transportOptionalDateTime(message.StartedAt),
 	}, nil
 }
 

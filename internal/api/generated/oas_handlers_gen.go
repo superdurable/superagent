@@ -452,7 +452,7 @@ func (s *Server) handleGetAgentSnapshotRequest(args [0]string, argsEscaped bool,
 
 // handleGetArchivedMessagesRequest handles getArchivedMessages operation.
 //
-// Read one immutable archived ten-message chunk.
+// Read a bounded range of immutable archived messages.
 //
 // GET /products/ai-agent/archived-messages
 func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -485,7 +485,7 @@ func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bo
 		mreq := middleware.Request{
 			Context:          ctx,
 			OperationName:    GetArchivedMessagesOperation,
-			OperationSummary: "Read one immutable archived ten-message chunk",
+			OperationSummary: "Read a bounded range of immutable archived messages",
 			OperationID:      "getArchivedMessages",
 			Body:             nil,
 			RawBody:          rawBody,
@@ -498,6 +498,10 @@ func (s *Server) handleGetArchivedMessagesRequest(args [0]string, argsEscaped bo
 					Name: "beforeSequence",
 					In:   "query",
 				}: params.BeforeSequence,
+				{
+					Name: "limit",
+					In:   "query",
+				}: params.Limit,
 			},
 			Raw: r,
 		}

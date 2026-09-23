@@ -854,6 +854,14 @@ func TestAgentMessageArchiveIntegration(t *testing.T) {
 		second.NextBeforeSequence == nil || *second.NextBeforeSequence != 11 {
 		t.Fatalf("second archive = %#v", second)
 	}
+	aggregated, err := environment.agent.GetArchivedMessageRange(t.Context(), flowID, 21, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregated.Messages) != 20 || aggregated.Messages[0].Sequence != 1 ||
+		aggregated.Messages[19].Sequence != 20 || aggregated.NextBeforeSequence != nil {
+		t.Fatalf("aggregated archive = %#v", aggregated)
+	}
 	forward, err := environment.agent.GetMessagesAfterForTestOnly(t.Context(), flowID, 0, 7)
 	if err != nil {
 		t.Fatal(err)
@@ -957,10 +965,21 @@ func TestAgentUserInputIntegration(t *testing.T) {
 	if closed.Description.PendingUserInput != nil {
 		t.Fatalf("question remained after accepted answer: %#v", closed.Description)
 	}
-	waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+	answeredSnapshot := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
 		return snapshot.Description.PendingUserInput == nil &&
 			historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: **Details**: September 12")
 	})
+	answered := false
+	for _, entry := range answeredSnapshot.History.Messages {
+		if entry.Message.Role == MessageRoleUser && entry.Message.AnsweredInputCallID != nil &&
+			*entry.Message.AnsweredInputCallID == snapshot.Description.PendingUserInput.CallID {
+			answered = true
+			break
+		}
+	}
+	if !answered {
+		t.Fatalf("answered input call ID missing from durable history: %#v", answeredSnapshot.History.Messages)
+	}
 	staleAnswer := environment.agent.AnswerQuestions(
 		t.Context(),
 		flowID,

@@ -117,10 +117,9 @@ test("renders chronological transient activity and durable queue interactions", 
   );
   expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
-  const workLog = history.locator("details.sa-work-log").filter({
-    hasText: "Checked the constraints",
-  });
+  const workLog = history.locator("details.sa-work-log").last();
   await expect(workLog).toHaveCount(1);
+  await expect(workLog).not.toContainText("Checked the constraints");
   await expect(composer).toBeFocused();
   await workLog.locator(":scope > summary").click();
   const reasoningCard = workLog.locator("details").filter({
@@ -146,7 +145,9 @@ test("renders chronological transient activity and durable queue interactions", 
   ).toHaveCount(1);
   await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(0);
-  await expect(workLog.getByText("Model", { exact: true })).toHaveCount(1);
+  await expect(workLog.getByText("Model replied", { exact: true })).toHaveCount(
+    1,
+  );
   await expect(workLog).toContainText("complete");
   await expect(page.locator(".activity-card")).toHaveCount(0);
   await expect(page.locator(".queue-message.submitting")).toHaveCount(0);
@@ -635,6 +636,11 @@ test("reconciles accepted commands when their browser responses are lost", async
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(approval).toHaveCount(0);
+  await history
+    .locator("details.sa-work-log")
+    .last()
+    .locator(":scope > summary")
+    .click();
   await expect(
     history.locator(".sa-tool-call").filter({
       hasText: '"echo":"ambiguous approval"',
@@ -801,6 +807,10 @@ test("resumes each live Stream after interruption without duplicate timeline ent
     await expect(history.locator(".live-message")).toHaveCount(0);
     await expect(history.locator(".activity-entry")).toHaveCount(0);
     await expect(history.locator("details.sa-work-log")).toHaveCount(1);
+    await history
+      .locator("details.sa-work-log")
+      .locator(":scope > summary")
+      .click();
     await expect(history.locator(".sa-work-item__heading")).toHaveCount(1);
     recentReads = 0;
     resumeTokens.length = 0;
@@ -896,10 +906,11 @@ test("preserves a reading position and jumps to new content on a narrow screen",
     window.scrollTo(0, 0);
     window.dispatchEvent(new Event("scroll"));
   });
-  await expect(page.locator(".message-bubble")).toHaveCount(20);
+  await expect(page.locator(".message-bubble")).toHaveCount(30);
   expect(archiveRequests).toHaveLength(1);
   expect(archiveRequests[0]).toContain("beforeSequence=21");
-  await expect(page.getByText("archive ui 06", { exact: true })).toHaveCount(1);
+  expect(archiveRequests[0]).toContain("limit=50");
+  await expect(page.getByText("archive ui 01", { exact: true })).toHaveCount(1);
   await expect(
     page.getByText("Local demo response: archive ui 15", { exact: true }),
   ).toHaveCount(1);
@@ -912,8 +923,8 @@ test("preserves a reading position and jumps to new content on a narrow screen",
   }));
   expect(scrollPosition.top).toBeGreaterThan(0);
   expect(scrollPosition.distanceToBottom).toBeGreaterThan(100);
-  await expect(page.locator(".message-bubble")).toHaveCount(20);
-  await expect(page.getByText("archive ui 06", { exact: true })).toHaveCount(1);
+  await expect(page.locator(".message-bubble")).toHaveCount(30);
+  await expect(page.getByText("archive ui 01", { exact: true })).toHaveCount(1);
   expect(archiveRequests).toHaveLength(1);
 
   const readingPosition = scrollPosition.top;
@@ -1151,9 +1162,7 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   ).toBeVisible();
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
-  const approvedWorkLog = page.locator("details.sa-work-log").filter({
-    hasText: '"value":"approved"',
-  });
+  const approvedWorkLog = page.locator("details.sa-work-log").last();
   await openDetails(approvedWorkLog);
   const approvedTool = approvedWorkLog.locator(".sa-work-tool-item");
   const approvedToolCard = approvedTool.locator("details.sa-tool-call");
@@ -1172,9 +1181,7 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   await expect(approval.getByText("Approval required")).toBeVisible();
   await approval.getByRole("button", { name: "Reject" }).click();
   await expect(approval).toHaveCount(0);
-  const rejectedWorkLog = page.locator("details.sa-work-log").filter({
-    hasText: '"value":"rejected"',
-  });
+  const rejectedWorkLog = page.locator("details.sa-work-log").last();
   await openDetails(rejectedWorkLog);
   const rejectedToolCard = rejectedWorkLog.locator("details.sa-tool-call");
   await openDetails(rejectedToolCard);
@@ -1249,6 +1256,8 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   await expect(plan.getByText("Plan revision 1")).toBeVisible({
     timeout: 20_000,
   });
+  await openDetails(page.locator("details.sa-work-log").last());
+  await expect.poll(() => modelWork.count()).toBeGreaterThan(0);
   const callsBeforeExecution = await modelWork.count();
   const snapshotsBeforeExecution = snapshotStatuses.length;
 
@@ -1519,9 +1528,7 @@ test("retries an external tool through Dex without requesting approval twice", a
   await expect(approval.getByText("Approval required")).toBeVisible();
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
-  const workLog = page.locator("details.sa-work-log").filter({
-    hasText: "fixture__echo",
-  });
+  const workLog = page.locator("details.sa-work-log").last();
   await openDetails(workLog);
   const toolWork = workLog.locator(".sa-work-tool-item").filter({
     hasText: "fixture__echo",
@@ -1568,9 +1575,7 @@ test("persists manual tool recovery and resumes only after a user decision", asy
     recovery.getByText("Error type:", { exact: false }),
   ).toBeVisible();
   await expect(recovery).not.toContainText("simulated local tool failure");
-  let workLog = page.locator("details.sa-work-log").filter({
-    hasText: "simulate_tool_failure",
-  });
+  let workLog = page.locator("details.sa-work-log").last();
   await openDetails(workLog);
   let toolWork = workLog.locator(".sa-work-tool-item").filter({
     hasText: "simulate_tool_failure",
@@ -1607,9 +1612,7 @@ test("persists manual tool recovery and resumes only after a user decision", asy
     .click();
 
   await expect(recovery).toHaveCount(0, { timeout: 30_000 });
-  workLog = page.locator("details.sa-work-log").filter({
-    hasText: "simulate_tool_failure",
-  });
+  workLog = page.locator("details.sa-work-log").last();
   await openDetails(workLog);
   toolWork = workLog.locator(".sa-work-tool-item").filter({
     hasText: "simulate_tool_failure",

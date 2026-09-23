@@ -287,6 +287,69 @@ describe("conversation presentation", () => {
     );
   });
 
+  it("keeps model and tool work in causal order", () => {
+    const messages = [
+      message(1, "user", "inspect"),
+      message(2, "assistant", "", {
+        toolCalls: [{ id: "a", name: "read_file", argumentsJson: "{}" }],
+      }),
+      message(3, "tool", "ok", { toolCallId: "a", toolName: "read_file" }),
+      message(4, "assistant", "", {
+        toolCalls: [{ id: "b", name: "search_files", argumentsJson: "{}" }],
+      }),
+      message(5, "tool", "ok", { toolCallId: "b", toolName: "search_files" }),
+      message(6, "assistant", "done"),
+    ];
+    const turn = required(buildConversationPresentation({ messages }).turns[0]);
+    expect(turn.operations.map((operation) => operation.kind)).toEqual([
+      "model",
+      "tool",
+      "model",
+      "tool",
+      "model",
+    ]);
+    expect(turn.models.map((model) => model.summary)).toEqual([
+      "Model requested read_file",
+      "Model requested search_files",
+      "Model replied",
+    ]);
+  });
+
+  it("projects durable questions and their exact user answers", () => {
+    const messages = [
+      message(1, "user", "start"),
+      message(2, "assistant", "", {
+        toolCalls: [
+          {
+            id: "question-1",
+            name: "request_user_input",
+            argumentsJson: JSON.stringify({
+              questions: [
+                {
+                  id: "scope",
+                  header: "Scope",
+                  question: "Full fix?",
+                  options: [
+                    { label: "Yes", description: "Implement everything" },
+                  ],
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+      message(3, "user", "**Scope**: Yes", {
+        answeredInputCallId: "question-1",
+      }),
+    ];
+    const presentation = buildConversationPresentation({ messages });
+    const question = required(required(presentation.turns[0]).questions[0]);
+    expect(question.status).toBe("answered");
+    expect(question.questions[0]?.question).toBe("Full fix?");
+    expect(question.answer?.sequence).toBe(3);
+    expect(required(presentation.turns[0]).tools).toHaveLength(0);
+  });
+
   it("formats durations and unions parallel work safely", () => {
     expect(formatDuration(500)).toBe("<1s");
     expect(formatDuration(12_000)).toBe("12s");

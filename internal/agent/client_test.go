@@ -43,3 +43,14 @@ func TestListRecentEventsRejectsInvalidLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestGetArchivedMessageRangeRejectsInvalidLimits(t *testing.T) {
+	t.Parallel()
+	client := &Client{}
+	for _, limit := range []int{0, 9, 11, 210} {
+		_, err := client.GetArchivedMessageRange(t.Context(), "flow-1", 11, limit)
+		if err == nil {
+			t.Fatalf("limit %d error = nil", limit)
+		}
+	}
+}

@@ -12,6 +12,7 @@ import {
   buildConversationPresentation,
   formatDuration,
   type ConversationPendingWait,
+  type ConversationQuestionItem,
   type ConversationStreamState,
   type ConversationToolWorkItem,
   type ConversationTurn,
@@ -31,10 +32,41 @@ export interface ConversationViewProps {
   assistant?: TimelineLiveTextEntry | null;
   pendingWaits?: readonly ConversationPendingWait[];
   isModelRunning?: boolean;
+  isExecutionLive?: boolean;
   streamState?: ConversationStreamState;
   renderMessage?: (entry: TimelineSequencedMessage) => ReactNode;
   renderToolCall?: (item: ConversationToolWorkItem) => ReactNode;
+  renderQuestion?: (item: ConversationQuestionItem) => ReactNode;
   className?: string;
+}
+
+function DefaultQuestion({ item }: { item: ConversationQuestionItem }) {
+  return (
+    <article className="sa-question-card" data-status={item.status}>
+      <div className="sa-question-card__heading">
+        <strong>Assistant requested input</strong>
+        <Status value={item.status} />
+      </div>
+      {item.isMalformed
+        ? null
+        : item.questions.map((question) => (
+            <section key={question.id}>
+              <strong>{question.header}</strong>
+              <p>{question.question}</p>
+              {question.options.length > 0 ? (
+                <ul>
+                  {question.options.map((option) => (
+                    <li key={option.label}>
+                      <strong>{option.label}</strong>
+                      {option.description ? ` — ${option.description}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ))}
+    </article>
+  );
 }
 
 function Duration({
@@ -121,9 +153,12 @@ function WorkLog({
   turn: ConversationTurn;
   renderToolCall?: (item: ConversationToolWorkItem) => ReactNode;
 }) {
-  const operationCount =
-    turn.models.length +
-    turn.tools.reduce((count, group) => count + group.calls.length, 0);
+  const [isOpen, setIsOpen] = useState(false);
+  const operationCount = turn.operations.reduce(
+    (count, operation) =>
+      count + (operation.kind === "model" ? 1 : operation.group.calls.length),
+    0,
+  );
   if (operationCount === 0) return null;
   const failed =
     turn.models.some((item) => item.status === "failed") ||
@@ -138,7 +173,12 @@ function WorkLog({
       ),
     );
   return (
-    <details className={`sa-work-log${failed ? " sa-work-log--failed" : ""}`}>
+    <details
+      className={`sa-work-log${failed ? " sa-work-log--failed" : ""}`}
+      onToggle={(event) => {
+        setIsOpen(event.currentTarget.open);
+      }}
+    >
       <summary>
         {running ? (
           <span aria-hidden="true" className="sa-running-indicator" />
@@ -154,55 +194,77 @@ function WorkLog({
           <Duration value={turn.durationMs} prefix="turn " />
         </span>
       </summary>
-      <div className="sa-work-log__body">
-        {turn.models.map((model) => (
-          <div className="sa-work-item" key={model.key}>
-            <div className="sa-work-item__heading">
-              <strong>Model</strong>
-              <Status value={model.status} />
-              <Duration value={model.durationMs} />
-            </div>
-            {model.reasoning?.value ? (
-              <details open={!model.reasoning.isComplete}>
-                <summary>
-                  Reasoning ·{" "}
-                  {model.reasoning.isComplete ? "complete" : "streaming"}
-                </summary>
-                <MarkdownContent value={model.reasoning.value} />
-              </details>
-            ) : null}
-          </div>
-        ))}
-        {turn.tools.map((group) =>
-          group.calls.length === 1 && group.calls[0] ? (
-            <div key={group.key}>
-              <ToolWorkItem
-                item={group.calls[0]}
-                renderToolCall={renderToolCall}
-              />
-              {group.calls[0].progressCount > 0 ? (
-                <p className="sa-progress-count">
-                  {group.calls[0].progressCount} progress events aggregated
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <details className="sa-work-repeat" key={group.key}>
-              <summary>
-                <code>{group.name}</code>
-                <span>Repeated ×{group.calls.length}</span>
-              </summary>
-              <div>
-                {group.calls.map((item) => (
-                  <div key={item.call.id}>
-                    <ToolWorkItem item={item} renderToolCall={renderToolCall} />
+      {isOpen ? (
+        <div className="sa-work-log__body">
+          {turn.operations.map((operation) => {
+            if (operation.kind === "model") {
+              const model = operation.item;
+              return (
+                <div
+                  className="sa-work-item sa-model-work-item"
+                  key={operation.key}
+                >
+                  <div className="sa-work-item__heading">
+                    <strong>{model.summary}</strong>
+                    {model.attemptCount !== null && model.attemptCount > 1 ? (
+                      <span>{model.attemptCount} attempts</span>
+                    ) : null}
+                    <Status value={model.status} />
+                    <Duration value={model.durationMs} />
                   </div>
-                ))}
+                  {model.reasoning?.value ? (
+                    <details open={!model.reasoning.isComplete}>
+                      <summary>
+                        Reasoning ·{" "}
+                        {model.reasoning.isComplete ? "complete" : "streaming"}
+                      </summary>
+                      <MarkdownContent value={model.reasoning.value} />
+                    </details>
+                  ) : null}
+                </div>
+              );
+            }
+            const group = operation.group;
+            const repeatLabel =
+              group.repeatIndex !== null && group.repeatTotal !== null
+                ? `Repeat ${String(group.repeatIndex)}/${String(group.repeatTotal)}`
+                : null;
+            return group.calls.length === 1 && group.calls[0] ? (
+              <div key={operation.key}>
+                {repeatLabel ? (
+                  <span className="sa-repeat-label">{repeatLabel}</span>
+                ) : null}
+                <ToolWorkItem
+                  item={group.calls[0]}
+                  renderToolCall={renderToolCall}
+                />
+                {group.calls[0].progressCount > 0 ? (
+                  <p className="sa-progress-count">
+                    {group.calls[0].progressCount} progress events aggregated
+                  </p>
+                ) : null}
               </div>
-            </details>
-          ),
-        )}
-      </div>
+            ) : (
+              <details className="sa-work-repeat" key={operation.key}>
+                <summary>
+                  <code>{group.name}</code>
+                  <span>Repeated ×{group.calls.length}</span>
+                </summary>
+                <div>
+                  {group.calls.map((item) => (
+                    <div key={item.call.id}>
+                      <ToolWorkItem
+                        item={item}
+                        renderToolCall={renderToolCall}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      ) : null}
     </details>
   );
 }
@@ -215,23 +277,26 @@ export function ConversationView({
   assistant = null,
   pendingWaits = [],
   isModelRunning = false,
+  isExecutionLive = true,
   streamState = "complete",
   renderMessage,
   renderToolCall,
+  renderQuestion,
   className = "sa-conversation-view",
 }: ConversationViewProps) {
   const isLive =
-    isModelRunning ||
-    pendingWaits.length > 0 ||
-    (assistant !== null && !assistant.isComplete) ||
-    messages.some((entry) =>
-      entry.message.toolCalls.some(
-        (call) =>
-          !messages.some(
-            (candidate) => candidate.message.toolCallId === call.id,
-          ),
-      ),
-    );
+    isExecutionLive &&
+    (isModelRunning ||
+      pendingWaits.length > 0 ||
+      (assistant !== null && !assistant.isComplete) ||
+      messages.some((entry) =>
+        entry.message.toolCalls.some(
+          (call) =>
+            !messages.some(
+              (candidate) => candidate.message.toolCallId === call.id,
+            ),
+        ),
+      ));
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!isLive) return;
@@ -253,6 +318,7 @@ export function ConversationView({
           assistant,
           pendingWaits,
           isModelRunning,
+          isExecutionLive,
         },
         nowMs,
       ),
@@ -261,6 +327,7 @@ export function ConversationView({
       assistant,
       consumedUserMessages,
       isModelRunning,
+      isExecutionLive,
       messages,
       nowMs,
       pendingWaits,
@@ -309,6 +376,13 @@ export function ConversationView({
             </div>
           ))}
           <WorkLog turn={turn} renderToolCall={renderToolCall} />
+          {turn.questions.map((question) => (
+            <div key={question.key}>
+              {renderQuestion?.(question) ?? (
+                <DefaultQuestion item={question} />
+              )}
+            </div>
+          ))}
         </section>
       ))}
       {assistant?.value ? (
@@ -319,7 +393,7 @@ export function ConversationView({
       ) : null}
       {streamState === "disconnected" ? (
         <div className="sa-stream-status" role="status">
-          Live agent updates disconnected
+          Live updates interrupted — reconnecting
         </div>
       ) : null}
     </section>

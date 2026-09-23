@@ -869,6 +869,7 @@ func (flow *Flow) beginUserTurn(ctx dex.Context, message UserMessage) (Sequence,
 		Role:                 MessageRoleUser,
 		Content:              message.Content,
 		ToolCalls:            []ToolCall{},
+		AnsweredInputCallID:  message.AnsweredInputCallID,
 		ProviderContextItems: []ProviderContextItem{},
 	})
 }

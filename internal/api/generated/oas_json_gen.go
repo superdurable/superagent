@@ -1004,6 +1004,12 @@ func (s *AgentMessage) encodeFields(e *jx.Encoder) {
 		s.ToolName.Encode(e)
 	}
 	{
+		if s.AnsweredInputCallId.Set {
+			e.FieldStart("answeredInputCallId")
+			s.AnsweredInputCallId.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("createdAt")
 		json.EncodeDateTime(e, s.CreatedAt)
 	}
@@ -1015,14 +1021,15 @@ func (s *AgentMessage) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfAgentMessage = [7]string{
+var jsonFieldsNameOfAgentMessage = [8]string{
 	0: "role",
 	1: "content",
 	2: "toolCalls",
 	3: "toolCallId",
 	4: "toolName",
-	5: "createdAt",
-	6: "startedAt",
+	5: "answeredInputCallId",
+	6: "createdAt",
+	7: "startedAt",
 }
 
 // Decode decodes AgentMessage from json.
@@ -1094,8 +1101,18 @@ func (s *AgentMessage) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"toolName\"")
 			}
+		case "answeredInputCallId":
+			if err := func() error {
+				s.AnsweredInputCallId.Reset()
+				if err := s.AnsweredInputCallId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"answeredInputCallId\"")
+			}
 		case "createdAt":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				v, err := json.DecodeDateTime(d)
 				s.CreatedAt = v
@@ -1126,7 +1143,7 @@ func (s *AgentMessage) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00111111,
+		0b01011111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -4142,6 +4159,55 @@ func (s OptInt) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptInt) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CallID as json.
+func (o OptNilCallID) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes CallID from json.
+func (o *OptNilCallID) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilCallID to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v CallID
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilCallID) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilCallID) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

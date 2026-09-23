@@ -252,6 +252,7 @@ export type AgentMessage = {
     toolCalls: Array<ToolCall>;
     toolCallId: CallId | null;
     toolName: ToolName | null;
+    answeredInputCallId?: CallId | null;
     createdAt: string;
     startedAt?: string | null;
 };
@@ -651,6 +652,7 @@ export type GetArchivedMessagesData = {
     query: {
         flowId: FlowId;
         beforeSequence: Sequence;
+        limit?: number;
     };
     url: '/products/ai-agent/archived-messages';
 };
@@ -674,7 +676,7 @@ export type GetArchivedMessagesError = GetArchivedMessagesErrors[keyof GetArchiv
 
 export type GetArchivedMessagesResponses = {
     /**
-     * One immutable history continuation before the boundary.
+     * A bounded immutable history continuation before the boundary.
      */
     200: HistoryPage;
 };

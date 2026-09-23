@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConversationView } from "./ConversationView.js";
@@ -69,6 +69,7 @@ describe("ConversationView", () => {
       />,
     );
 
+    toggleWorkLog(true);
     expect(container).toHaveTextContent("2s");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     act(() => {
@@ -142,10 +143,63 @@ describe("ConversationView", () => {
       />,
     );
 
+    expect(container).not.toHaveTextContent("custom tool body");
+    toggleWorkLog(true);
     expect(container).toHaveTextContent("read_file");
     expect(container).toHaveTextContent("2 attempts");
     expect(container).toHaveTextContent("complete");
     expect(container).toHaveTextContent("12s");
     expect(container).toHaveTextContent("custom tool body");
+    toggleWorkLog(false);
+    expect(container).not.toHaveTextContent("custom tool body");
+  });
+
+  it("does not run an elapsed clock for terminal unknown work", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(base + 2_000);
+    const { container } = render(
+      <ConversationView
+        isExecutionLive={false}
+        messages={[
+          {
+            sequence: 1,
+            message: {
+              role: "user",
+              content: "run",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base).toISOString(),
+            },
+          },
+          {
+            sequence: 2,
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [
+                { id: "lost", name: "read_file", argumentsJson: "{}" },
+              ],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 500).toISOString(),
+            },
+          },
+        ]}
+      />,
+    );
+    toggleWorkLog(true);
+    expect(container).toHaveTextContent("unknown");
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(container).not.toHaveTextContent("10s");
   });
 });
+
+function toggleWorkLog(open: boolean) {
+  const details = screen.getByText("Work log").closest("details");
+  if (details === null) throw new Error("work log details missing");
+  details.open = open;
+  fireEvent(details, new Event("toggle"));
+}

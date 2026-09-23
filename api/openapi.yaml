@@ -166,7 +166,7 @@ paths:
   /products/ai-agent/archived-messages:
     get:
       operationId: getArchivedMessages
-      summary: Read one immutable archived ten-message chunk
+      summary: Read a bounded range of immutable archived messages
       parameters:
         - name: flowId
           in: query
@@ -178,9 +178,18 @@ paths:
           required: true
           schema:
             $ref: "#/components/schemas/Sequence"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 10
+            maximum: 200
+            multipleOf: 10
+            default: 10
       responses:
         "200":
-          description: One immutable history continuation before the boundary.
+          description: A bounded immutable history continuation before the boundary.
           headers:
             Cache-Control:
               required: true
@@ -963,6 +972,10 @@ components:
         toolName:
           allOf:
             - $ref: "#/components/schemas/ToolName"
+          nullable: true
+        answeredInputCallId:
+          allOf:
+            - $ref: "#/components/schemas/CallId"
           nullable: true
         createdAt:
           type: string

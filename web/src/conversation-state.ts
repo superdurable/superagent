@@ -88,6 +88,7 @@ export type LiveUpdate =
 interface HistoryRequest {
   id: number;
   beforeSequence: Sequence;
+  mode: "page" | "beginning";
 }
 
 interface OptimisticSubmission {
@@ -155,7 +156,12 @@ export type ConversationAction =
       blocking: boolean;
       connection: ActiveConnectionState;
     }
-  | { type: "older-requested"; id: number; beforeSequence: Sequence }
+  | {
+      type: "older-requested";
+      id: number;
+      beforeSequence: Sequence;
+      mode?: "page" | "beginning";
+    }
   | { type: "older-loaded"; id: number; page: HistoryPage }
   | { type: "older-failed"; id: number; message: string }
   | { type: "stream-update"; update: LiveUpdate }
@@ -207,6 +213,7 @@ export function conversationReducer(
             historyRequest: {
               id: action.id,
               beforeSequence: action.beforeSequence,
+              mode: action.mode ?? "page",
             },
           }
         : state;
