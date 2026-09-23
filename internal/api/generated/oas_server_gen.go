@@ -42,7 +42,7 @@ type Handler interface {
 	GetAgentSnapshot(ctx context.Context, params GetAgentSnapshotParams) (GetAgentSnapshotRes, error)
 	// GetArchivedMessages implements getArchivedMessages operation.
 	//
-	// Read one immutable archived ten-message chunk.
+	// Read a bounded range of immutable archived messages.
 	//
 	// GET /products/ai-agent/archived-messages
 	GetArchivedMessages(ctx context.Context, params GetArchivedMessagesParams) (GetArchivedMessagesRes, error)

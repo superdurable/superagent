@@ -228,6 +228,29 @@ func (client *Client) GetArchivedMessages(ctx context.Context, flowID FlowID, be
 	return result.Page, nil
 }
 
+// GetArchivedMessageRange reads up to limit archived messages before a sequence boundary.
+func (client *Client) GetArchivedMessageRange(
+	ctx context.Context,
+	flowID FlowID,
+	before Sequence,
+	limit int,
+) (HistoryPage, error) {
+	if limit < archiveMessageChunkSize || limit > 200 || limit%archiveMessageChunkSize != 0 {
+		return HistoryPage{}, fmt.Errorf("limit must be between %d and 200 in increments of %d", archiveMessageChunkSize, archiveMessageChunkSize)
+	}
+	messages := make([]SequencedMessage, 0, limit)
+	nextBefore := &before
+	for len(messages) < limit && nextBefore != nil {
+		page, err := client.GetArchivedMessages(ctx, flowID, *nextBefore)
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		messages = append(page.Messages, messages...)
+		nextBefore = page.NextBeforeSequence
+	}
+	return HistoryPage{Messages: messages, NextBeforeSequence: nextBefore}, nil
+}
+
 // WaitForWaitingInputRound blocks until the durable watermark advances.
 func (client *Client) WaitForWaitingInputRound(
 	ctx context.Context,

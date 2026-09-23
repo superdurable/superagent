@@ -20,6 +20,7 @@ export interface TimelineMessage {
   toolName: string | null;
   createdAt: string;
   startedAt?: string | null;
+  answeredInputCallId?: string | null;
 }
 
 export interface TimelineSequencedMessage {

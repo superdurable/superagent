@@ -64,6 +64,7 @@ interface ConversationViewProps {
   state: ActiveConversationState;
   onRetrySnapshot: () => void;
   onLoadOlder: (beforeSequence: number) => void;
+  onLoadBeginning: (beforeSequence: number) => void;
   onComposerChange: (value: string) => void;
   onPlanModeChange: (value: boolean) => void;
   onSubmit: () => void;
@@ -88,6 +89,7 @@ export function ConversationView({
   state,
   onRetrySnapshot,
   onLoadOlder,
+  onLoadBeginning,
   onComposerChange,
   onPlanModeChange,
   onSubmit,
@@ -158,6 +160,11 @@ export function ConversationView({
     snapshot.history.messages.length,
     onLoadOlder,
   );
+  useJumpToBeginningScroll(
+    state.historyRequest?.mode === "beginning",
+    snapshot.history.nextBeforeSequence,
+    snapshot.history.messages.length,
+  );
   useEffect(() => {
     const command = state.pendingCommand?.command;
     if (command?.kind === "queue") {
@@ -226,19 +233,35 @@ export function ConversationView({
         <div className="conversation-main">
           <section className="messages-card" aria-label="Conversation history">
             {snapshot.history.nextBeforeSequence !== null && (
-              <button
-                type="button"
-                className="secondary load-older"
-                disabled={state.historyRequest !== null}
-                onClick={() => {
-                  const beforeSequence = snapshot.history.nextBeforeSequence;
-                  if (beforeSequence !== null) onLoadOlder(beforeSequence);
-                }}
-              >
-                {state.historyRequest === null
-                  ? "Load older messages"
-                  : "Loading history…"}
-              </button>
+              <div className="history-controls">
+                <button
+                  type="button"
+                  className="secondary load-older"
+                  disabled={state.historyRequest !== null}
+                  onClick={() => {
+                    const beforeSequence = snapshot.history.nextBeforeSequence;
+                    if (beforeSequence !== null) onLoadOlder(beforeSequence);
+                  }}
+                >
+                  {state.historyRequest === null
+                    ? "Load earlier"
+                    : state.historyRequest.mode === "beginning"
+                      ? "Loading all earlier messages…"
+                      : "Loading history…"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={state.historyRequest !== null}
+                  onClick={() => {
+                    const beforeSequence = snapshot.history.nextBeforeSequence;
+                    if (beforeSequence !== null)
+                      onLoadBeginning(beforeSequence);
+                  }}
+                >
+                  Jump to beginning
+                </button>
+              </div>
             )}
             {snapshot.history.messages.length === 0 &&
               state.activities.length === 0 &&
@@ -261,6 +284,7 @@ export function ConversationView({
               assistant={state.assistant}
               pendingWaits={pendingWaits}
               isModelRunning={description.status === AgentStatus.CALLING_MODEL}
+              isExecutionLive
               streamState={
                 state.connection === "stale"
                   ? "disconnected"
@@ -783,6 +807,9 @@ function useArchiveScroll(
       onLoadOlder(beforeSequence);
     };
     window.addEventListener("scroll", loadAtTop, { passive: true });
+    if (document.documentElement.scrollHeight <= window.innerHeight + 1) {
+      loadAtTop();
+    }
     return () => {
       window.removeEventListener("scroll", loadAtTop);
     };
@@ -795,6 +822,23 @@ function useArchiveScroll(
       window.scrollBy({ top: addedHeight, behavior: "auto" });
     previousHeight.current = null;
   }, [isLoading, messageCount]);
+}
+
+function useJumpToBeginningScroll(
+  isLoadingBeginning: boolean,
+  beforeSequence: number | null,
+  messageCount: number,
+) {
+  const wasLoading = useRef(false);
+  useEffect(() => {
+    if (isLoadingBeginning) wasLoading.current = true;
+  }, [isLoadingBeginning]);
+  useLayoutEffect(() => {
+    if (!wasLoading.current || isLoadingBeginning || beforeSequence !== null)
+      return;
+    wasLoading.current = false;
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [beforeSequence, isLoadingBeginning, messageCount]);
 }
 
 function RichText({ value }: { value: string }) {

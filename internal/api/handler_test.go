@@ -415,6 +415,26 @@ func TestGetArchivedMessagesMapsExactChunkAndBoundary(t *testing.T) {
 	if page.CacheControl != transportapi.GetArchivedMessagesOKCacheControlNoStore {
 		t.Fatalf("Cache-Control = %q", page.CacheControl)
 	}
+	if service.archivedLimit != 10 {
+		t.Fatalf("default archive limit = %d", service.archivedLimit)
+	}
+	limit := transportapi.NewOptInt(50)
+	_, err = handler.GetArchivedMessages(context.Background(), transportapi.GetArchivedMessagesParams{
+		FlowId: "flow-1", BeforeSequence: 11, Limit: limit,
+	})
+	if err != nil || service.archivedLimit != 50 {
+		t.Fatalf("archive limit = %d, err = %v", service.archivedLimit, err)
+	}
+	invalidLimit := transportapi.NewOptInt(15)
+	invalidLimitResponse, err := handler.GetArchivedMessages(context.Background(), transportapi.GetArchivedMessagesParams{
+		FlowId: "flow-1", BeforeSequence: 11, Limit: invalidLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := invalidLimitResponse.(*transportapi.GetArchivedMessagesBadRequest); !ok {
+		t.Fatalf("invalid limit response = %T", invalidLimitResponse)
+	}
 
 	invalid, err := handler.GetArchivedMessages(context.Background(), transportapi.GetArchivedMessagesParams{
 		FlowId: "flow-1", BeforeSequence: 12,
@@ -550,6 +570,7 @@ type fakeAgentService struct {
 	snapshotErr      error
 	archived         agent.HistoryPage
 	archivedErr      error
+	archivedLimit    int
 	waitErr          error
 	waitedRound      agent.WaitingInputRound
 	waitResult       agent.WaitingInputRound
@@ -597,11 +618,13 @@ func (service *fakeAgentService) GetSnapshot(
 	return service.snapshot, service.snapshotErr
 }
 
-func (service *fakeAgentService) GetArchivedMessages(
-	context.Context,
-	agent.FlowID,
-	agent.Sequence,
+func (service *fakeAgentService) GetArchivedMessageRange(
+	_ context.Context,
+	_ agent.FlowID,
+	_ agent.Sequence,
+	limit int,
 ) (agent.HistoryPage, error) {
+	service.archivedLimit = limit
 	return service.archived, service.archivedErr
 }
 

@@ -679,6 +679,7 @@ type AgentMessage struct {
 	ToolCalls            []ToolCall            `json:"tool_calls"`
 	ToolCallID           *CallID               `json:"tool_call_id,omitempty"`
 	ToolName             *ToolName             `json:"tool_name,omitempty"`
+	AnsweredInputCallID  *CallID               `json:"answered_input_call_id,omitempty"`
 	ProviderContextItems []ProviderContextItem `json:"provider_context_items"`
 	StartedAt            *time.Time            `json:"started_at,omitempty"`
 	CreatedAt            time.Time             `json:"created_at"`

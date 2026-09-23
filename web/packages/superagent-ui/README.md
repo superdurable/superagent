@@ -64,10 +64,24 @@ the presentation does not require a reasoning Stream. Every turn has one
 collapsed Work log, so losing retained Stream events never destroys the durable
 conversation structure.
 
+`ConversationTurn.operations` preserves causal order: each model operation is
+followed by the tools it requested. Adjacent identical calls in one model batch
+may collapse, but repeated calls separated by another model stay in place.
+`models` and `tools` remain compatibility projections.
+
+`ConversationTurn.questions` safely projects durable `request_user_input`
+calls. `TimelineMessage.answeredInputCallId` associates the later user answer;
+malformed and legacy data degrade to a neutral historical card without showing
+raw tool JSON. Use `renderQuestion` to customize that card.
+
 Completed model and tool duration is `createdAt - startedAt`. Missing or
 negative legacy timing is omitted. Running durations update once per second but
 are excluded from live-region announcements. Stream timestamps remain ordering
 metadata and are never rendered as stream duration.
+
+Set `isExecutionLive={false}` for terminal history. Unpaired legacy calls then
+show `unknown` and do not start the elapsed-time interval. Collapsed Work logs
+do not mount tool result bodies or call `renderToolCall` until expanded.
 
 ## Tool call cards
 

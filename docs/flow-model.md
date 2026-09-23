@@ -293,8 +293,10 @@ retained messages.
 Snapshot is one read-only Flow RPC that loads current history, the interaction
 description, and pending Channels. It returns `WaitingInputRound` and stable
 application message IDs. Snapshot contains application state only; it does not
-project Dex lifecycle or terminal failure metadata. Archive paging returns exactly one immutable chunk and
-the bounded sequence metadata needed for continuation. Its registered
+project Dex lifecycle or terminal failure metadata. The Flow archive RPC
+returns exactly one immutable chunk and the bounded sequence metadata needed
+for continuation. The Agent Client can follow that cursor to aggregate 10–200
+messages in ascending order. Its registered
 `v0.10.0` RPC options load the retained archive map because the requested chunk
 key is an RPC input and invocation-specific selective loads no longer exist.
 
@@ -302,6 +304,10 @@ The browser begins with the Snapshot round, waits for `round > watermark`, uses
 the actual matched round as the next watermark, then refreshes Snapshot. A
 configurable visible-page fallback defaults to 60 seconds and resets after
 every completed Snapshot read. Hidden pages pause the timer and live reads.
+
+When `AnswerQuestions` is consumed, the resulting durable user message records
+the request tool call ID. Historical question and answer presentation uses this
+field as its authority; legacy messages without it remain unassociated.
 
 ## External effects and recovery
 

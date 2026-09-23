@@ -460,13 +460,14 @@ func (s *AgentEvent) SetAttempt(val OptNilInt32) {
 
 // Ref: #/components/schemas/AgentMessage
 type AgentMessage struct {
-	Role       MessageRole    `json:"role"`
-	Content    string         `json:"content"`
-	ToolCalls  []ToolCall     `json:"toolCalls"`
-	ToolCallId NilCallID      `json:"toolCallId"`
-	ToolName   NilToolName    `json:"toolName"`
-	CreatedAt  time.Time      `json:"createdAt"`
-	StartedAt  OptNilDateTime `json:"startedAt"`
+	Role                MessageRole    `json:"role"`
+	Content             string         `json:"content"`
+	ToolCalls           []ToolCall     `json:"toolCalls"`
+	ToolCallId          NilCallID      `json:"toolCallId"`
+	ToolName            NilToolName    `json:"toolName"`
+	AnsweredInputCallId OptNilCallID   `json:"answeredInputCallId"`
+	CreatedAt           time.Time      `json:"createdAt"`
+	StartedAt           OptNilDateTime `json:"startedAt"`
 }
 
 // GetRole returns the value of Role.
@@ -492,6 +493,11 @@ func (s *AgentMessage) GetToolCallId() NilCallID {
 // GetToolName returns the value of ToolName.
 func (s *AgentMessage) GetToolName() NilToolName {
 	return s.ToolName
+}
+
+// GetAnsweredInputCallId returns the value of AnsweredInputCallId.
+func (s *AgentMessage) GetAnsweredInputCallId() OptNilCallID {
+	return s.AnsweredInputCallId
 }
 
 // GetCreatedAt returns the value of CreatedAt.
@@ -527,6 +533,11 @@ func (s *AgentMessage) SetToolCallId(val NilCallID) {
 // SetToolName sets the value of ToolName.
 func (s *AgentMessage) SetToolName(val NilToolName) {
 	s.ToolName = val
+}
+
+// SetAnsweredInputCallId sets the value of AnsweredInputCallId.
+func (s *AgentMessage) SetAnsweredInputCallId(val OptNilCallID) {
+	s.AnsweredInputCallId = val
 }
 
 // SetCreatedAt sets the value of CreatedAt.
@@ -2117,6 +2128,74 @@ func (o OptInt) Get() (v int, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilCallID returns new OptNilCallID with value set to v.
+func NewOptNilCallID(v CallID) OptNilCallID {
+	return OptNilCallID{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilCallID is optional nullable CallID.
+type OptNilCallID struct {
+	Value CallID
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilCallID was set.
+func (o OptNilCallID) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilCallID) Reset() {
+	var v CallID
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilCallID) SetTo(v CallID) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilCallID) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilCallID) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v CallID
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilCallID) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilCallID) Get() (v CallID, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilCallID) Or(d CallID) CallID {
 	if v, ok := o.Get(); ok {
 		return v
 	}

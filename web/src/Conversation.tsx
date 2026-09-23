@@ -31,6 +31,7 @@ import {
   waitForWaitingInputRound,
   type CallId,
   type FlowId,
+  type HistoryPage,
   type PendingUserMessage,
   type ResumeToken,
   type StreamEvent,
@@ -113,13 +114,24 @@ export function Conversation({
     if (historyRequest === null) return;
     const controller = new AbortController();
     let isCurrent = true;
-    void getArchivedMessages({
-      query: {
-        flowId,
-        beforeSequence: historyRequest.beforeSequence,
-      },
-      signal: controller.signal,
-    })
+    const loadHistory = async () => {
+      let beforeSequence: number | null = historyRequest.beforeSequence;
+      let messages: HistoryPage["messages"] = [];
+      do {
+        const page: HistoryPage = await getArchivedMessages({
+          query: {
+            flowId,
+            beforeSequence,
+            limit: historyRequest.mode === "beginning" ? 200 : 50,
+          },
+          signal: controller.signal,
+        });
+        messages = [...page.messages, ...messages];
+        beforeSequence = page.nextBeforeSequence;
+      } while (historyRequest.mode === "beginning" && beforeSequence !== null);
+      return { messages, nextBeforeSequence: beforeSequence };
+    };
+    void loadHistory()
       .then((page) => {
         if (isCurrent) {
           dispatch({ type: "older-loaded", id: historyRequest.id, page });
@@ -392,6 +404,15 @@ export function Conversation({
           type: "older-requested",
           id: nextHistoryRequestID.current++,
           beforeSequence,
+          mode: "page",
+        });
+      }}
+      onLoadBeginning={(beforeSequence) => {
+        dispatch({
+          type: "older-requested",
+          id: nextHistoryRequestID.current++,
+          beforeSequence,
+          mode: "beginning",
         });
       }}
       onComposerChange={(value) => {

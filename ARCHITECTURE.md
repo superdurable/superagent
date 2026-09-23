@@ -87,12 +87,17 @@ archive paging without making the activity Stream authoritative. Pending
 approval, question, timer, and recovery Attributes similarly retain their wait
 start for an accurate live elapsed time after browser or Worker replacement.
 Legacy values omit these additive fields and render without an inferred time.
+Answered question messages also retain the originating input call ID. This
+lineage survives archive paging and Worker replacement without relying on the
+activity Stream.
 
 Snapshot is the only durable current-interaction and reconciliation read model.
 Archive paging is an immutable history continuation. Each page uses one
 read-only Flow RPC that loads `AgentState` and the retained archive map, then
 returns one exact chunk without loading current interaction state or pending
-Channels. Dex Go SDK `v0.9.1` fixes selective loads at RPC registration, so an
+Channels. The public Agent Client may aggregate consecutive chunks into a
+bounded ascending page; the Flow RPC and immutable chunk identity stay
+unchanged. Dex Go SDK `v0.9.1` fixes selective loads at RPC registration, so an
 input-selected AttributeMap instance cannot be loaded independently.
 
 Commands follow Dex's transactional RPC model. There is no permanent command

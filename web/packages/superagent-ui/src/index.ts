@@ -95,10 +95,14 @@ export {
   type ConversationPendingWait,
   type ConversationPresentation,
   type ConversationPresentationInput,
+  type ConversationQuestion,
+  type ConversationQuestionItem,
+  type ConversationQuestionOption,
   type ConversationStreamState,
   type ConversationToolGroup,
   type ConversationToolWorkItem,
   type ConversationTurn,
+  type ConversationWorkItem,
 } from "./conversationPresentation.js";
 export {
   indexToolResultsByCallId,

@@ -13,7 +13,7 @@ import type {
 } from "./conversationTimeline.js";
 
 export type ConversationOperationStatus =
-  "running" | "waiting" | "complete" | "failed";
+  "running" | "waiting" | "complete" | "failed" | "unknown";
 export type ConversationStreamState = "streaming" | "complete" | "disconnected";
 
 export interface ConversationPendingWait {
@@ -29,6 +29,8 @@ export interface ConversationModelWorkItem {
   reasoning: TimelineLiveTextEntry | null;
   durationMs: number | null;
   interval: readonly [number, number] | null;
+  summary: string;
+  attemptCount: number | null;
 }
 
 export interface ConversationToolWorkItem {
@@ -46,6 +48,33 @@ export interface ConversationToolGroup {
   key: string;
   name: string;
   calls: ConversationToolWorkItem[];
+  repeatIndex: number | null;
+  repeatTotal: number | null;
+}
+
+export type ConversationWorkItem =
+  | { kind: "model"; key: string; item: ConversationModelWorkItem }
+  | { kind: "tool"; key: string; group: ConversationToolGroup };
+
+export interface ConversationQuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface ConversationQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: ConversationQuestionOption[];
+}
+
+export interface ConversationQuestionItem {
+  key: string;
+  callId: string;
+  questions: ConversationQuestion[];
+  status: "pending" | "answered" | "cancelled" | "historical";
+  answer: TimelineSequencedMessage | null;
+  isMalformed: boolean;
 }
 
 export interface ConversationTurn {
@@ -54,6 +83,8 @@ export interface ConversationTurn {
   consumedUserMessages: TimelineConsumedUserEntry[];
   models: ConversationModelWorkItem[];
   tools: ConversationToolGroup[];
+  operations: ConversationWorkItem[];
+  questions: ConversationQuestionItem[];
   activities: TimelineActivityEntry[];
   durationMs: number | null;
   workDurationMs: number | null;
@@ -73,6 +104,7 @@ export interface ConversationPresentationInput {
   assistant?: TimelineLiveTextEntry | null;
   pendingWaits?: readonly ConversationPendingWait[];
   isModelRunning?: boolean;
+  isExecutionLive?: boolean;
 }
 
 const MODEL_TERMINAL = new Set(["model_completed", "model_failed"]);
@@ -161,6 +193,8 @@ function groupDurableTurns(messages: readonly TimelineSequencedMessage[]) {
         consumedUserMessages: [],
         models: [],
         tools: [],
+        operations: [],
+        questions: [],
         activities: [],
         durationMs: null,
         workDurationMs: null,
@@ -201,6 +235,7 @@ export function buildConversationPresentation(
 
   const activityByCall = new Map<string, TimelineActivityEntry[]>();
   const activityBySource = new Map<string, TimelineActivityEntry[]>();
+  const activityBySequence = new Map<number, TimelineActivityEntry[]>();
   for (const activity of activities) {
     if (activity.value.callId) {
       const values = activityByCall.get(activity.value.callId) ?? [];
@@ -211,6 +246,12 @@ export function buildConversationPresentation(
       const values = activityBySource.get(activity.source) ?? [];
       values.push(activity);
       activityBySource.set(activity.source, values);
+    }
+    if (activity.value.messageSequence !== null) {
+      const values =
+        activityBySequence.get(activity.value.messageSequence) ?? [];
+      values.push(activity);
+      activityBySequence.set(activity.value.messageSequence, values);
     }
     const turn = activity.value.callId
       ? callToTurn.get(activity.value.callId)
@@ -234,6 +275,8 @@ export function buildConversationPresentation(
         consumedUserMessages: [],
         models: [],
         tools: [],
+        operations: [],
+        questions: [],
         activities: [],
         durationMs: null,
         workDurationMs: null,
@@ -255,15 +298,24 @@ export function buildConversationPresentation(
     ),
   );
   for (const turn of turns) {
-    const groups = new Map<string, ConversationToolGroup>();
+    const fingerprintCount = new Map<string, number>();
+    const fingerprintSeen = new Map<string, number>();
+    for (const entry of turn.messages) {
+      for (const call of entry.message.toolCalls) {
+        if (call.name === "request_user_input") continue;
+        const fingerprint = toolCallFingerprint(call);
+        fingerprintCount.set(
+          fingerprint,
+          (fingerprintCount.get(fingerprint) ?? 0) + 1,
+        );
+      }
+    }
     for (const entry of turn.messages) {
       if (entry.message.role === "assistant") {
         const interval = messageInterval(entry);
-        const modelActivities = activities.filter(
-          (event) =>
-            event.value.messageSequence === entry.sequence &&
-            MODEL_LIFECYCLE.has(event.value.kind),
-        );
+        const modelActivities = (
+          activityBySequence.get(entry.sequence) ?? []
+        ).filter((event) => MODEL_LIFECYCLE.has(event.value.kind));
         const source = modelActivities[0]?.source;
         if (source) usedModelSources.add(source);
         const reasoning = source
@@ -287,7 +339,7 @@ export function buildConversationPresentation(
           running && activityStart !== null && nowMs >= activityStart
             ? ([activityStart, nowMs] as const)
             : interval;
-        turn.models.push({
+        const model: ConversationModelWorkItem = {
           key: `model-${String(entry.sequence)}`,
           messageSequence: entry.sequence,
           status: failed ? "failed" : running ? "running" : "complete",
@@ -296,10 +348,40 @@ export function buildConversationPresentation(
             ? effectiveInterval[1] - effectiveInterval[0]
             : null,
           interval: effectiveInterval,
-        });
+          summary: modelSummary(entry, failed, running),
+          attemptCount: maximumAttempt(modelActivities),
+        };
+        turn.models.push(model);
+        turn.operations.push({ kind: "model", key: model.key, item: model });
       }
-      for (const call of entry.message.toolCalls) {
-        if (call.name === "request_user_input") continue;
+      const orderedCalls = entry.message.toolCalls
+        .map((call, index) => ({
+          call,
+          index,
+          startedAt: toolStartedAt(call.id, resultByCall, activityByCall),
+        }))
+        .sort((left, right) => {
+          if (
+            left.startedAt !== null &&
+            right.startedAt !== null &&
+            left.startedAt !== right.startedAt
+          )
+            return left.startedAt - right.startedAt;
+          return left.index - right.index;
+        });
+      const batchGroups: ConversationToolGroup[] = [];
+      for (const { call } of orderedCalls) {
+        if (call.name === "request_user_input") {
+          turn.questions.push(
+            buildQuestionItem(
+              call,
+              messages,
+              activityByCall,
+              pendingWaitByCall,
+            ),
+          );
+          continue;
+        }
         const result = resultByCall.get(call.id) ?? null;
         const callActivities = activityByCall.get(call.id) ?? [];
         const interval = result ? messageInterval(result) : null;
@@ -322,7 +404,10 @@ export function buildConversationPresentation(
             )?.createdAt,
         );
         const liveInterval =
-          !result && !waiting && activityStart !== null
+          input.isExecutionLive !== false &&
+          !result &&
+          !waiting &&
+          activityStart !== null
             ? ([activityStart, activityEnd ?? nowMs] as const)
             : null;
         const effectiveInterval =
@@ -339,7 +424,9 @@ export function buildConversationPresentation(
               ? "complete"
               : waiting
                 ? "waiting"
-                : "running",
+                : input.isExecutionLive === false
+                  ? "unknown"
+                  : "running",
           durationMs: effectiveInterval
             ? effectiveInterval[1] - effectiveInterval[0]
             : null,
@@ -356,13 +443,31 @@ export function buildConversationPresentation(
           lastActivity: callActivities.at(-1)?.value.message ?? null,
           interval: effectiveInterval,
         };
-        const key = toolCallFingerprint(call);
-        const group = groups.get(key) ?? { key, name: call.name, calls: [] };
-        group.calls.push(item);
-        groups.set(key, group);
+        const fingerprint = toolCallFingerprint(call);
+        const previous = batchGroups.at(-1);
+        if (previous?.key === fingerprint) previous.calls.push(item);
+        else {
+          const repeatTotal = fingerprintCount.get(fingerprint) ?? 1;
+          const repeatIndex = (fingerprintSeen.get(fingerprint) ?? 0) + 1;
+          fingerprintSeen.set(fingerprint, repeatIndex);
+          batchGroups.push({
+            key: fingerprint,
+            name: call.name,
+            calls: [item],
+            repeatIndex: repeatTotal > 1 ? repeatIndex : null,
+            repeatTotal: repeatTotal > 1 ? repeatTotal : null,
+          });
+        }
+      }
+      for (const group of batchGroups) {
+        turn.tools.push(group);
+        turn.operations.push({
+          kind: "tool",
+          key: `${group.key}:${group.calls.map((call) => call.call.id).join(",")}`,
+          group,
+        });
       }
     }
-    turn.tools = [...groups.values()];
   }
 
   for (const [source, modelActivities] of activityBySource) {
@@ -404,7 +509,7 @@ export function buildConversationPresentation(
         : ([start, effectiveEnd] as const);
     const reasoning = reasoningBySource.get(source) ?? null;
     if (reasoning) usedReasoning.add(source);
-    turn.models.push({
+    const model: ConversationModelWorkItem = {
       key: `model-${source}`,
       messageSequence: null,
       status:
@@ -416,7 +521,16 @@ export function buildConversationPresentation(
       reasoning,
       durationMs: interval ? interval[1] - interval[0] : null,
       interval,
-    });
+      summary:
+        terminal?.value.kind === "model_failed"
+          ? "Model failed"
+          : terminal
+            ? "Model replied"
+            : "Model running",
+      attemptCount: maximumAttempt(modelActivities),
+    };
+    turn.models.push(model);
+    turn.operations.push({ kind: "model", key: model.key, item: model });
   }
 
   for (const reasoning of input.reasoning ?? [])
@@ -502,4 +616,129 @@ export function buildConversationPresentation(
   }
 
   return { turns, earlierActivity };
+}
+
+function maximumAttempt(
+  activities: readonly TimelineActivityEntry[],
+): number | null {
+  return activities.reduce<number | null>(
+    (maximum, event) =>
+      event.value.attempt == null
+        ? maximum
+        : Math.max(maximum ?? 0, event.value.attempt),
+    null,
+  );
+}
+
+function modelSummary(
+  entry: TimelineSequencedMessage,
+  failed: boolean,
+  running: boolean,
+): string {
+  if (failed) return "Model failed";
+  if (running) return "Model running";
+  if (
+    entry.message.toolCalls.some((call) => call.name === "request_user_input")
+  )
+    return "Model asked for input";
+  const tools = entry.message.toolCalls.filter(
+    (call) => call.name !== "request_user_input",
+  );
+  if (tools.length === 1)
+    return `Model requested ${tools[0]?.name ?? "a tool"}`;
+  if (tools.length > 1) return `Model requested ${String(tools.length)} tools`;
+  return "Model replied";
+}
+
+function toolStartedAt(
+  callId: string,
+  results: ReadonlyMap<string, TimelineSequencedMessage>,
+  activities: ReadonlyMap<string, TimelineActivityEntry[]>,
+): number | null {
+  const resultStart = timestamp(results.get(callId)?.message.startedAt);
+  if (resultStart !== null) return resultStart;
+  return timestamp(
+    activities
+      .get(callId)
+      ?.find((entry) => entry.value.kind === "model_tool_call")?.createdAt,
+  );
+}
+
+function buildQuestionItem(
+  call: TimelineToolCall,
+  messages: readonly TimelineSequencedMessage[],
+  activities: ReadonlyMap<string, TimelineActivityEntry[]>,
+  pending: ReadonlyMap<string, ConversationPendingWait>,
+): ConversationQuestionItem {
+  const parsed = parseQuestions(call.argumentsJson);
+  const answer =
+    messages.find((entry) => entry.message.answeredInputCallId === call.id) ??
+    null;
+  const cancelled = (activities.get(call.id) ?? []).some(
+    (entry) => entry.value.kind === "user_input_cancelled",
+  );
+  return {
+    key: `question-${call.id}`,
+    callId: call.id,
+    questions: parsed.questions,
+    status: answer
+      ? "answered"
+      : cancelled
+        ? "cancelled"
+        : pending.has(call.id)
+          ? "pending"
+          : "historical",
+    answer,
+    isMalformed: parsed.isMalformed,
+  };
+}
+
+function parseQuestions(argumentsJson: string): {
+  questions: ConversationQuestion[];
+  isMalformed: boolean;
+} {
+  try {
+    const value: unknown = JSON.parse(argumentsJson);
+    if (value === null || typeof value !== "object" || !("questions" in value))
+      return { questions: [], isMalformed: true };
+    const raw = (value as { questions?: unknown }).questions;
+    if (!Array.isArray(raw) || raw.length < 1 || raw.length > 3)
+      return { questions: [], isMalformed: true };
+    const questions = raw.map((entry): ConversationQuestion | null => {
+      if (entry === null || typeof entry !== "object") return null;
+      const candidate = entry as Record<string, unknown>;
+      if (
+        typeof candidate["id"] !== "string" ||
+        typeof candidate["header"] !== "string" ||
+        typeof candidate["question"] !== "string"
+      )
+        return null;
+      const options = Array.isArray(candidate["options"])
+        ? candidate["options"].flatMap(
+            (option): ConversationQuestionOption[] => {
+              if (option === null || typeof option !== "object") return [];
+              const value = option as Record<string, unknown>;
+              return typeof value["label"] === "string" &&
+                typeof value["description"] === "string"
+                ? [{ label: value["label"], description: value["description"] }]
+                : [];
+            },
+          )
+        : [];
+      return {
+        id: candidate["id"],
+        header: candidate["header"],
+        question: candidate["question"],
+        options,
+      };
+    });
+    if (questions.some((question) => question === null))
+      return { questions: [], isMalformed: true };
+    return {
+      questions: questions as ConversationQuestion[],
+      isMalformed: false,
+    };
+  } catch {
+    return { questions: [], isMalformed: true };
+  }
 }

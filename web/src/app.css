@@ -416,8 +416,13 @@ button.secondary {
   min-height: 420px;
   padding: 18px;
 }
-.load-older {
+.history-controls {
+  display: flex;
   justify-self: center;
+  align-items: center;
+  gap: 10px;
+}
+.load-older {
   padding: 8px 12px;
   font-size: 12px;
 }
