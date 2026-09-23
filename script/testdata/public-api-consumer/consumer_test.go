@@ -135,7 +135,7 @@ func TestExternalModuleCanConstructProviderRouter(t *testing.T) {
 	}
 	client := model.NewClient(
 		model.NewMockClient(),
-		model.NewOpenAIClient(credentials, httpClient, ""),
+		model.NewOpenAIClient(credentials, httpClient, "", &model.OpenAIClientConfig{}),
 		anthropic,
 		gemini,
 		groq,

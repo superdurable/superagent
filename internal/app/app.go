@@ -304,7 +304,9 @@ func buildModelClient(section *config.Providers, credentials *model.CredentialSt
 	}
 	return model.NewClient(
 		model.NewMockClient(),
-		model.NewOpenAIClient(credentials, httpClient, section.OpenAI.BaseURL),
+		model.NewOpenAIClient(credentials, httpClient, section.OpenAI.BaseURL, &model.OpenAIClientConfig{
+			ReasoningSummaryStreamingEnabled: true,
+		}),
 		anthropic,
 		gemini,
 		groq,

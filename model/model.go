@@ -28,13 +28,14 @@ import (
 // Public aliases expose the existing provider implementations without a
 // parallel model abstraction or conversion layer.
 type (
-	Client          = modelinternal.Client
-	CredentialStore = modelinternal.CredentialStore
-	MockClient      = modelinternal.MockClient
-	OpenAIClient    = modelinternal.OpenAIClient
-	AnthropicClient = modelinternal.AnthropicClient
-	GeminiClient    = modelinternal.GeminiClient
-	GroqClient      = modelinternal.GroqClient
+	Client             = modelinternal.Client
+	CredentialStore    = modelinternal.CredentialStore
+	MockClient         = modelinternal.MockClient
+	OpenAIClient       = modelinternal.OpenAIClient
+	OpenAIClientConfig = modelinternal.OpenAIClientConfig
+	AnthropicClient    = modelinternal.AnthropicClient
+	GeminiClient       = modelinternal.GeminiClient
+	GroqClient         = modelinternal.GroqClient
 )
 
 // NewCredentialStore creates an empty process-memory credential store.
@@ -63,8 +64,9 @@ func NewOpenAIClient(
 	credentials *CredentialStore,
 	httpClient *http.Client,
 	baseURL string,
+	configuration *OpenAIClientConfig,
 ) *OpenAIClient {
-	return modelinternal.NewOpenAIClient(credentials, httpClient, baseURL)
+	return modelinternal.NewOpenAIClient(credentials, httpClient, baseURL, configuration)
 }
 
 // NewAnthropicClient constructs an Anthropic Messages API adapter.

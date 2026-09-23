@@ -48,8 +48,8 @@ import "@superdurable/superagent-ui/styles.css";
 ## Conversation timeline
 
 `buildConversationTimeline` merges durable messages, consumed-user projections,
-reasoning, activities, and the live assistant into one chronologically ordered
-list. `ConversationTimeline` applies that order and renders through slots
+reasoning (when the embedding backend enables it), activities, and the live
+assistant into one chronologically ordered list. `ConversationTimeline` applies that order and renders through slots
 (`renderMessage`, `renderActivity`, `renderReasoning`, `renderAssistant`,
 `renderConsumedUser`) so Studio can keep its own markup while sharing sort
 logic.

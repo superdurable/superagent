@@ -40,7 +40,9 @@ func TestLiveOpenAIResponses(t *testing.T) {
 	if err := credentials.SetDefaultAPIKey(agent.ProviderOpenAI, apiKey); err != nil {
 		t.Fatal(err)
 	}
-	client := NewOpenAIClient(credentials, &http.Client{Timeout: 2 * time.Minute}, "")
+	client := NewOpenAIClient(credentials, &http.Client{Timeout: 2 * time.Minute}, "", &OpenAIClientConfig{
+		ReasoningSummaryStreamingEnabled: true,
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	var streamed strings.Builder

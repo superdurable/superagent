@@ -36,25 +36,41 @@ const compactionInstruction = "Compact the conversation faithfully. Preserve dec
 
 // OpenAIClient implements the stateless OpenAI Responses API boundary.
 type OpenAIClient struct {
-	credentials *CredentialStore
-	httpClient  *http.Client
-	baseURL     string
+	credentials                      *CredentialStore
+	httpClient                       *http.Client
+	baseURL                          string
+	reasoningSummaryStreamingEnabled bool
 }
 
 var _ agent.ModelClient = (*OpenAIClient)(nil)
 
+// OpenAIClientConfig configures optional OpenAI Responses API behavior.
+type OpenAIClientConfig struct {
+	// ReasoningSummaryStreamingEnabled defaults to false, is immutable after construction, and requests and forwards provider reasoning summaries when enabled.
+	ReasoningSummaryStreamingEnabled bool
+}
+
 // NewOpenAIClient constructs an adapter with an explicitly owned HTTP client.
-func NewOpenAIClient(credentials *CredentialStore, httpClient *http.Client, baseURL string) *OpenAIClient {
+func NewOpenAIClient(
+	credentials *CredentialStore,
+	httpClient *http.Client,
+	baseURL string,
+	configuration *OpenAIClientConfig,
+) *OpenAIClient {
 	if credentials == nil {
 		panic("OpenAI credential store is required")
 	}
 	if httpClient == nil {
 		panic("OpenAI HTTP client is required")
 	}
+	if configuration == nil {
+		panic("OpenAI client configuration is required")
+	}
 	return &OpenAIClient{
-		credentials: credentials,
-		httpClient:  httpClient,
-		baseURL:     strings.TrimSpace(baseURL),
+		credentials:                      credentials,
+		httpClient:                       httpClient,
+		baseURL:                          strings.TrimSpace(baseURL),
+		reasoningSummaryStreamingEnabled: configuration.ReasoningSummaryStreamingEnabled,
 	}
 }
 
@@ -84,12 +100,12 @@ func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelReq
 		Include: []responses.ResponseIncludable{
 			responses.ResponseIncludableReasoningEncryptedContent,
 		},
-		Reasoning: shared.ReasoningParam{
-			Summary: shared.ReasoningSummaryAuto,
-		},
 		Store:             openai.Bool(false),
 		ParallelToolCalls: openai.Bool(true),
 		Tools:             tools,
+	}
+	if client.reasoningSummaryStreamingEnabled {
+		params.Reasoning = shared.ReasoningParam{Summary: shared.ReasoningSummaryAuto}
 	}
 	if request.ForcedTool != "" {
 		if !hasDefinition(request.Tools, request.ForcedTool) {
@@ -103,7 +119,7 @@ func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelReq
 	sdkClient := client.newSDKClient(request.FlowID)
 	stream := sdkClient.Responses.NewStreaming(ctx, params)
 	defer func() { _ = stream.Close() }()
-	return consumeOpenAIStream(stream, request)
+	return consumeOpenAIStream(stream, request, client.reasoningSummaryStreamingEnabled)
 }
 
 // Summarize compacts application history without persisting provider-side state.
@@ -264,7 +280,11 @@ type openAIResponseStream interface {
 	Close() error
 }
 
-func consumeOpenAIStream(stream openAIResponseStream, request agent.ModelRequest) (agent.ModelReply, error) {
+func consumeOpenAIStream(
+	stream openAIResponseStream,
+	request agent.ModelRequest,
+	reasoningSummaryStreamingEnabled bool,
+) (agent.ModelReply, error) {
 	var content strings.Builder
 	toolCalls := make(map[int64]agent.ToolCall)
 	providerItems := make([]agent.ProviderContextItem, 0)
@@ -281,7 +301,7 @@ func consumeOpenAIStream(stream openAIResponseStream, request agent.ModelRequest
 				return agent.ModelReply{}, err
 			}
 		case responses.ResponseReasoningSummaryTextDeltaEvent:
-			if value.Delta != "" {
+			if reasoningSummaryStreamingEnabled && value.Delta != "" {
 				if err := request.WriteReasoning(value.Delta); err != nil {
 					return agent.ModelReply{}, fmt.Errorf("write reasoning summary: %w", err)
 				}
