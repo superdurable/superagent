@@ -57,6 +57,11 @@ The public `model` package aliases the built-in provider implementations and
 delegates their constructors. Embedders can opt into those adapters without
 depending on `internal/model` or duplicating provider wiring.
 
+`model.OpenAIClientConfig` controls whether the OpenAI Responses adapter asks
+for and forwards provider-authored reasoning summaries. It is disabled by
+default; encrypted reasoning content remains included for stateless turn
+continuation regardless of that display setting.
+
 ## Durable Agent model
 
 One stable `FlowID` identifies one conversation. `Client.Start` supplies an

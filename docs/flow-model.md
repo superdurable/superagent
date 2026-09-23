@@ -220,7 +220,7 @@ fails explicitly.
 | `ToolRecoveryDecisions` | ChannelMap  | Atomic complete recovery decisions keyed by recovery ID                                      |
 | `ParallelToolResults`  | ChannelMap   | One typed result from each bounded parallel execution branch                                  |
 | `PlanExecutions`       | ChannelMap   | Execution request keyed by Plan revision                                                     |
-| `ReasoningSummary`     | Stream       | Buffered best-effort provider summary deltas                                                 |
+| `ReasoningSummary`     | Stream       | Buffered best-effort provider summary deltas when enabled by the OpenAI client configuration |
 | `AssistantText`        | Stream       | Buffered best-effort assistant deltas                                                        |
 | `AgentActivity`        | Stream       | Structured best-effort activity, input-consumption hints, and hidden Snapshot controls       |
 

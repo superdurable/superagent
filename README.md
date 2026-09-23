@@ -17,7 +17,7 @@ transport boundaries from one contract.
 ## Capabilities
 
 - Durable conversations with typed application history
-- Streaming assistant text and provider-authored reasoning summaries
+- Streaming assistant text and optionally enabled provider-authored reasoning summaries
 - Plans, tool approvals, user input, steering, and durable timers
 - OpenAI, Anthropic, Gemini, Groq, and deterministic mock providers
 - MCP over stdio and Streamable HTTP

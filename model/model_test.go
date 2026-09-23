@@ -54,7 +54,7 @@ func TestPublicProviderFacadeConstructsExistingRouter(t *testing.T) {
 	}
 	router := model.NewClient(
 		model.NewMockClient(),
-		model.NewOpenAIClient(credentials, httpClient, ""),
+		model.NewOpenAIClient(credentials, httpClient, "", &model.OpenAIClientConfig{}),
 		anthropic,
 		gemini,
 		groq,

@@ -61,7 +61,9 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 	if err := credentials.SetAPIKey(flowID, agent.ProviderOpenAI, "test-openai-key"); err != nil {
 		t.Fatal(err)
 	}
-	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test")
+	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test", &OpenAIClientConfig{
+		ReasoningSummaryStreamingEnabled: true,
+	})
 	oldContext, err := agent.ParseJSONValue(`{"id":"rs-old","type":"reasoning","summary":[],"encrypted_content":"encrypted-old"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +132,9 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 	if !slices.Equal(payload.Include, []string{"reasoning.encrypted_content"}) {
 		t.Fatalf("include = %q", payload.Include)
 	}
+	if payload.Reasoning == nil {
+		t.Fatal("reasoning request was omitted")
+	}
 	if payload.Reasoning.Summary != "auto" {
 		t.Fatalf("reasoning summary = %q", payload.Reasoning.Summary)
 	}
@@ -160,6 +165,58 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 	}
 	if reasoningState.Type != "reasoning" || reasoningState.EncryptedContent != "encrypted-new" {
 		t.Fatalf("reasoning state = %#v", reasoningState)
+	}
+}
+
+func TestOpenAICompleteSkipsReasoningSummaryWhenStreamingIsDisabled(t *testing.T) {
+	t.Parallel()
+	requestReceived := make(chan openAIRequestFixture, 1)
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var payload openAIRequestFixture
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			return nil, fmt.Errorf("decode fixture request: %w", err)
+		}
+		requestReceived <- payload
+		body := strings.Join([]string{
+			sse(`{"type":"response.reasoning_summary_text.delta","delta":"This must not be forwarded.","item_id":"rs-new","output_index":0,"summary_index":0,"sequence_number":1}`),
+			sse(`{"type":"response.output_text.delta","delta":"Ready.","item_id":"msg-new","output_index":1,"content_index":0,"logprobs":[],"sequence_number":2}`),
+			sse(`{"type":"response.output_item.done","output_index":0,"sequence_number":3,"item":{"id":"rs-new","type":"reasoning","summary":[{"type":"summary_text","text":"This must not be forwarded."}],"encrypted_content":"encrypted-new","status":"completed"}}`),
+			sse(`{"type":"response.completed","response":{"status":"completed"},"sequence_number":4}`),
+			"data: [DONE]\n\n",
+		}, "")
+		return fixtureResponse(request, http.StatusOK, "text/event-stream", body), nil
+	})}
+	credentials := NewCredentialStore()
+	flowID := agent.FlowID("flow-openai-no-reasoning-summary")
+	if err := credentials.SetAPIKey(flowID, agent.ProviderOpenAI, "test-openai-key"); err != nil {
+		t.Fatal(err)
+	}
+	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test", &OpenAIClientConfig{})
+	reasoningChunks := make([]string, 0)
+	reply, err := client.Complete(context.Background(), agent.ModelRequest{
+		Config:         agent.AgentConfig{Model: "openai/gpt-5-mini", SystemPrompt: "Be helpful."},
+		Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Say ready."}},
+		WriteAssistant: func(string) error { return nil },
+		WriteReasoning: func(delta string) error {
+			reasoningChunks = append(reasoningChunks, delta)
+			return nil
+		},
+		WriteActivity: func(agent.AgentEvent) error { return nil },
+		FlowID:        flowID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload := <-requestReceived
+	if payload.Reasoning != nil {
+		t.Fatalf("reasoning request = %#v, want omitted", payload.Reasoning)
+	}
+	if len(reasoningChunks) != 0 {
+		t.Fatalf("reasoning chunks = %q, want none", reasoningChunks)
+	}
+	if reply.Content != "Ready." || len(reply.ProviderContextItems) != 1 {
+		t.Fatalf("reply = %#v", reply)
 	}
 }
 
@@ -195,7 +252,7 @@ func TestOpenAIDisablesSDKRetries(t *testing.T) {
 	if err := credentials.SetDefaultAPIKey(agent.ProviderOpenAI, "test-openai-key"); err != nil {
 		t.Fatal(err)
 	}
-	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test")
+	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test", &OpenAIClientConfig{})
 	_, err := client.Complete(context.Background(), agent.ModelRequest{
 		Config:         agent.AgentConfig{Model: "openai/gpt-5-mini", SystemPrompt: "Be helpful."},
 		Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Hello"}},
@@ -221,7 +278,7 @@ type openAIRequestFixture struct {
 	Include           []string          `json:"include"`
 	Input             []json.RawMessage `json:"input"`
 	Tools             []json.RawMessage `json:"tools"`
-	Reasoning         struct {
+	Reasoning         *struct {
 		Summary string `json:"summary"`
 	} `json:"reasoning"`
 }
