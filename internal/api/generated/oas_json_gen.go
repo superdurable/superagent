@@ -5,6 +5,7 @@ package api
 import (
 	"math/bits"
 	"strconv"
+	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/go-faster/jx"
@@ -769,19 +770,26 @@ func (s *AgentEvent) encodeFields(e *jx.Encoder) {
 		e.FieldStart("inputConsumption")
 		s.InputConsumption.Encode(e)
 	}
+	{
+		if s.Attempt.Set {
+			e.FieldStart("attempt")
+			s.Attempt.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfAgentEvent = [10]string{
-	0: "kind",
-	1: "message",
-	2: "callId",
-	3: "toolName",
-	4: "messageSequence",
-	5: "planBaseRevision",
-	6: "planRevision",
-	7: "planTaskIndex",
-	8: "planTaskStatus",
-	9: "inputConsumption",
+var jsonFieldsNameOfAgentEvent = [11]string{
+	0:  "kind",
+	1:  "message",
+	2:  "callId",
+	3:  "toolName",
+	4:  "messageSequence",
+	5:  "planBaseRevision",
+	6:  "planRevision",
+	7:  "planTaskIndex",
+	8:  "planTaskStatus",
+	9:  "inputConsumption",
+	10: "attempt",
 }
 
 // Decode decodes AgentEvent from json.
@@ -895,6 +903,16 @@ func (s *AgentEvent) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"inputConsumption\"")
 			}
+		case "attempt":
+			if err := func() error {
+				s.Attempt.Reset()
+				if err := s.Attempt.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"attempt\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -989,15 +1007,22 @@ func (s *AgentMessage) encodeFields(e *jx.Encoder) {
 		e.FieldStart("createdAt")
 		json.EncodeDateTime(e, s.CreatedAt)
 	}
+	{
+		if s.StartedAt.Set {
+			e.FieldStart("startedAt")
+			s.StartedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
 }
 
-var jsonFieldsNameOfAgentMessage = [6]string{
+var jsonFieldsNameOfAgentMessage = [7]string{
 	0: "role",
 	1: "content",
 	2: "toolCalls",
 	3: "toolCallId",
 	4: "toolName",
 	5: "createdAt",
+	6: "startedAt",
 }
 
 // Decode decodes AgentMessage from json.
@@ -1080,6 +1105,16 @@ func (s *AgentMessage) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"createdAt\"")
+			}
+		case "startedAt":
+			if err := func() error {
+				s.StartedAt.Reset()
+				if err := s.StartedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -2365,6 +2400,8 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindInputConsumed
 	case EventKindUserInputAnswered:
 		*s = EventKindUserInputAnswered
+	case EventKindUserInputCancelled:
+		*s = EventKindUserInputCancelled
 	case EventKindSnapshotRequired:
 		*s = EventKindSnapshotRequired
 	case EventKindSteeringApplied:
@@ -2383,6 +2420,14 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindModelToolCall
 	case EventKindUserInputRequested:
 		*s = EventKindUserInputRequested
+	case EventKindToolApprovalRequested:
+		*s = EventKindToolApprovalRequested
+	case EventKindToolApprovalResolved:
+		*s = EventKindToolApprovalResolved
+	case EventKindTimerStarted:
+		*s = EventKindTimerStarted
+	case EventKindTimerResolved:
+		*s = EventKindTimerResolved
 	case EventKindToolProgress:
 		*s = EventKindToolProgress
 	case EventKindToolFailed:
@@ -4101,6 +4146,57 @@ func (s *OptInt) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes time.Time as json.
+func (o OptNilDateTime) Encode(e *jx.Encoder, format func(*jx.Encoder, time.Time)) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	format(e, o.Value)
+}
+
+// Decode decodes time.Time from json.
+func (o *OptNilDateTime) Decode(d *jx.Decoder, format func(*jx.Decoder) (time.Time, error)) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilDateTime to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v time.Time
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	v, err := format(d)
+	if err != nil {
+		return err
+	}
+	o.Value = v
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilDateTime) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e, json.EncodeDateTime)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilDateTime) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d, json.DecodeDateTime)
+}
+
 // Encode encodes int as json.
 func (o OptNilInt) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -4148,6 +4244,57 @@ func (s OptNilInt) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptNilInt) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int32 as json.
+func (o OptNilInt32) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Int32(int32(o.Value))
+}
+
+// Decode decodes int32 from json.
+func (o *OptNilInt32) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilInt32 to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v int32
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	v, err := d.Int32()
+	if err != nil {
+		return err
+	}
+	o.Value = int32(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilInt32) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilInt32) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -4359,12 +4506,19 @@ func (s *PendingApproval) encodeFields(e *jx.Encoder) {
 		e.FieldStart("argumentsJson")
 		e.Str(s.ArgumentsJson)
 	}
+	{
+		if s.StartedAt.Set {
+			e.FieldStart("startedAt")
+			s.StartedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
 }
 
-var jsonFieldsNameOfPendingApproval = [3]string{
+var jsonFieldsNameOfPendingApproval = [4]string{
 	0: "callId",
 	1: "toolName",
 	2: "argumentsJson",
+	3: "startedAt",
 }
 
 // Decode decodes PendingApproval from json.
@@ -4407,6 +4561,16 @@ func (s *PendingApproval) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"argumentsJson\"")
+			}
+		case "startedAt":
+			if err := func() error {
+				s.StartedAt.Reset()
+				if err := s.StartedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -4485,12 +4649,19 @@ func (s *PendingTimer) encodeFields(e *jx.Encoder) {
 		e.FieldStart("reason")
 		e.Str(s.Reason)
 	}
+	{
+		if s.StartedAt.Set {
+			e.FieldStart("startedAt")
+			s.StartedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
 }
 
-var jsonFieldsNameOfPendingTimer = [3]string{
+var jsonFieldsNameOfPendingTimer = [4]string{
 	0: "callId",
 	1: "durationSeconds",
 	2: "reason",
+	3: "startedAt",
 }
 
 // Decode decodes PendingTimer from json.
@@ -4535,6 +4706,16 @@ func (s *PendingTimer) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"reason\"")
+			}
+		case "startedAt":
+			if err := func() error {
+				s.StartedAt.Reset()
+				if err := s.StartedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -4613,11 +4794,18 @@ func (s *PendingToolRecovery) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		if s.StartedAt.Set {
+			e.FieldStart("startedAt")
+			s.StartedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
 }
 
-var jsonFieldsNameOfPendingToolRecovery = [2]string{
+var jsonFieldsNameOfPendingToolRecovery = [3]string{
 	0: "recoveryId",
 	1: "calls",
+	2: "startedAt",
 }
 
 // Decode decodes PendingToolRecovery from json.
@@ -4658,6 +4846,16 @@ func (s *PendingToolRecovery) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"calls\"")
+			}
+		case "startedAt":
+			if err := func() error {
+				s.StartedAt.Reset()
+				if err := s.StartedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -4879,11 +5077,18 @@ func (s *PendingUserInput) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		if s.StartedAt.Set {
+			e.FieldStart("startedAt")
+			s.StartedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
 }
 
-var jsonFieldsNameOfPendingUserInput = [2]string{
+var jsonFieldsNameOfPendingUserInput = [3]string{
 	0: "callId",
 	1: "questions",
+	2: "startedAt",
 }
 
 // Decode decodes PendingUserInput from json.
@@ -4922,6 +5127,16 @@ func (s *PendingUserInput) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"questions\"")
+			}
+		case "startedAt":
+			if err := func() error {
+				s.StartedAt.Reset()
+				if err := s.StartedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)

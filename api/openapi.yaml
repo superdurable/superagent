@@ -505,6 +505,7 @@ components:
         - plan_task_updated
         - input_consumed
         - user_input_answered
+        - user_input_cancelled
         - snapshot_required
         - steering_applied
         - compaction_failed
@@ -514,6 +515,10 @@ components:
         - model_completed
         - model_tool_call
         - user_input_requested
+        - tool_approval_requested
+        - tool_approval_resolved
+        - timer_started
+        - timer_resolved
         - tool_progress
         - tool_failed
         - tool_completed
@@ -962,6 +967,10 @@ components:
         createdAt:
           type: string
           format: date-time
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
     ToolCall:
       type: object
       additionalProperties: false
@@ -1098,6 +1107,10 @@ components:
         argumentsJson:
           type: string
           minLength: 2
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
     PendingToolRecovery:
       type: object
       additionalProperties: false
@@ -1114,6 +1127,10 @@ components:
           maxItems: 32
           items:
             $ref: "#/components/schemas/PendingToolRecoveryCall"
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
     PendingToolRecoveryCall:
       type: object
       additionalProperties: false
@@ -1150,6 +1167,10 @@ components:
           minimum: 1
         reason:
           type: string
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
     PendingUserInput:
       type: object
       additionalProperties: false
@@ -1165,6 +1186,10 @@ components:
           maxItems: 3
           items:
             $ref: "#/components/schemas/UserInputQuestion"
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
     UserInputQuestion:
       type: object
       additionalProperties: false
@@ -1398,6 +1423,11 @@ components:
           description: Exact durable inputs consumed at this boundary, or null for unrelated activity.
           allOf:
             - $ref: "#/components/schemas/InputConsumption"
+          nullable: true
+        attempt:
+          type: integer
+          format: int32
+          minimum: 1
           nullable: true
     InputConsumption:
       type: object

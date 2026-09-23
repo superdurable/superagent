@@ -81,6 +81,13 @@ range, interaction mode, status, pending tool cursor, plan revision, and
 consecutive Plan no-progress count. Plans, pending approvals, timers, input
 prompts, and cumulative context summaries are separate typed Attributes.
 
+Completed assistant and tool Messages optionally retain `started_at` alongside
+their completion `created_at`. This makes model and tool timing durable across
+archive paging without making the activity Stream authoritative. Pending
+approval, question, timer, and recovery Attributes similarly retain their wait
+start for an accurate live elapsed time after browser or Worker replacement.
+Legacy values omit these additive fields and render without an inferred time.
+
 Snapshot is the only durable current-interaction and reconciliation read model.
 Archive paging is an immutable history continuation. Each page uses one
 read-only Flow RPC that loads `AgentState` and the retained archive map, then

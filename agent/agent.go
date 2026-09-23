@@ -122,24 +122,30 @@ const (
 )
 
 const (
-	EventKindPlanStarted          = agentinternal.EventKindPlanStarted
-	EventKindPlanUpdated          = agentinternal.EventKindPlanUpdated
-	EventKindPlanTaskUpdated      = agentinternal.EventKindPlanTaskUpdated
-	EventKindInputConsumed        = agentinternal.EventKindInputConsumed
-	EventKindSnapshotRequired     = agentinternal.EventKindSnapshotRequired
-	EventKindSteeringApplied      = agentinternal.EventKindSteeringApplied
-	EventKindCompactionFailed     = agentinternal.EventKindCompactionFailed
-	EventKindCompacted            = agentinternal.EventKindCompacted
-	EventKindModelStarted         = agentinternal.EventKindModelStarted
-	EventKindModelFailed          = agentinternal.EventKindModelFailed
-	EventKindModelCompleted       = agentinternal.EventKindModelCompleted
-	EventKindModelToolCall        = agentinternal.EventKindModelToolCall
-	EventKindUserInputRequested   = agentinternal.EventKindUserInputRequested
-	EventKindToolProgress         = agentinternal.EventKindToolProgress
-	EventKindToolFailed           = agentinternal.EventKindToolFailed
-	EventKindToolCompleted        = agentinternal.EventKindToolCompleted
-	EventKindToolRecoveryRequired = agentinternal.EventKindToolRecoveryRequired
-	EventKindToolRecoveryResolved = agentinternal.EventKindToolRecoveryResolved
+	EventKindPlanStarted           = agentinternal.EventKindPlanStarted
+	EventKindPlanUpdated           = agentinternal.EventKindPlanUpdated
+	EventKindPlanTaskUpdated       = agentinternal.EventKindPlanTaskUpdated
+	EventKindInputConsumed         = agentinternal.EventKindInputConsumed
+	EventKindUserInputAnswered     = agentinternal.EventKindUserInputAnswered
+	EventKindUserInputCancelled    = agentinternal.EventKindUserInputCancelled
+	EventKindSnapshotRequired      = agentinternal.EventKindSnapshotRequired
+	EventKindSteeringApplied       = agentinternal.EventKindSteeringApplied
+	EventKindCompactionFailed      = agentinternal.EventKindCompactionFailed
+	EventKindCompacted             = agentinternal.EventKindCompacted
+	EventKindModelStarted          = agentinternal.EventKindModelStarted
+	EventKindModelFailed           = agentinternal.EventKindModelFailed
+	EventKindModelCompleted        = agentinternal.EventKindModelCompleted
+	EventKindModelToolCall         = agentinternal.EventKindModelToolCall
+	EventKindUserInputRequested    = agentinternal.EventKindUserInputRequested
+	EventKindToolApprovalRequested = agentinternal.EventKindToolApprovalRequested
+	EventKindToolApprovalResolved  = agentinternal.EventKindToolApprovalResolved
+	EventKindTimerStarted          = agentinternal.EventKindTimerStarted
+	EventKindTimerResolved         = agentinternal.EventKindTimerResolved
+	EventKindToolProgress          = agentinternal.EventKindToolProgress
+	EventKindToolFailed            = agentinternal.EventKindToolFailed
+	EventKindToolCompleted         = agentinternal.EventKindToolCompleted
+	EventKindToolRecoveryRequired  = agentinternal.EventKindToolRecoveryRequired
+	EventKindToolRecoveryResolved  = agentinternal.EventKindToolRecoveryResolved
 
 	CommandSendMessage         = agentinternal.CommandSendMessage
 	CommandAnswerQuestions     = agentinternal.CommandAnswerQuestions

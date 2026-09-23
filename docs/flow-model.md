@@ -19,6 +19,13 @@ The implementation requires Dex Go SDK `v0.11.2` and Server `v0.11.2`. Each
 Provider and MCP calls are external effects and are not part of a Dex
 transaction.
 
+Assistant and tool-result Messages persist an optional execution `started_at`;
+their existing `created_at` is the completion boundary. Parallel tool branches
+capture completion before publishing their batch result so a fast tool does not
+inherit the slowest sibling's duration. Pending approval, question, timer, and
+manual-recovery Attributes persist their own optional wait start. All additions
+decode absent fields from open or legacy Flows as unknown timing.
+
 New Agent Flows set `FlowConfig.StepDurability` to ASYNC. Ordinary Steps inherit
 that default. `CompactContext`, `CallModel`, and tools declared long-running
 override Execute durability to SYNC. A short-running tool may fall back from

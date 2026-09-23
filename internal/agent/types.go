@@ -275,25 +275,30 @@ func (role *MessageRole) UnmarshalJSON(data []byte) error {
 type EventKind string
 
 const (
-	EventKindPlanStarted          EventKind = "plan_started"
-	EventKindPlanUpdated          EventKind = "plan_updated"
-	EventKindPlanTaskUpdated      EventKind = "plan_task_updated"
-	EventKindInputConsumed        EventKind = "input_consumed"
-	EventKindUserInputAnswered    EventKind = "user_input_answered"
-	EventKindSnapshotRequired     EventKind = "snapshot_required"
-	EventKindSteeringApplied      EventKind = "steering_applied"
-	EventKindCompactionFailed     EventKind = "compaction_failed"
-	EventKindCompacted            EventKind = "compacted"
-	EventKindModelStarted         EventKind = "model_started"
-	EventKindModelFailed          EventKind = "model_failed"
-	EventKindModelCompleted       EventKind = "model_completed"
-	EventKindModelToolCall        EventKind = "model_tool_call"
-	EventKindUserInputRequested   EventKind = "user_input_requested"
-	EventKindToolProgress         EventKind = "tool_progress"
-	EventKindToolFailed           EventKind = "tool_failed"
-	EventKindToolCompleted        EventKind = "tool_completed"
-	EventKindToolRecoveryRequired EventKind = "tool_recovery_required"
-	EventKindToolRecoveryResolved EventKind = "tool_recovery_resolved"
+	EventKindPlanStarted           EventKind = "plan_started"
+	EventKindPlanUpdated           EventKind = "plan_updated"
+	EventKindPlanTaskUpdated       EventKind = "plan_task_updated"
+	EventKindInputConsumed         EventKind = "input_consumed"
+	EventKindUserInputAnswered     EventKind = "user_input_answered"
+	EventKindUserInputCancelled    EventKind = "user_input_cancelled"
+	EventKindSnapshotRequired      EventKind = "snapshot_required"
+	EventKindSteeringApplied       EventKind = "steering_applied"
+	EventKindCompactionFailed      EventKind = "compaction_failed"
+	EventKindCompacted             EventKind = "compacted"
+	EventKindModelStarted          EventKind = "model_started"
+	EventKindModelFailed           EventKind = "model_failed"
+	EventKindModelCompleted        EventKind = "model_completed"
+	EventKindModelToolCall         EventKind = "model_tool_call"
+	EventKindUserInputRequested    EventKind = "user_input_requested"
+	EventKindToolApprovalRequested EventKind = "tool_approval_requested"
+	EventKindToolApprovalResolved  EventKind = "tool_approval_resolved"
+	EventKindTimerStarted          EventKind = "timer_started"
+	EventKindTimerResolved         EventKind = "timer_resolved"
+	EventKindToolProgress          EventKind = "tool_progress"
+	EventKindToolFailed            EventKind = "tool_failed"
+	EventKindToolCompleted         EventKind = "tool_completed"
+	EventKindToolRecoveryRequired  EventKind = "tool_recovery_required"
+	EventKindToolRecoveryResolved  EventKind = "tool_recovery_resolved"
 )
 
 // Validate rejects unknown event kinds.
@@ -304,6 +309,7 @@ func (kind EventKind) Validate() error {
 		EventKindPlanTaskUpdated,
 		EventKindInputConsumed,
 		EventKindUserInputAnswered,
+		EventKindUserInputCancelled,
 		EventKindSnapshotRequired,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
@@ -313,6 +319,10 @@ func (kind EventKind) Validate() error {
 		EventKindModelCompleted,
 		EventKindModelToolCall,
 		EventKindUserInputRequested,
+		EventKindToolApprovalRequested,
+		EventKindToolApprovalResolved,
+		EventKindTimerStarted,
+		EventKindTimerResolved,
 		EventKindToolProgress,
 		EventKindToolFailed,
 		EventKindToolCompleted,
@@ -670,6 +680,7 @@ type AgentMessage struct {
 	ToolCallID           *CallID               `json:"tool_call_id,omitempty"`
 	ToolName             *ToolName             `json:"tool_name,omitempty"`
 	ProviderContextItems []ProviderContextItem `json:"provider_context_items"`
+	StartedAt            *time.Time            `json:"started_at,omitempty"`
 	CreatedAt            time.Time             `json:"created_at"`
 }
 
@@ -815,6 +826,7 @@ type PendingApproval struct {
 	CallID    CallID     `json:"call_id"`
 	ToolName  ToolName   `json:"tool_name"`
 	Arguments JSONObject `json:"arguments"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 // RecoveryID identifies one exact pending manual tool-recovery revision.
@@ -891,13 +903,15 @@ type PendingToolRecoveryCall struct {
 type PendingToolRecovery struct {
 	RecoveryID RecoveryID                `json:"recovery_id"`
 	Calls      []PendingToolRecoveryCall `json:"calls"`
+	StartedAt  *time.Time                `json:"started_at,omitempty"`
 }
 
 // PendingTimer describes a durable model-requested wait.
 type PendingTimer struct {
-	CallID          CallID `json:"call_id"`
-	DurationSeconds int64  `json:"duration_seconds"`
-	Reason          string `json:"reason"`
+	CallID          CallID     `json:"call_id"`
+	DurationSeconds int64      `json:"duration_seconds"`
+	Reason          string     `json:"reason"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
 }
 
 // UserInputQuestionID identifies one question within a pending input batch.
@@ -921,6 +935,7 @@ type UserInputQuestion struct {
 type PendingUserInput struct {
 	CallID    CallID              `json:"call_id"`
 	Questions []UserInputQuestion `json:"questions"`
+	StartedAt *time.Time          `json:"started_at,omitempty"`
 }
 
 // AnswerQuestionsRequest identifies and answers one pending batch.
@@ -954,6 +969,7 @@ type AgentEvent struct {
 	PlanTaskIndex    *PlanTaskIndex    `json:"plan_task_index,omitempty"`
 	PlanTaskStatus   *TaskStatus       `json:"plan_task_status,omitempty"`
 	InputConsumption *InputConsumption `json:"input_consumption,omitempty"`
+	Attempt          *int32            `json:"attempt,omitempty"`
 }
 
 // InputConsumption identifies exact durable inputs consumed at a Step boundary.

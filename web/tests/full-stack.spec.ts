@@ -108,19 +108,28 @@ test("renders chronological transient activity and durable queue interactions", 
       "/reason Checked the constraints | Durable answer",
     ),
   ).toHaveCount(0);
-  await expect(
-    history.getByText("Consumed 1 queued user message."),
-  ).toBeVisible();
+  const recoveredActivity = history.locator("details.sa-earlier-activity");
+  await expect(recoveredActivity.locator("summary")).toContainText(
+    "1 recovered event",
+  );
+  await expect(recoveredActivity).toContainText(
+    "Consumed 1 queued user message.",
+  );
   expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
-  const reasoningCard = history.locator("details.reasoning-card").filter({
+  const workLog = history.locator("details.sa-work-log").filter({
+    hasText: "Checked the constraints",
+  });
+  await expect(workLog).toHaveCount(1);
+  await expect(composer).toBeFocused();
+  await workLog.locator(":scope > summary").click();
+  const reasoningCard = workLog.locator("details").filter({
     hasText: "Checked the constraints",
   });
   const reasoningText = reasoningCard.getByText("Checked the constraints", {
     exact: true,
   });
   await expect(reasoningCard).toBeVisible();
-  await expect(composer).toBeFocused();
   if (!(await reasoningText.isVisible())) {
     await reasoningCard.locator("summary").click();
   }
@@ -136,36 +145,9 @@ test("renders chronological transient activity and durable queue interactions", 
     }),
   ).toHaveCount(1);
   await expect(history.locator(".live-message")).toHaveCount(0);
-  await expect(history.locator(".activity-entry")).toHaveCount(3);
-  await expect(
-    history
-      .locator(".activity-entry")
-      .filter({ hasText: "Consumed 1 queued user message." }),
-  ).toHaveCount(1);
-  await expect(
-    history.locator(".activity-entry").filter({ hasText: "Calling mock/dex." }),
-  ).toHaveCount(1);
-  await expect(
-    history
-      .locator(".activity-entry")
-      .filter({ hasText: "Model response completed." }),
-  ).toHaveCount(1);
-  const timelineText = await directTimelineText(history);
-  const reasoningIndex = timelineText.findIndex((text) =>
-    text.includes("Reasoning summary"),
-  );
-  const assistantIndex = timelineText.findIndex(
-    (text) => text.includes("Durable answer") && text.includes("Assistant"),
-  );
-  expect(timelineText[0]).toContain(
-    "/reason Checked the constraints | Durable answer",
-  );
-  expect(reasoningIndex).toBeGreaterThan(0);
-  expect(reasoningIndex).toBeLessThan(assistantIndex);
-  const timelineTimes = await directTimelineTimes(history);
-  expect(timelineTimes).toEqual(
-    [...timelineTimes].sort((left, right) => left - right),
-  );
+  await expect(history.locator(".activity-entry")).toHaveCount(0);
+  await expect(workLog.getByText("Model", { exact: true })).toHaveCount(1);
+  await expect(workLog).toContainText("complete");
   await expect(page.locator(".activity-card")).toHaveCount(0);
   await expect(page.locator(".queue-message.submitting")).toHaveCount(0);
   expect(commandStatuses).toContain(202);
@@ -254,7 +236,7 @@ test("renders chronological transient activity and durable queue interactions", 
       .locator(".message-bubble.assistant")
       .filter({ hasText: "Local demo response: steer the timer now" }),
   ).toHaveCount(1);
-  await expect(history.locator(".activity-entry")).not.toHaveCount(1);
+  await expect(history.locator("details.sa-work-log")).not.toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { name: "SuperAgent" })).toBeVisible();
   await expect(
@@ -326,14 +308,15 @@ test("removes a consumed queued message before the next Snapshot completes", asy
   expect(steer.status()).toBe(200);
 
   await expect(queuedMessage).toHaveCount(0);
-  await expect(
-    page
-      .getByRole("region", { name: "Conversation history" })
-      .getByText("Consumed 1 steered user message."),
-  ).toBeVisible();
+  const recoveredActivity = page
+    .getByRole("region", { name: "Conversation history" })
+    .locator("details.sa-earlier-activity");
+  await expect(recoveredActivity).toContainText(
+    "Consumed 1 steered user message.",
+  );
   const consumedMessage = page
     .getByRole("region", { name: "Conversation history" })
-    .locator(".message-bubble.user")
+    .locator(".sa-conversation-user, .message-bubble.user")
     .filter({ hasText: "consume this queued message" });
   await expect(consumedMessage).toHaveCount(1);
   expect(snapshotStatuses).toHaveLength(completedSnapshots);
@@ -387,11 +370,8 @@ test("submits a question answer before steering and queued messages", async ({
   await expect(
     history.locator(".message-bubble.user").filter({ hasText: "Region" }),
   ).toContainText("US West");
-  const answeredActivity = history.locator(
-    ".activity-entry.user_input_answered",
-  );
-  await expect(answeredActivity).toContainText("Answered 3 questions.");
-  await expect(answeredActivity).not.toContainText("US West");
+  await expect(history.getByText("Answered 3 questions.")).toHaveCount(0);
+  await expect(history.getByText("request_user_input")).toHaveCount(0);
   await expect(
     history.locator(".message-bubble.user").filter({
       hasText: "steered after question",
@@ -402,7 +382,7 @@ test("submits a question answer before steering and queued messages", async ({
       hasText: "ordinary queued request",
     }),
   ).toHaveCount(1);
-  const timeline = await directTimelineText(history);
+  const timeline = await conversationUserText(history);
   const answerIndex = timeline.findIndex(
     (text) => text.includes("Region") && text.includes("US West"),
   );
@@ -819,11 +799,9 @@ test("resumes each live Stream after interruption without duplicate timeline ent
       history.locator(".message-bubble.assistant").filter({ hasText: message }),
     ).toHaveCount(1);
     await expect(history.locator(".live-message")).toHaveCount(0);
-    await expect(history.locator(".activity-entry")).toHaveCount(3);
-    const activityRows = await history
-      .locator(".activity-entry")
-      .allTextContents();
-    expect(new Set(activityRows).size).toBe(activityRows.length);
+    await expect(history.locator(".activity-entry")).toHaveCount(0);
+    await expect(history.locator("details.sa-work-log")).toHaveCount(1);
+    await expect(history.locator(".sa-work-item__heading")).toHaveCount(1);
     recentReads = 0;
     resumeTokens.length = 0;
     await page.reload();
@@ -1074,13 +1052,9 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
     timeout: 20_000,
   });
   await expect(plan.locator(".plan-tasks li.completed")).toHaveCount(2);
-  const activity = page.locator(".activity-entry");
-  await expect(
-    activity.filter({ hasText: "Started plan task 1." }),
-  ).toBeVisible();
-  await expect(
-    activity.filter({ hasText: "Completed plan task 2." }),
-  ).toBeVisible();
+  const recoveredActivity = page.locator("details.sa-earlier-activity");
+  await expect(recoveredActivity).toContainText("Started plan task 1.");
+  await expect(recoveredActivity).toContainText("Completed plan task 2.");
 
   await composer.fill("/questions");
   await page.getByRole("button", { name: "Send" }).click();
@@ -1177,19 +1151,19 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   ).toBeVisible();
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
+  const approvedWorkLog = page.locator("details.sa-work-log").filter({
+    hasText: '"value":"approved"',
+  });
+  await openDetails(approvedWorkLog);
+  const approvedTool = approvedWorkLog.locator(".sa-work-tool-item");
+  const approvedToolCard = approvedTool.locator("details.sa-tool-call");
+  await openDetails(approvedToolCard);
   await expect(
-    page.locator(".sa-tool-call").filter({ hasText: '"echo":"approved"' }),
+    approvedToolCard.filter({ hasText: '"echo":"approved"' }),
   ).toBeVisible();
-  await expect(
-    activity.filter({ hasText: "Model requested fixture__echo." }),
-  ).toBeVisible();
-  await expect(
-    activity.filter({ hasText: "Calling fixture__echo (attempt 1)." }),
-  ).toBeVisible();
-  await expect(
-    activity.filter({ hasText: "Completed fixture__echo." }),
-  ).toBeVisible();
-  const activityText = (await activity.allTextContents()).join("\n");
+  const activitySummary = approvedTool.locator(":scope > p");
+  await expect(activitySummary).toHaveText("Completed fixture__echo.");
+  const activityText = (await activitySummary.allTextContents()).join("\n");
   expect(activityText).not.toContain('"value":"approved"');
   expect(activityText).not.toContain('"echo":"approved"');
 
@@ -1198,8 +1172,14 @@ test("renders Plan progress, clears an accepted input, and shows safe tool activ
   await expect(approval.getByText("Approval required")).toBeVisible();
   await approval.getByRole("button", { name: "Reject" }).click();
   await expect(approval).toHaveCount(0);
+  const rejectedWorkLog = page.locator("details.sa-work-log").filter({
+    hasText: '"value":"rejected"',
+  });
+  await openDetails(rejectedWorkLog);
+  const rejectedToolCard = rejectedWorkLog.locator("details.sa-tool-call");
+  await openDetails(rejectedToolCard);
   await expect(
-    page.locator(".sa-tool-call").filter({ hasText: "rejected_by_user" }),
+    rejectedToolCard.filter({ hasText: "rejected_by_user" }),
   ).toBeVisible();
 });
 
@@ -1263,13 +1243,13 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
   await page.getByRole("button", { name: "Create plan" }).click();
 
   const plan = page.getByRole("region", { name: "Agent plan" });
-  const activity = page.locator(".activity-entry");
+  const modelWork = page.locator(".sa-work-item__heading").filter({
+    hasText: "Model",
+  });
   await expect(plan.getByText("Plan revision 1")).toBeVisible({
     timeout: 20_000,
   });
-  const callsBeforeExecution = await activity
-    .filter({ hasText: "Calling mock/dex." })
-    .count();
+  const callsBeforeExecution = await modelWork.count();
   const snapshotsBeforeExecution = snapshotStatuses.length;
 
   const firstAccepted = page.waitForResponse(
@@ -1289,9 +1269,7 @@ test("disables busy Plan actions and continues a stalled active Plan", async ({
 
   const continueAction = plan.getByRole("button", { name: "Continue plan" });
   await expect(continueAction).toBeEnabled({ timeout: 20_000 });
-  await expect
-    .poll(() => activity.filter({ hasText: "Calling mock/dex." }).count())
-    .toBe(callsBeforeExecution + 2);
+  await expect.poll(() => modelWork.count()).toBe(callsBeforeExecution + 2);
   expect(executeStatuses).toEqual([202]);
   expect(executeBodies).toEqual([{ flowId: expect.any(String), revision: 1 }]);
   expect(snapshotStatuses.length).toBeGreaterThan(snapshotsBeforeExecution);
@@ -1541,16 +1519,21 @@ test("retries an external tool through Dex without requesting approval twice", a
   await expect(approval.getByText("Approval required")).toBeVisible();
   await approval.getByRole("button", { name: "Approve" }).click();
   await expect(approval).toHaveCount(0);
+  const workLog = page.locator("details.sa-work-log").filter({
+    hasText: "fixture__echo",
+  });
+  await openDetails(workLog);
+  const toolWork = workLog.locator(".sa-work-tool-item").filter({
+    hasText: "fixture__echo",
+  });
+  await expect(toolWork).toContainText("2 attempts");
+  await expect(toolWork).toContainText("complete");
+  const toolCard = toolWork.locator("details.sa-tool-call");
+  await openDetails(toolCard);
   await expect(
-    page.locator(".sa-tool-call").filter({ hasText: '"echo":"retry once"' }),
+    toolCard.filter({ hasText: '"echo":"retry once"' }),
   ).toBeVisible();
-  const activity = page.locator(".activity-entry");
-  await expect(
-    activity.filter({ hasText: "Calling fixture__echo (attempt 1)." }),
-  ).toBeVisible();
-  await expect(
-    activity.filter({ hasText: "Calling fixture__echo (attempt 2)." }),
-  ).toBeVisible();
+  await expect(page.locator(".activity-entry")).toHaveCount(0);
   await expect(page.getByText("Approval required")).toHaveCount(0);
 });
 
@@ -1585,20 +1568,32 @@ test("persists manual tool recovery and resumes only after a user decision", asy
     recovery.getByText("Error type:", { exact: false }),
   ).toBeVisible();
   await expect(recovery).not.toContainText("simulated local tool failure");
-  await expect(
-    page
-      .locator(".activity-entry")
-      .filter({ hasText: "Calling simulate_tool_failure (attempt 2)." }),
-  ).toBeVisible();
+  let workLog = page.locator("details.sa-work-log").filter({
+    hasText: "simulate_tool_failure",
+  });
+  await openDetails(workLog);
+  let toolWork = workLog.locator(".sa-work-tool-item").filter({
+    hasText: "simulate_tool_failure",
+  });
+  await expect(toolWork).toContainText("2 attempts");
+  await expect(toolWork).toContainText("waiting");
+  await expect(toolWork).toContainText("Manual recovery is required");
+
+  const flowId = await displayedFlowID(page);
+  const beforeRetry = await readAgentSnapshot(page, flowId);
+  const firstRecoveryID =
+    beforeRetry.description.pendingToolRecovery?.recoveryId;
+  expect(firstRecoveryID).toBeTruthy();
 
   await recovery
     .getByRole("button", { name: "Apply recovery decisions" })
     .click();
-  await expect(
-    page
-      .locator(".activity-entry")
-      .filter({ hasText: "Manual recovery is required" }),
-  ).toHaveCount(2, { timeout: 30_000 });
+  await expect
+    .poll(async () => {
+      const snapshot = await readAgentSnapshot(page, flowId);
+      return snapshot.description.pendingToolRecovery?.recoveryId;
+    })
+    .not.toBe(firstRecoveryID);
 
   recovery = page.locator(".recovery-card");
   const continueUnknown = recovery.getByRole("radio", {
@@ -1612,16 +1607,22 @@ test("persists manual tool recovery and resumes only after a user decision", asy
     .click();
 
   await expect(recovery).toHaveCount(0, { timeout: 30_000 });
+  workLog = page.locator("details.sa-work-log").filter({
+    hasText: "simulate_tool_failure",
+  });
+  await openDetails(workLog);
+  toolWork = workLog.locator(".sa-work-tool-item").filter({
+    hasText: "simulate_tool_failure",
+  });
+  await expect(toolWork).toContainText("complete");
+  const toolCard = toolWork.locator("details.sa-tool-call");
+  await openDetails(toolCard);
   await expect(
-    page.locator(".sa-tool-call").filter({
+    toolCard.filter({
       hasText: '"outcome":"unknown"',
     }),
   ).toBeVisible();
-  await expect(
-    page
-      .locator(".activity-entry")
-      .filter({ hasText: "completed with an unknown outcome" }),
-  ).toHaveCount(1);
+  await expect(page.locator(".activity-entry")).toHaveCount(0);
   await expectAgentWaitingForMessage(page);
 });
 
@@ -1644,8 +1645,10 @@ async function expectAgentWaitingForMessage(page: Page): Promise<void> {
   );
 }
 
-async function directTimelineText(history: Locator): Promise<string[]> {
-  return history.locator(".conversation-timeline > *").allTextContents();
+async function conversationUserText(history: Locator): Promise<string[]> {
+  return history
+    .locator(".message-bubble.user, .sa-conversation-user")
+    .allTextContents();
 }
 
 async function expectMessageQueueExpanded(queue: Locator): Promise<void> {
@@ -1653,16 +1656,13 @@ async function expectMessageQueueExpanded(queue: Locator): Promise<void> {
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 
-async function directTimelineTimes(history: Locator): Promise<number[]> {
-  return history.locator(".conversation-timeline > *").evaluateAll((rows) =>
-    rows.map((row) => {
-      const dateTime = row.querySelector("time")?.getAttribute("datetime");
-      if (dateTime === undefined || dateTime === null) {
-        throw new Error("timeline row is missing a datetime");
-      }
-      return Date.parse(dateTime);
-    }),
-  );
+async function openDetails(details: Locator): Promise<void> {
+  await expect(details).toHaveCount(1);
+  if (
+    !(await details.evaluate((element) => (element as HTMLDetailsElement).open))
+  ) {
+    await details.locator(":scope > summary").click();
+  }
 }
 
 async function abortSuccessfulResponseOnce(

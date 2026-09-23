@@ -27,7 +27,11 @@ export {
 export {
   ConversationTimeline,
   type ConversationTimelineProps,
-} from "./ConversationTimeline.js";
+} from "./ConversationTimelineView.js";
+export {
+  ConversationView,
+  type ConversationViewProps,
+} from "./ConversationView.js";
 export { MarkdownContent } from "./MarkdownContent.js";
 export {
   PlanPanel,
@@ -81,6 +85,21 @@ export {
   type TimelineSequencedMessage,
   type TimelineToolCall,
 } from "./conversationTimeline.js";
+export {
+  buildConversationPresentation,
+  formatDuration,
+  toolCallFingerprint,
+  unionDuration,
+  type ConversationModelWorkItem,
+  type ConversationOperationStatus,
+  type ConversationPendingWait,
+  type ConversationPresentation,
+  type ConversationPresentationInput,
+  type ConversationStreamState,
+  type ConversationToolGroup,
+  type ConversationToolWorkItem,
+  type ConversationTurn,
+} from "./conversationPresentation.js";
 export {
   indexToolResultsByCallId,
   isPairedToolResultMessage,

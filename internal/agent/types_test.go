@@ -22,6 +22,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAgentConfigDefaultsValidate(t *testing.T) {
@@ -87,6 +88,38 @@ func TestAnsweredQuestionsDescriptionDoesNotExposeAnswers(t *testing.T) {
 	}
 	if got := answeredQuestionsDescription(3); got != "Answered 3 questions." {
 		t.Fatalf("multiple answer description = %q", got)
+	}
+}
+
+func TestTimingFieldsRemainBackwardCompatibleWithLegacyJSON(t *testing.T) {
+	t.Parallel()
+	var message AgentMessage
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":"done","tool_calls":[],"created_at":"2026-09-23T12:00:01Z"}`), &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.StartedAt != nil {
+		t.Fatalf("legacy message started at = %v", message.StartedAt)
+	}
+	var pending PendingApproval
+	if err := json.Unmarshal([]byte(`{"call_id":"call-1","tool_name":"read_file","arguments":{"path":"README.md"}}`), &pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending.StartedAt != nil {
+		t.Fatalf("legacy pending approval started at = %v", pending.StartedAt)
+	}
+
+	startedAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	message.StartedAt = &startedAt
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip AgentMessage
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.StartedAt == nil || !roundTrip.StartedAt.Equal(startedAt) {
+		t.Fatalf("round-trip message started at = %v", roundTrip.StartedAt)
 	}
 }
 
