@@ -177,6 +177,7 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 	planTaskIndex := agent.PlanTaskIndex(1)
 	planTaskStatus := agent.TaskStatusInProgress
 	consumedRevision := agent.PlanRevision(3)
+	attempt := int32(2)
 	service := &fakeAgentService{event: agent.StreamEvent{
 		Kind: agent.StreamEventKindActivity,
 		Activity: agent.AgentEvent{
@@ -188,6 +189,7 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 				QueuedMessageIDs: []agent.MessageID{"queued-1"}, SteeredMessageIDs: []agent.MessageID{"steered-1"},
 				PlanExecutionRevision: &consumedRevision,
 			},
+			Attempt: &attempt,
 		},
 		ResumeToken: "resume-1", CreatedAt: time.Unix(1, 0).UTC(), Source: "turn-1",
 	}}
@@ -211,6 +213,7 @@ func TestReadEventMapsTypedActivity(t *testing.T) {
 		activity.Value.PlanRevision.Or(0) != 4 ||
 		activity.Value.PlanTaskIndex.Or(-1) != 1 ||
 		activity.Value.PlanTaskStatus.Or("") != transportapi.TaskStatusInProgress ||
+		activity.Value.Attempt.Or(0) != 2 ||
 		!hasConsumption || len(consumption.QueuedMessageIds) != 1 || consumption.QueuedMessageIds[0] != "queued-1" ||
 		len(consumption.SteeredMessageIds) != 1 || consumption.SteeredMessageIds[0] != "steered-1" ||
 		consumption.PlanExecutionRevision.Or(0) != 3 {
@@ -280,6 +283,7 @@ func TestListRecentEventsMapsChronologicalTailAndConfiguredLimit(t *testing.T) {
 func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	t.Parallel()
 	createdAt := time.Unix(1, 0).UTC()
+	startedAt := createdAt.Add(-500 * time.Millisecond)
 	callID := agent.CallID("call-1")
 	toolName := agent.ToolName("lookup")
 	service := &fakeAgentService{snapshot: agent.AgentSnapshot{
@@ -292,6 +296,7 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 				ToolCalls:  []agent.ToolCall{{ID: callID, Name: toolName, Arguments: agent.MustJSONObject(`{"path":"README.md"}`)}},
 				ToolCallID: &callID,
 				ToolName:   &toolName,
+				StartedAt:  &startedAt,
 				CreatedAt:  createdAt,
 			},
 		}}},
@@ -302,7 +307,7 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 			SystemPrompt:               "be helpful",
 			FirstRetainedSequence:      1,
 			LastSequence:               1,
-			PendingApproval:            &agent.PendingApproval{CallID: callID, ToolName: toolName, Arguments: agent.MustJSONObject(`{"path":"README.md"}`)},
+			PendingApproval:            &agent.PendingApproval{CallID: callID, ToolName: toolName, Arguments: agent.MustJSONObject(`{"path":"README.md"}`), StartedAt: &startedAt},
 			Plan:                       &agent.AgentPlan{Revision: 1, Status: agent.PlanStatusDraft, Tasks: []agent.PlanTask{{Content: "inspect", Status: agent.TaskStatusPending}}},
 			PendingQueuedMessageCount:  1,
 			PendingSteeredMessageCount: 0,
@@ -336,11 +341,13 @@ func TestGetAgentSnapshotMapsAtomicDomainView(t *testing.T) {
 	message := snapshot.History.Messages[0].Message
 	if message.Role != transportapi.MessageRoleAssistant ||
 		message.CreatedAt != createdAt ||
+		message.StartedAt.Or(time.Time{}) != startedAt ||
 		message.ToolCalls[0].ArgumentsJson != `{"path":"README.md"}` {
 		t.Fatalf("Snapshot message = %#v", message)
 	}
 	description := snapshot.Description
-	if description.PendingApproval.IsNull() || description.Plan.IsNull() {
+	approval, hasApproval := description.PendingApproval.Get()
+	if !hasApproval || approval.StartedAt.Or(time.Time{}) != startedAt || description.Plan.IsNull() {
 		t.Fatalf("Snapshot description = %#v", snapshot.Description)
 	}
 }

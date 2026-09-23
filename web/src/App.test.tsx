@@ -572,7 +572,7 @@ describe("App", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("send failed");
   });
 
-  it("renders every Activity event inside the chronological conversation", async () => {
+  it("moves unassociated stream history into one earlier activity block", async () => {
     vi.mocked(getAgentSnapshot).mockResolvedValueOnce({
       ...snapshot,
       description: {
@@ -629,19 +629,17 @@ describe("App", () => {
 
     const history = await screen.findByLabelText("Conversation history");
     await within(history).findByText("Running local-tools.search.");
-    const content = history.textContent;
-    expect(content.indexOf("Start work")).toBeLessThan(
-      content.indexOf("Calling mock/reliable."),
-    );
-    expect(content.indexOf("Calling mock/reliable.")).toBeLessThan(
-      content.indexOf("Running local-tools.search."),
-    );
-    expect(content.indexOf("Running local-tools.search.")).toBeLessThan(
-      content.indexOf("Checked the available tools."),
-    );
-    expect(content.indexOf("Checked the available tools.")).toBeLessThan(
-      content.indexOf("Finished"),
-    );
+    expect(
+      within(history).getByText(/Earlier activity · 3 recovered events/),
+    ).toBeInTheDocument();
+    expect(
+      within(history).getByText("Calling mock/reliable."),
+    ).toBeInTheDocument();
+    expect(
+      within(history).getByText("Checked the available tools."),
+    ).toBeInTheDocument();
+    expect(within(history).getByText("Start work")).toBeInTheDocument();
+    expect(within(history).getByText("Finished")).toBeInTheDocument();
     expect(screen.queryByLabelText("Agent activity")).not.toBeInTheDocument();
   });
 

@@ -19,6 +19,7 @@ export interface TimelineMessage {
   toolCallId: string | null;
   toolName: string | null;
   createdAt: string;
+  startedAt?: string | null;
 }
 
 export interface TimelineSequencedMessage {
@@ -46,6 +47,7 @@ export interface TimelineActivityEvent {
   callId?: string | null;
   toolName?: string | null;
   messageSequence: number | null;
+  attempt?: number | null;
 }
 
 export interface TimelineActivityEntry {

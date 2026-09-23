@@ -56,6 +56,13 @@ func TestAgentToolRetryIntegration(t *testing.T) {
 		}
 		waitForCompletedToolTurnForTestOnly(t, environment, flowID, 4)
 		tools.assertAttemptsForTestOnly(t, []int32{1, 2, 3}, ToolOutcomeSucceeded)
+		assertRecentToolAttemptForTestOnly(t, environment.agent, flowID, 3)
+		for _, sequenced := range readSnapshot(t, environment, flowID).History.Messages {
+			message := sequenced.Message
+			if message.Role == MessageRoleTool && (message.StartedAt == nil || message.CreatedAt.Before(*message.StartedAt)) {
+				t.Fatalf("retried tool timing = %#v", message)
+			}
+		}
 	})
 
 	t.Run("known failure is not retried", func(t *testing.T) {
@@ -319,6 +326,9 @@ func TestAgentParallelToolsIntegration(t *testing.T) {
 	for _, message := range snapshot.History.Messages {
 		if message.Message.Role == MessageRoleTool && message.Message.ToolName != nil {
 			toolNames = append(toolNames, *message.Message.ToolName)
+			if message.Message.StartedAt == nil || message.Message.CreatedAt.Before(*message.Message.StartedAt) {
+				t.Fatalf("parallel tool timing = %#v", message.Message)
+			}
 		}
 	}
 	if !slices.Equal(toolNames, []ToolName{"parallel_read_a", "parallel_read_b"}) {
@@ -451,6 +461,11 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		latestSnapshot.History.NextBeforeSequence != nil {
 		t.Fatalf("latest Snapshot history = %#v", latestSnapshot.History)
 	}
+	if latestSnapshot.History.Messages[0].Message.StartedAt != nil ||
+		latestSnapshot.History.Messages[1].Message.StartedAt == nil ||
+		latestSnapshot.History.Messages[1].Message.CreatedAt.Before(*latestSnapshot.History.Messages[1].Message.StartedAt) {
+		t.Fatalf("initial message timing = %#v", latestSnapshot.History.Messages)
+	}
 	assertTextStream(t, environment.agent, flowID, EventStreamAssistant, "integration response: hello")
 	assertTextStream(t, environment.agent, flowID, EventStreamReasoning, "deterministic integration summary")
 	assertModelActivity(t, environment.agent, flowID, state.LastSequence)
@@ -481,13 +496,18 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	if approval.ToolName != integrationToolName {
 		t.Fatalf("pending tool = %q", approval.ToolName)
 	}
+	if approval.StartedAt == nil {
+		t.Fatal("pending approval started at is nil")
+	}
+	assertRecentActivityKindsForTestOnly(t, environment.agent, flowID, EventKindToolApprovalRequested)
 	if snapshotRequired.Activity.Message != "Durable interaction state changed." ||
 		snapshotRequired.Activity.InputConsumption != nil {
 		t.Fatalf("Snapshot control Activity = %#v", snapshotRequired.Activity)
 	}
 	environment.replaceWorker(t, flowID)
 	recoveredApproval := waitForPendingApproval(t, environment, flowID)
-	if recoveredApproval.CallID != approval.CallID || recoveredApproval.Arguments != approval.Arguments {
+	if recoveredApproval.CallID != approval.CallID || recoveredApproval.Arguments != approval.Arguments ||
+		recoveredApproval.StartedAt == nil || !recoveredApproval.StartedAt.Equal(*approval.StartedAt) {
 		t.Fatalf("approval changed across Worker replacement: got %#v, want %#v", recoveredApproval, approval)
 	}
 	if err := environment.agent.ApproveTool(t.Context(), flowID, ToolApprovalRequest{
@@ -507,6 +527,12 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	}
 	toolRegistry.assertCallsUseID(t, approval.CallID)
 	toolRegistry.assertInvocation(t, flowID, approval.CallID, runtimeMetadata)
+	assertRecentActivityKindsForTestOnly(t, environment.agent, flowID, EventKindToolApprovalResolved)
+	approvedSnapshot := readSnapshot(t, environment, flowID)
+	approvedToolMessage, found := findToolResultMessage(approvedSnapshot.History.Messages, approval.CallID)
+	if !found || approvedToolMessage.StartedAt == nil || approvedToolMessage.CreatedAt.Before(*approvedToolMessage.StartedAt) {
+		t.Fatalf("approved tool timing = %#v", approvedToolMessage)
+	}
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
 		t.Fatal(err)
@@ -563,16 +589,25 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingInput := waitForPendingUserInput(t, environment, flowID)
+	if pendingInput.StartedAt == nil {
+		t.Fatal("pending user input started at is nil")
+	}
+	assertRecentActivityKindsForTestOnly(t, environment.agent, flowID, EventKindUserInputRequested)
 	environment.replaceWorker(t, flowID)
 	if err := environment.agent.AnswerQuestions(t.Context(), flowID, answerRequest(pendingInput, "us-west")); err != nil {
 		t.Fatal(err)
 	}
 	waitForNoPendingUserInput(t, environment, flowID)
+	assertRecentActivityKindsForTestOnly(t, environment.agent, flowID, EventKindUserInputAnswered)
 
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
 		t.Fatal(err)
 	}
 	waitForPendingTimer(t, environment, flowID)
+	if timer := readSnapshot(t, environment, flowID).Description.PendingTimer; timer == nil || timer.StartedAt == nil {
+		t.Fatalf("pending timer timing = %#v", timer)
+	}
+	assertRecentActivityKindsForTestOnly(t, environment.agent, flowID, EventKindTimerStarted)
 	environment.replaceWorker(t, flowID)
 	stateBeforeQueue := readAgentState(t, environment, flowID)
 	if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "queued message"}); err != nil {
@@ -613,6 +648,7 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForNoPendingTimer(t, environment, flowID)
+	assertRecentActivityKindsForTestOnly(t, environment.agent, flowID, EventKindTimerResolved)
 	waitForQueuedMessages(t, environment, flowID, 0)
 	state = waitForAgentState(t, environment, flowID, func(state AgentState) bool {
 		return state.Status == AgentStatusWaitingForMessage && state.LastSequence > stateBeforeQueue.LastSequence
@@ -1945,6 +1981,16 @@ func historyContains(
 	return false
 }
 
+func findToolResultMessage(messages []SequencedMessage, callID CallID) (AgentMessage, bool) {
+	for _, sequenced := range messages {
+		message := sequenced.Message
+		if message.Role == MessageRoleTool && message.ToolCallID != nil && *message.ToolCallID == callID {
+			return message, true
+		}
+	}
+	return AgentMessage{}, false
+}
+
 func readApplicationMessage(
 	t *testing.T,
 	environment *agentIntegrationEnvironment,
@@ -2021,6 +2067,37 @@ func assertRecentActivityEvents(t *testing.T, client *Client, flowID FlowID) {
 	for index := 1; index < len(events); index++ {
 		if events[index].CreatedAt.Before(events[index-1].CreatedAt) {
 			t.Fatalf("activity events are not chronological: %#v", events)
+		}
+	}
+}
+
+func assertRecentToolAttemptForTestOnly(t *testing.T, client *Client, flowID FlowID, expected int32) {
+	t.Helper()
+	events, err := client.ListRecentEvents(t.Context(), flowID, EventStreamActivity, MaximumRecentEventLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Activity.Kind == EventKindToolProgress && event.Activity.Attempt != nil && *event.Activity.Attempt == expected {
+			return
+		}
+	}
+	t.Fatalf("tool attempt %d is missing from recent activity: %#v", expected, events)
+}
+
+func assertRecentActivityKindsForTestOnly(t *testing.T, client *Client, flowID FlowID, expected ...EventKind) {
+	t.Helper()
+	events, err := client.ListRecentEvents(t.Context(), flowID, EventStreamActivity, MaximumRecentEventLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := make(map[EventKind]bool, len(expected))
+	for _, event := range events {
+		found[event.Activity.Kind] = true
+	}
+	for _, kind := range expected {
+		if !found[kind] {
+			t.Fatalf("activity kind %q is missing from recent activity: %#v", kind, events)
 		}
 	}
 }
@@ -2780,7 +2857,7 @@ func waitForPendingToolRecoveryForTestOnly(
 			snapshot.Description.PendingToolRecovery.RecoveryID != previous
 	})
 	pending := snapshot.Description.PendingToolRecovery
-	if pending == nil || len(pending.Calls) != 1 {
+	if pending == nil || pending.StartedAt == nil || len(pending.Calls) != 1 {
 		t.Fatalf("pending recovery = %#v", pending)
 	}
 	return *pending

@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/superdurable/dex/sdk-go/dex"
 	"github.com/superdurable/superagent/internal/agent"
@@ -601,7 +602,18 @@ func transportAgentMessage(message agent.AgentMessage) (transportapi.AgentMessag
 		ToolCallId: toolCallID,
 		ToolName:   toolName,
 		CreatedAt:  message.CreatedAt,
+		StartedAt:  transportOptionalDateTime(message.StartedAt),
 	}, nil
+}
+
+func transportOptionalDateTime(value *time.Time) transportapi.OptNilDateTime {
+	result := transportapi.OptNilDateTime{}
+	if value == nil || value.IsZero() {
+		result.SetToNull()
+		return result
+	}
+	result.SetTo(value.UTC())
+	return result
 }
 
 func transportAgentDescription(description agent.AgentDescription) (transportapi.AgentDescription, error) {
@@ -658,6 +670,7 @@ func transportOptionalPendingToolRecovery(pending *agent.PendingToolRecovery) tr
 	result.SetTo(transportapi.PendingToolRecovery{
 		RecoveryId: string(pending.RecoveryID),
 		Calls:      calls,
+		StartedAt:  transportOptionalDateTime(pending.StartedAt),
 	})
 	return result
 }
@@ -686,6 +699,7 @@ func transportOptionalPendingApproval(pending *agent.PendingApproval) transporta
 		CallId:        transportapi.CallID(pending.CallID),
 		ToolName:      transportapi.ToolName(pending.ToolName),
 		ArgumentsJson: pending.Arguments.String(),
+		StartedAt:     transportOptionalDateTime(pending.StartedAt),
 	})
 	return result
 }
@@ -700,6 +714,7 @@ func transportOptionalPendingTimer(pending *agent.PendingTimer) transportapi.Nil
 		CallId:          transportapi.CallID(pending.CallID),
 		DurationSeconds: pending.DurationSeconds,
 		Reason:          pending.Reason,
+		StartedAt:       transportOptionalDateTime(pending.StartedAt),
 	})
 	return result
 }
@@ -729,6 +744,7 @@ func transportOptionalPendingUserInput(pending *agent.PendingUserInput) transpor
 	result.SetTo(transportapi.PendingUserInput{
 		CallId:    transportapi.CallID(pending.CallID),
 		Questions: questions,
+		StartedAt: transportOptionalDateTime(pending.StartedAt),
 	})
 	return result
 }
@@ -921,6 +937,12 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 			PlanExecutionRevision: planExecutionRevision,
 		})
 	}
+	attempt := transportapi.OptNilInt32{}
+	if event.Attempt == nil {
+		attempt.SetToNull()
+	} else {
+		attempt.SetTo(*event.Attempt)
+	}
 	return transportapi.AgentEvent{
 		Kind:             kind,
 		Message:          event.Message,
@@ -932,6 +954,7 @@ func transportActivity(event agent.AgentEvent) (transportapi.AgentEvent, error) 
 		PlanTaskIndex:    planTaskIndex,
 		PlanTaskStatus:   planTaskStatus,
 		InputConsumption: inputConsumption,
+		Attempt:          attempt,
 	}, nil
 }
 
@@ -947,6 +970,8 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindInputConsumed, nil
 	case agent.EventKindUserInputAnswered:
 		return transportapi.EventKindUserInputAnswered, nil
+	case agent.EventKindUserInputCancelled:
+		return transportapi.EventKindUserInputCancelled, nil
 	case agent.EventKindSnapshotRequired:
 		return transportapi.EventKindSnapshotRequired, nil
 	case agent.EventKindSteeringApplied:
@@ -965,6 +990,14 @@ func transportEventKind(kind agent.EventKind) (transportapi.EventKind, error) {
 		return transportapi.EventKindModelToolCall, nil
 	case agent.EventKindUserInputRequested:
 		return transportapi.EventKindUserInputRequested, nil
+	case agent.EventKindToolApprovalRequested:
+		return transportapi.EventKindToolApprovalRequested, nil
+	case agent.EventKindToolApprovalResolved:
+		return transportapi.EventKindToolApprovalResolved, nil
+	case agent.EventKindTimerStarted:
+		return transportapi.EventKindTimerStarted, nil
+	case agent.EventKindTimerResolved:
+		return transportapi.EventKindTimerResolved, nil
 	case agent.EventKindToolProgress:
 		return transportapi.EventKindToolProgress, nil
 	case agent.EventKindToolFailed:

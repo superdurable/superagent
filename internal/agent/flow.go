@@ -879,6 +879,18 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessag
 		return err
 	}
 	pendingCalls := append([]ToolCall(nil), state.PendingToolCalls[state.PendingToolIndex:]...)
+	pendingApproval, err := getPendingApproval(ctx)
+	if err != nil {
+		return err
+	}
+	pendingInput, err := getPendingUserInput(ctx)
+	if err != nil {
+		return err
+	}
+	pendingRecovery, err := getPendingToolRecovery(ctx)
+	if err != nil {
+		return err
+	}
 	state.Status = AgentStatusApplyingSteering
 	state.PendingToolCalls = []ToolCall{}
 	state.PendingToolIndex = 0
@@ -898,6 +910,38 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessag
 	}
 	if err := deletePendingUserInput(ctx); err != nil {
 		return err
+	}
+	if pendingInput != nil {
+		callID := pendingInput.CallID
+		if err := flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindUserInputCancelled, Message: "Pending user input was cancelled by steering.", CallID: &callID,
+		}); err != nil {
+			return err
+		}
+	}
+	if pendingApproval != nil {
+		callID := pendingApproval.CallID
+		toolName := pendingApproval.ToolName
+		if err := flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindToolApprovalResolved, Message: "Tool approval was interrupted by steering.",
+			CallID: &callID, ToolName: &toolName,
+		}); err != nil {
+			return err
+		}
+	}
+	if pendingRecovery != nil {
+		var callID *CallID
+		var toolName *ToolName
+		if len(pendingRecovery.Calls) > 0 {
+			callID = &pendingRecovery.Calls[0].CallID
+			toolName = &pendingRecovery.Calls[0].ToolName
+		}
+		if err := flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindToolRecoveryResolved, Message: "Manual tool recovery was interrupted by steering.",
+			CallID: callID, ToolName: toolName,
+		}); err != nil {
+			return err
+		}
 	}
 	for _, call := range pendingCalls {
 		result, err := encodeToolResult(toolResultPayload{
@@ -1046,7 +1090,9 @@ func (flow *Flow) appendMessage(ctx dex.Context, message AgentMessage) (Sequence
 		return 0, err
 	}
 	sequence := state.NextSequence
-	message.CreatedAt = time.Now().UTC()
+	if message.CreatedAt.IsZero() {
+		message.CreatedAt = time.Now().UTC()
+	}
 	if message.ToolCalls == nil {
 		message.ToolCalls = []ToolCall{}
 	}
@@ -1092,9 +1138,28 @@ func (*Flow) archiveCurrentMessages(ctx dex.Context, state *AgentState) error {
 	return nil
 }
 
-func (flow *Flow) appendToolResult(ctx dex.Context, call ToolCall, result ToolExecutionResult) error {
+type toolMessageTiming struct {
+	StartedAt   time.Time
+	CompletedAt time.Time
+}
+
+func (flow *Flow) appendToolResult(
+	ctx dex.Context,
+	call ToolCall,
+	result ToolExecutionResult,
+	timing ...toolMessageTiming,
+) error {
 	callID := call.ID
 	toolName := call.Name
+	var startedAt *time.Time
+	var completedAt time.Time
+	if len(timing) > 0 {
+		if !timing[0].StartedAt.IsZero() {
+			value := timing[0].StartedAt.UTC()
+			startedAt = &value
+		}
+		completedAt = timing[0].CompletedAt.UTC()
+	}
 	_, err := flow.appendMessage(ctx, AgentMessage{
 		Role:                 MessageRoleTool,
 		Content:              result.Content,
@@ -1102,6 +1167,8 @@ func (flow *Flow) appendToolResult(ctx dex.Context, call ToolCall, result ToolEx
 		ToolCallID:           &callID,
 		ToolName:             &toolName,
 		ProviderContextItems: []ProviderContextItem{},
+		StartedAt:            startedAt,
+		CreatedAt:            completedAt,
 	})
 	return err
 }
@@ -1741,6 +1808,7 @@ type parallelToolResult struct {
 	Result                ToolExecutionResult       `json:"result"`
 	ErrorType             string                    `json:"error_type,omitempty"`
 	RetryExhaustionPolicy ToolRetryExhaustionPolicy `json:"retry_exhaustion_policy"`
+	Timing                toolMessageTiming         `json:"timing"`
 }
 
 type toolBatchRecord struct {
@@ -1750,6 +1818,7 @@ type toolBatchRecord struct {
 	HasResult             bool                      `json:"has_result"`
 	ErrorType             string                    `json:"error_type,omitempty"`
 	RetryExhaustionPolicy ToolRetryExhaustionPolicy `json:"retry_exhaustion_policy"`
+	Timing                toolMessageTiming         `json:"timing"`
 }
 
 type toolBatchState struct {
@@ -2166,6 +2235,8 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		activityWriteFunc: step.flow.writeActivity,
 		messageSequence:   state.NextSequence,
 	}
+	modelStartedAt := ctx.FirstAttemptAt().UTC()
+	attempt := ctx.Attempt()
 	writeAssistant := func(chunk string) error {
 		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); heartbeatErr != nil {
 			return heartbeatErr
@@ -2178,7 +2249,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		return reasoningWriter.Write(chunk)
 	}
-	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + "."}); activityErr != nil {
+	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + ".", Attempt: &attempt}); activityErr != nil {
 		return nil, activityErr
 	}
 	messages, err := step.flow.contextMessages(ctx, config, state)
@@ -2196,7 +2267,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		FlowID:         FlowID(ctx.FlowID()),
 	})
 	if err != nil {
-		if eventErr := progress.writeActivity(AgentEvent{Kind: EventKindModelFailed, Message: "Model request failed."}); eventErr != nil {
+		if eventErr := progress.writeActivity(AgentEvent{Kind: EventKindModelFailed, Message: "Model request failed.", Attempt: &attempt}); eventErr != nil {
 			return nil, errors.Join(err, eventErr)
 		}
 		return nil, err
@@ -2209,6 +2280,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		Content:              reply.Content,
 		ToolCalls:            reply.ToolCalls,
 		ProviderContextItems: reply.ProviderContextItems,
+		StartedAt:            &modelStartedAt,
 	})
 	if appendErr != nil {
 		return nil, appendErr
@@ -2224,7 +2296,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		eventMessage = "Model requested: " + strings.Join(names, ", ")
 	}
-	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelCompleted, Message: eventMessage}); activityErr != nil {
+	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelCompleted, Message: eventMessage, Attempt: &attempt}); activityErr != nil {
 		return nil, activityErr
 	}
 	state, err = agentStateAttribute.Get(ctx)
@@ -2450,10 +2522,20 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 			}
 			return step.flow.continueAfterTool(ctx)
 		}
+		startedAt := ctx.FirstAttemptAt().UTC()
 		if err := pendingTimerAttribute.Set(ctx, PendingTimer{
 			CallID:          call.ID,
 			DurationSeconds: arguments.DurationSeconds,
 			Reason:          arguments.Reason,
+			StartedAt:       &startedAt,
+		}); err != nil {
+			return nil, err
+		}
+		callID := call.ID
+		toolName := call.Name
+		if err := step.flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindTimerStarted, Message: "Durable timer started.",
+			CallID: &callID, ToolName: &toolName,
 		}); err != nil {
 			return nil, err
 		}
@@ -2492,9 +2574,11 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 			}
 			return step.flow.continueAfterTool(ctx)
 		}
+		startedAt := ctx.FirstAttemptAt().UTC()
 		if err := pendingUserInputAttribute.Set(ctx, PendingUserInput{
 			CallID:    call.ID,
 			Questions: arguments.Questions,
+			StartedAt: &startedAt,
 		}); err != nil {
 			return nil, err
 		}
@@ -2536,10 +2620,20 @@ func (step routeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return dex.GoToMany(movements...), nil
 	}
 	if definition.RequiresApproval {
+		startedAt := ctx.FirstAttemptAt().UTC()
 		if err := pendingApprovalAttribute.Set(ctx, PendingApproval{
 			CallID:    call.ID,
 			ToolName:  call.Name,
 			Arguments: call.Arguments,
+			StartedAt: &startedAt,
+		}); err != nil {
+			return nil, err
+		}
+		callID := call.ID
+		toolName := call.Name
+		if err := step.flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindToolApprovalRequested, Message: "Tool approval requested.",
+			CallID: &callID, ToolName: &toolName,
 		}); err != nil {
 			return nil, err
 		}
@@ -2598,6 +2692,18 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 	if len(approvals) == 0 {
 		return nil, errors.New("the approval wait completed without a decision")
 	}
+	callID := call.ID
+	toolName := call.Name
+	resolutionMessage := "Tool approval rejected."
+	if approvals[0].Approved {
+		resolutionMessage = "Tool approval granted."
+	}
+	if activityErr := step.flow.writeActivity(ctx, AgentEvent{
+		Kind: EventKindToolApprovalResolved, Message: resolutionMessage,
+		CallID: &callID, ToolName: &toolName,
+	}); activityErr != nil {
+		return nil, activityErr
+	}
 	if deleteErr := pendingApprovalAttribute.Delete(ctx); deleteErr != nil && !isAttributeNotFound(deleteErr) {
 		return nil, deleteErr
 	}
@@ -2634,6 +2740,7 @@ func (flow *Flow) finishToolExecution(
 	ctx dex.Context,
 	call ToolCall,
 	result ToolExecutionResult,
+	timing ...toolMessageTiming,
 ) (continuation, error) {
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
@@ -2647,8 +2754,16 @@ func (flow *Flow) finishToolExecution(
 			Call:      call,
 			Result:    &resultCopy,
 			HasResult: true,
+			Timing:    firstToolMessageTiming(timing),
 		}},
 	})
+}
+
+func firstToolMessageTiming(values []toolMessageTiming) toolMessageTiming {
+	if len(values) == 0 {
+		return toolMessageTiming{}
+	}
+	return values[0]
 }
 
 func (flow *Flow) appendToolBatchResults(ctx dex.Context, batch toolBatchState) error {
@@ -2663,7 +2778,7 @@ func (flow *Flow) appendToolBatchResults(ctx dex.Context, batch toolBatchState) 
 		if err := record.Result.Outcome.Validate(); err != nil {
 			return fmt.Errorf("tool %q outcome: %w", record.Call.Name, err)
 		}
-		if err := flow.appendToolResult(ctx, record.Call, *record.Result); err != nil {
+		if err := flow.appendToolResult(ctx, record.Call, *record.Result, record.Timing); err != nil {
 			return err
 		}
 		if err := flow.writeToolTerminalActivity(ctx, record.Call, *record.Result); err != nil {
@@ -2788,7 +2903,10 @@ func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	if result.Outcome == ToolOutcomeUnknown {
 		return dex.GoTo(recoverToolExecutionStep{flow: step.flow}, nil), nil
 	}
-	next, finishErr := step.flow.finishToolExecution(ctx, call, result)
+	next, finishErr := step.flow.finishToolExecution(ctx, call, result, toolMessageTiming{
+		StartedAt:   ctx.FirstAttemptAt(),
+		CompletedAt: time.Now().UTC(),
+	})
 	if finishErr != nil {
 		return nil, finishErr
 	}
@@ -2895,6 +3013,10 @@ func (step executeParallelToolStep) Execute(
 		Result:                result,
 		ErrorType:             "",
 		RetryExhaustionPolicy: input.RetryExhaustionPolicy.Effective(),
+		Timing: toolMessageTiming{
+			StartedAt:   ctx.FirstAttemptAt(),
+			CompletedAt: time.Now().UTC(),
+		},
 	}); err != nil {
 		return nil, err
 	}
@@ -2988,6 +3110,7 @@ func (step awaitParallelToolResultsStep) Execute(
 			batch.Records[index].HasResult = true
 			batch.Records[index].ErrorType = result.ErrorType
 			batch.Records[index].RetryExhaustionPolicy = result.RetryExhaustionPolicy.Effective()
+			batch.Records[index].Timing = result.Timing
 			found = true
 			break
 		}
@@ -3080,6 +3203,8 @@ func (step awaitManualToolRecoveryStep) WaitFor(
 	batch toolBatchState,
 ) (*dex.Wait, error) {
 	pending := pendingToolRecovery(batch)
+	startedAt := ctx.FirstAttemptAt().UTC()
+	pending.StartedAt = &startedAt
 	if len(pending.Calls) == 0 {
 		return nil, errors.New("manual tool recovery has no unresolved calls")
 	}
@@ -3089,9 +3214,12 @@ func (step awaitManualToolRecoveryStep) WaitFor(
 	if err := step.flow.updateStatus(ctx, AgentStatusWaitingForToolRecovery); err != nil {
 		return nil, err
 	}
+	callID := pending.Calls[0].CallID
+	toolName := pending.Calls[0].ToolName
 	if err := step.flow.writeActivity(ctx, AgentEvent{
 		Kind:    EventKindToolRecoveryRequired,
 		Message: fmt.Sprintf("Manual recovery is required for %d tool call(s).", len(pending.Calls)),
+		CallID:  &callID, ToolName: &toolName,
 	}); err != nil {
 		return nil, err
 	}
@@ -3108,11 +3236,23 @@ func (step awaitManualToolRecoveryStep) Execute(
 	ctx dex.Context,
 	batch toolBatchState,
 ) (*dex.StepDecision, error) {
+	pending := pendingToolRecovery(batch)
+	if len(pending.Calls) == 0 {
+		return nil, errors.New("manual tool recovery has no unresolved calls")
+	}
+	callID := pending.Calls[0].CallID
+	toolName := pending.Calls[0].ToolName
 	steered, conditionErr := steeredUserMessagesChannel.GetConditionResults(ctx)
 	if conditionErr != nil {
 		return nil, conditionErr
 	}
 	if len(steered) > 0 {
+		if err := step.flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindToolRecoveryResolved, Message: "Manual tool recovery was interrupted by steering.",
+			CallID: &callID, ToolName: &toolName,
+		}); err != nil {
+			return nil, err
+		}
 		if err := deletePendingToolRecovery(ctx); err != nil {
 			return nil, err
 		}
@@ -3147,6 +3287,7 @@ func (step awaitManualToolRecoveryStep) Execute(
 	if err := step.flow.writeActivity(ctx, AgentEvent{
 		Kind:    EventKindToolRecoveryResolved,
 		Message: fmt.Sprintf("Resolved manual tool recovery %s.", request.Resolution),
+		CallID:  &callID, ToolName: &toolName,
 	}); err != nil {
 		return nil, err
 	}
@@ -3348,6 +3489,14 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, err
 	}
 	if len(steered) > 0 {
+		callID := call.ID
+		toolName := call.Name
+		if err := step.flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindTimerResolved, Message: "Durable timer interrupted.",
+			CallID: &callID, ToolName: &toolName,
+		}); err != nil {
+			return nil, err
+		}
 		result, encodeErr := encodeToolResult(toolResultPayload{
 			Status: toolResultStatusInterrupted,
 			Error:  toolErrorSupersededBySteering,
@@ -3376,6 +3525,14 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 	}, ToolOutcomeSucceeded, false)
 	if encodeErr != nil {
 		return nil, encodeErr
+	}
+	callID := call.ID
+	toolName := call.Name
+	if err := step.flow.writeActivity(ctx, AgentEvent{
+		Kind: EventKindTimerResolved, Message: "Durable timer completed.",
+		CallID: &callID, ToolName: &toolName,
+	}); err != nil {
+		return nil, err
 	}
 	if err := step.flow.appendToolResult(ctx, call, result); err != nil {
 		return nil, err
@@ -3417,12 +3574,14 @@ func (progress toolProgress) write(message string) error {
 	}
 	callID := progress.call.ID
 	toolName := progress.call.Name
+	attempt := progress.ctx.Attempt()
 	// Streams are disposable; heartbeat failure still cancels the tool call.
 	_ = progress.flow.writeActivity(progress.ctx, AgentEvent{
 		Kind:     EventKindToolProgress,
 		Message:  toolProgressMessage(progress.call.Name, message),
 		CallID:   &callID,
 		ToolName: &toolName,
+		Attempt:  &attempt,
 	})
 	return nil
 }

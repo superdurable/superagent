@@ -345,6 +345,7 @@ type AgentEvent struct {
 	PlanTaskStatus OptNilTaskStatus `json:"planTaskStatus"`
 	// Exact durable inputs consumed at this boundary, or null for unrelated activity.
 	InputConsumption NilInputConsumption `json:"inputConsumption"`
+	Attempt          OptNilInt32         `json:"attempt"`
 }
 
 // GetKind returns the value of Kind.
@@ -397,6 +398,11 @@ func (s *AgentEvent) GetInputConsumption() NilInputConsumption {
 	return s.InputConsumption
 }
 
+// GetAttempt returns the value of Attempt.
+func (s *AgentEvent) GetAttempt() OptNilInt32 {
+	return s.Attempt
+}
+
 // SetKind sets the value of Kind.
 func (s *AgentEvent) SetKind(val EventKind) {
 	s.Kind = val
@@ -447,14 +453,20 @@ func (s *AgentEvent) SetInputConsumption(val NilInputConsumption) {
 	s.InputConsumption = val
 }
 
+// SetAttempt sets the value of Attempt.
+func (s *AgentEvent) SetAttempt(val OptNilInt32) {
+	s.Attempt = val
+}
+
 // Ref: #/components/schemas/AgentMessage
 type AgentMessage struct {
-	Role       MessageRole `json:"role"`
-	Content    string      `json:"content"`
-	ToolCalls  []ToolCall  `json:"toolCalls"`
-	ToolCallId NilCallID   `json:"toolCallId"`
-	ToolName   NilToolName `json:"toolName"`
-	CreatedAt  time.Time   `json:"createdAt"`
+	Role       MessageRole    `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []ToolCall     `json:"toolCalls"`
+	ToolCallId NilCallID      `json:"toolCallId"`
+	ToolName   NilToolName    `json:"toolName"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	StartedAt  OptNilDateTime `json:"startedAt"`
 }
 
 // GetRole returns the value of Role.
@@ -487,6 +499,11 @@ func (s *AgentMessage) GetCreatedAt() time.Time {
 	return s.CreatedAt
 }
 
+// GetStartedAt returns the value of StartedAt.
+func (s *AgentMessage) GetStartedAt() OptNilDateTime {
+	return s.StartedAt
+}
+
 // SetRole sets the value of Role.
 func (s *AgentMessage) SetRole(val MessageRole) {
 	s.Role = val
@@ -515,6 +532,11 @@ func (s *AgentMessage) SetToolName(val NilToolName) {
 // SetCreatedAt sets the value of CreatedAt.
 func (s *AgentMessage) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *AgentMessage) SetStartedAt(val OptNilDateTime) {
+	s.StartedAt = val
 }
 
 // Ref: #/components/schemas/AgentPlan
@@ -924,25 +946,30 @@ func (*DeleteQueuedMessageServiceUnavailable) deleteQueuedMessageRes() {}
 type EventKind string
 
 const (
-	EventKindPlanStarted          EventKind = "plan_started"
-	EventKindPlanUpdated          EventKind = "plan_updated"
-	EventKindPlanTaskUpdated      EventKind = "plan_task_updated"
-	EventKindInputConsumed        EventKind = "input_consumed"
-	EventKindUserInputAnswered    EventKind = "user_input_answered"
-	EventKindSnapshotRequired     EventKind = "snapshot_required"
-	EventKindSteeringApplied      EventKind = "steering_applied"
-	EventKindCompactionFailed     EventKind = "compaction_failed"
-	EventKindCompacted            EventKind = "compacted"
-	EventKindModelStarted         EventKind = "model_started"
-	EventKindModelFailed          EventKind = "model_failed"
-	EventKindModelCompleted       EventKind = "model_completed"
-	EventKindModelToolCall        EventKind = "model_tool_call"
-	EventKindUserInputRequested   EventKind = "user_input_requested"
-	EventKindToolProgress         EventKind = "tool_progress"
-	EventKindToolFailed           EventKind = "tool_failed"
-	EventKindToolCompleted        EventKind = "tool_completed"
-	EventKindToolRecoveryRequired EventKind = "tool_recovery_required"
-	EventKindToolRecoveryResolved EventKind = "tool_recovery_resolved"
+	EventKindPlanStarted           EventKind = "plan_started"
+	EventKindPlanUpdated           EventKind = "plan_updated"
+	EventKindPlanTaskUpdated       EventKind = "plan_task_updated"
+	EventKindInputConsumed         EventKind = "input_consumed"
+	EventKindUserInputAnswered     EventKind = "user_input_answered"
+	EventKindUserInputCancelled    EventKind = "user_input_cancelled"
+	EventKindSnapshotRequired      EventKind = "snapshot_required"
+	EventKindSteeringApplied       EventKind = "steering_applied"
+	EventKindCompactionFailed      EventKind = "compaction_failed"
+	EventKindCompacted             EventKind = "compacted"
+	EventKindModelStarted          EventKind = "model_started"
+	EventKindModelFailed           EventKind = "model_failed"
+	EventKindModelCompleted        EventKind = "model_completed"
+	EventKindModelToolCall         EventKind = "model_tool_call"
+	EventKindUserInputRequested    EventKind = "user_input_requested"
+	EventKindToolApprovalRequested EventKind = "tool_approval_requested"
+	EventKindToolApprovalResolved  EventKind = "tool_approval_resolved"
+	EventKindTimerStarted          EventKind = "timer_started"
+	EventKindTimerResolved         EventKind = "timer_resolved"
+	EventKindToolProgress          EventKind = "tool_progress"
+	EventKindToolFailed            EventKind = "tool_failed"
+	EventKindToolCompleted         EventKind = "tool_completed"
+	EventKindToolRecoveryRequired  EventKind = "tool_recovery_required"
+	EventKindToolRecoveryResolved  EventKind = "tool_recovery_resolved"
 )
 
 // AllValues returns all EventKind values.
@@ -953,6 +980,7 @@ func (EventKind) AllValues() []EventKind {
 		EventKindPlanTaskUpdated,
 		EventKindInputConsumed,
 		EventKindUserInputAnswered,
+		EventKindUserInputCancelled,
 		EventKindSnapshotRequired,
 		EventKindSteeringApplied,
 		EventKindCompactionFailed,
@@ -962,6 +990,10 @@ func (EventKind) AllValues() []EventKind {
 		EventKindModelCompleted,
 		EventKindModelToolCall,
 		EventKindUserInputRequested,
+		EventKindToolApprovalRequested,
+		EventKindToolApprovalResolved,
+		EventKindTimerStarted,
+		EventKindTimerResolved,
 		EventKindToolProgress,
 		EventKindToolFailed,
 		EventKindToolCompleted,
@@ -983,6 +1015,8 @@ func (s EventKind) MarshalText() ([]byte, error) {
 		return []byte(s), nil
 	case EventKindUserInputAnswered:
 		return []byte(s), nil
+	case EventKindUserInputCancelled:
+		return []byte(s), nil
 	case EventKindSnapshotRequired:
 		return []byte(s), nil
 	case EventKindSteeringApplied:
@@ -1000,6 +1034,14 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindModelToolCall:
 		return []byte(s), nil
 	case EventKindUserInputRequested:
+		return []byte(s), nil
+	case EventKindToolApprovalRequested:
+		return []byte(s), nil
+	case EventKindToolApprovalResolved:
+		return []byte(s), nil
+	case EventKindTimerStarted:
+		return []byte(s), nil
+	case EventKindTimerResolved:
 		return []byte(s), nil
 	case EventKindToolProgress:
 		return []byte(s), nil
@@ -1034,6 +1076,9 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 	case EventKindUserInputAnswered:
 		*s = EventKindUserInputAnswered
 		return nil
+	case EventKindUserInputCancelled:
+		*s = EventKindUserInputCancelled
+		return nil
 	case EventKindSnapshotRequired:
 		*s = EventKindSnapshotRequired
 		return nil
@@ -1060,6 +1105,18 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindUserInputRequested:
 		*s = EventKindUserInputRequested
+		return nil
+	case EventKindToolApprovalRequested:
+		*s = EventKindToolApprovalRequested
+		return nil
+	case EventKindToolApprovalResolved:
+		*s = EventKindToolApprovalResolved
+		return nil
+	case EventKindTimerStarted:
+		*s = EventKindTimerStarted
+		return nil
+	case EventKindTimerResolved:
+		*s = EventKindTimerResolved
 		return nil
 	case EventKindToolProgress:
 		*s = EventKindToolProgress
@@ -2066,6 +2123,74 @@ func (o OptInt) Or(d int) int {
 	return d
 }
 
+// NewOptNilDateTime returns new OptNilDateTime with value set to v.
+func NewOptNilDateTime(v time.Time) OptNilDateTime {
+	return OptNilDateTime{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilDateTime is optional nullable time.Time.
+type OptNilDateTime struct {
+	Value time.Time
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilDateTime was set.
+func (o OptNilDateTime) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilDateTime) Reset() {
+	var v time.Time
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilDateTime) SetTo(v time.Time) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilDateTime) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilDateTime) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v time.Time
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilDateTime) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilDateTime) Get() (v time.Time, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilDateTime) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilInt returns new OptNilInt with value set to v.
 func NewOptNilInt(v int) OptNilInt {
 	return OptNilInt{
@@ -2128,6 +2253,74 @@ func (o OptNilInt) Get() (v int, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilInt32 returns new OptNilInt32 with value set to v.
+func NewOptNilInt32(v int32) OptNilInt32 {
+	return OptNilInt32{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt32 is optional nullable int32.
+type OptNilInt32 struct {
+	Value int32
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt32 was set.
+func (o OptNilInt32) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt32) Reset() {
+	var v int32
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt32) SetTo(v int32) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt32) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt32) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int32
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt32) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt32) Get() (v int32, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt32) Or(d int32) int32 {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2432,9 +2625,10 @@ func (o OptString) Or(d string) string {
 
 // Ref: #/components/schemas/PendingApproval
 type PendingApproval struct {
-	CallId        CallID   `json:"callId"`
-	ToolName      ToolName `json:"toolName"`
-	ArgumentsJson string   `json:"argumentsJson"`
+	CallId        CallID         `json:"callId"`
+	ToolName      ToolName       `json:"toolName"`
+	ArgumentsJson string         `json:"argumentsJson"`
+	StartedAt     OptNilDateTime `json:"startedAt"`
 }
 
 // GetCallId returns the value of CallId.
@@ -2452,6 +2646,11 @@ func (s *PendingApproval) GetArgumentsJson() string {
 	return s.ArgumentsJson
 }
 
+// GetStartedAt returns the value of StartedAt.
+func (s *PendingApproval) GetStartedAt() OptNilDateTime {
+	return s.StartedAt
+}
+
 // SetCallId sets the value of CallId.
 func (s *PendingApproval) SetCallId(val CallID) {
 	s.CallId = val
@@ -2467,11 +2666,17 @@ func (s *PendingApproval) SetArgumentsJson(val string) {
 	s.ArgumentsJson = val
 }
 
+// SetStartedAt sets the value of StartedAt.
+func (s *PendingApproval) SetStartedAt(val OptNilDateTime) {
+	s.StartedAt = val
+}
+
 // Ref: #/components/schemas/PendingTimer
 type PendingTimer struct {
-	CallId          CallID `json:"callId"`
-	DurationSeconds int64  `json:"durationSeconds"`
-	Reason          string `json:"reason"`
+	CallId          CallID         `json:"callId"`
+	DurationSeconds int64          `json:"durationSeconds"`
+	Reason          string         `json:"reason"`
+	StartedAt       OptNilDateTime `json:"startedAt"`
 }
 
 // GetCallId returns the value of CallId.
@@ -2489,6 +2694,11 @@ func (s *PendingTimer) GetReason() string {
 	return s.Reason
 }
 
+// GetStartedAt returns the value of StartedAt.
+func (s *PendingTimer) GetStartedAt() OptNilDateTime {
+	return s.StartedAt
+}
+
 // SetCallId sets the value of CallId.
 func (s *PendingTimer) SetCallId(val CallID) {
 	s.CallId = val
@@ -2504,10 +2714,16 @@ func (s *PendingTimer) SetReason(val string) {
 	s.Reason = val
 }
 
+// SetStartedAt sets the value of StartedAt.
+func (s *PendingTimer) SetStartedAt(val OptNilDateTime) {
+	s.StartedAt = val
+}
+
 // Ref: #/components/schemas/PendingToolRecovery
 type PendingToolRecovery struct {
 	RecoveryId string                    `json:"recoveryId"`
 	Calls      []PendingToolRecoveryCall `json:"calls"`
+	StartedAt  OptNilDateTime            `json:"startedAt"`
 }
 
 // GetRecoveryId returns the value of RecoveryId.
@@ -2520,6 +2736,11 @@ func (s *PendingToolRecovery) GetCalls() []PendingToolRecoveryCall {
 	return s.Calls
 }
 
+// GetStartedAt returns the value of StartedAt.
+func (s *PendingToolRecovery) GetStartedAt() OptNilDateTime {
+	return s.StartedAt
+}
+
 // SetRecoveryId sets the value of RecoveryId.
 func (s *PendingToolRecovery) SetRecoveryId(val string) {
 	s.RecoveryId = val
@@ -2528,6 +2749,11 @@ func (s *PendingToolRecovery) SetRecoveryId(val string) {
 // SetCalls sets the value of Calls.
 func (s *PendingToolRecovery) SetCalls(val []PendingToolRecoveryCall) {
 	s.Calls = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *PendingToolRecovery) SetStartedAt(val OptNilDateTime) {
+	s.StartedAt = val
 }
 
 // Ref: #/components/schemas/PendingToolRecoveryCall
@@ -2582,6 +2808,7 @@ func (s *PendingToolRecoveryCall) SetErrorType(val string) {
 type PendingUserInput struct {
 	CallId    CallID              `json:"callId"`
 	Questions []UserInputQuestion `json:"questions"`
+	StartedAt OptNilDateTime      `json:"startedAt"`
 }
 
 // GetCallId returns the value of CallId.
@@ -2594,6 +2821,11 @@ func (s *PendingUserInput) GetQuestions() []UserInputQuestion {
 	return s.Questions
 }
 
+// GetStartedAt returns the value of StartedAt.
+func (s *PendingUserInput) GetStartedAt() OptNilDateTime {
+	return s.StartedAt
+}
+
 // SetCallId sets the value of CallId.
 func (s *PendingUserInput) SetCallId(val CallID) {
 	s.CallId = val
@@ -2602,6 +2834,11 @@ func (s *PendingUserInput) SetCallId(val CallID) {
 // SetQuestions sets the value of Questions.
 func (s *PendingUserInput) SetQuestions(val []UserInputQuestion) {
 	s.Questions = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *PendingUserInput) SetStartedAt(val OptNilDateTime) {
+	s.StartedAt = val
 }
 
 // Ref: #/components/schemas/PendingUserMessage

@@ -7,7 +7,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { ConversationTimeline } from "./ConversationTimeline";
+import { ConversationTimeline } from "./ConversationTimelineView.js";
 import { ToolCallCard } from "./ToolCallCard";
 
 describe("ConversationTimeline", () => {

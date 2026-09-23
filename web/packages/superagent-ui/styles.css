@@ -829,8 +829,140 @@
   background: var(--sa-danger-background, #fff0ee) !important;
 }
 
+.sa-conversation-view,
+.sa-conversation-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sa-conversation-user {
+  align-self: flex-end;
+  max-width: 92%;
+  white-space: pre-wrap;
+  border-radius: 10px 10px 3px 10px;
+  padding: 9px 12px;
+  background: var(--sa-raised-background, #eef2e8);
+}
+
+.sa-work-log,
+.sa-earlier-activity,
+.sa-work-item,
+.sa-work-repeat,
+.sa-live-assistant,
+.sa-stream-status {
+  border: 1px solid var(--sa-border-color, #d8dfd2);
+  border-radius: 9px;
+  background: var(--sa-panel-background, #fff);
+}
+
+.sa-work-log--failed {
+  border-color: var(--sa-danger-color, #9b2c25);
+}
+
+.sa-work-log > summary,
+.sa-work-item > summary,
+.sa-work-repeat > summary,
+.sa-work-item__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa-work-log > summary {
+  cursor: pointer;
+  padding: 10px 12px;
+}
+
+.sa-work-log__durations {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sa-work-log__body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  border-top: 1px solid var(--sa-border-color, #d8dfd2);
+  padding: 12px;
+}
+
+.sa-work-item,
+.sa-work-repeat {
+  padding: 9px 11px;
+}
+
+.sa-work-item pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sa-operation-status {
+  border: 1px solid var(--sa-border-color, #d8dfd2);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.sa-operation-status--failed {
+  color: var(--sa-danger-color, #9b2c25);
+  border-color: currentColor;
+}
+
+.sa-duration,
+.sa-progress-count {
+  color: var(--sa-faint-color, #8b93a7);
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+
+.sa-running-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--sa-accent-color, #5d6d35);
+  animation: sa-running-pulse 1.4s ease-in-out infinite;
+}
+
+.sa-live-assistant,
+.sa-stream-status,
+.sa-earlier-activity {
+  padding: 10px 12px;
+}
+
+.sa-stream-status {
+  color: var(--sa-warning-color, #72510d);
+  background: var(--sa-warning-background, #fff8e6);
+  animation: none;
+  transition: none;
+}
+
+@keyframes sa-running-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 560px) {
+  .sa-work-log__durations {
+    width: 100%;
+    margin-left: 16px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sa-queue-action--steer {
     transition: none;
+  }
+  .sa-running-indicator {
+    animation: none;
   }
 }

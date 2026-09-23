@@ -11,21 +11,16 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type SyntheticEvent,
 } from "react";
 import {
-  ActivityRow,
   ApprovalCard,
   ConversationComposer,
-  ConversationTimeline,
+  ConversationView as SharedConversationView,
   PendingMessageQueue,
   PendingQuestionBatch,
   TimerCard,
   ToolCallCard,
   ToolRecoveryPanel,
-  indexToolResultsByCallId,
-  isPairedToolResultMessage,
-  pairToolCallsById,
   planActionPresentation as sharedPlanActionPresentation,
   useTimelineFollow,
   type PendingMessageQueueItem,
@@ -118,8 +113,28 @@ export function ConversationView({
     description.plan !== null;
   const timelineMessages = snapshot.history
     .messages as TimelineSequencedMessage[];
-  const { pairedToolCallIds } = pairToolCallsById(timelineMessages);
-  const toolResultsByCallId = indexToolResultsByCallId(timelineMessages);
+  const pendingWaits = [
+    description.pendingApproval && {
+      kind: "approval" as const,
+      callId: description.pendingApproval.callId,
+      startedAt: description.pendingApproval.startedAt ?? null,
+    },
+    description.pendingUserInput && {
+      kind: "question" as const,
+      callId: description.pendingUserInput.callId,
+      startedAt: description.pendingUserInput.startedAt ?? null,
+    },
+    description.pendingTimer && {
+      kind: "timer" as const,
+      callId: description.pendingTimer.callId,
+      startedAt: description.pendingTimer.startedAt ?? null,
+    },
+    description.pendingToolRecovery && {
+      kind: "recovery" as const,
+      callId: description.pendingToolRecovery.calls[0]?.callId ?? null,
+      startedAt: description.pendingToolRecovery.startedAt ?? null,
+    },
+  ].filter((value) => value !== null);
   const liveContentVersion = [
     String(state.activities.length),
     state.activities.at(-1)?.resumeToken ?? "",
@@ -237,81 +252,43 @@ export function ConversationView({
                   </p>
                 </div>
               )}
-            <ConversationTimeline
-              className="sa-conversation-timeline conversation-timeline"
+            <SharedConversationView
+              className="sa-conversation-view conversation-timeline"
               messages={timelineMessages}
               consumedUserMessages={state.consumedUserMessages}
               reasoning={state.reasoning}
               activities={state.activities}
               assistant={state.assistant}
-              renderConsumedUser={(entry) => (
-                <article
-                  className="message-bubble user"
-                  key={`consumed-user:${entry.messageId}`}
-                >
-                  <div className="message-meta">
-                    <strong>User</strong>
-                    <time dateTime={entry.createdAt}>
-                      {formatTime(entry.createdAt)}
-                    </time>
-                  </div>
-                  <p>{entry.value.content}</p>
-                </article>
-              )}
-              renderReasoning={(entry) => (
-                <details
-                  className="reasoning-card"
-                  key={`reasoning:${entry.source}`}
-                  open={!entry.isComplete}
-                  onToggle={revealOpenedDetails}
-                >
-                  <summary>
-                    Reasoning summary ·{" "}
-                    <time dateTime={entry.createdAt}>
-                      {formatTime(entry.createdAt)}
-                    </time>{" "}
-                    · {entry.isComplete ? "Complete" : "Streaming"}
-                  </summary>
-                  <RichText value={entry.value} />
-                </details>
-              )}
-              renderActivity={(entry) => (
-                <ActivityRow
-                  key={`activity:${entry.resumeToken}`}
-                  className={`sa-activity-row activity-entry ${entry.value.kind}`}
-                  kind={entry.value.kind}
-                  message={entry.value.message}
-                  createdAt={entry.createdAt}
-                  toolName={entry.value.toolName ?? null}
+              pendingWaits={pendingWaits}
+              isModelRunning={description.status === AgentStatus.CALLING_MODEL}
+              streamState={
+                state.connection === "stale"
+                  ? "disconnected"
+                  : state.assistant !== null && !state.assistant.isComplete
+                    ? "streaming"
+                    : "complete"
+              }
+              renderToolCall={(item) => (
+                <ToolCallCard
+                  call={item.call}
+                  result={
+                    item.result
+                      ? {
+                          content: item.result.message.content,
+                          toolName: item.result.message.toolName,
+                          sequence: item.result.sequence,
+                          createdAt: item.result.message.createdAt,
+                        }
+                      : null
+                  }
                 />
               )}
-              renderAssistant={(entry) => (
-                <article
-                  className="message-bubble assistant live-message"
-                  key={`assistant:${entry.source}`}
-                >
-                  <div className="message-meta">
-                    <strong>Assistant</strong>
-                    <span>
-                      {formatTime(entry.createdAt)} ·{" "}
-                      {entry.isComplete ? "Finalizing" : "Streaming"}
-                    </span>
-                  </div>
-                  <RichText value={entry.value} />
-                </article>
-              )}
               renderMessage={({ sequence, message }) => {
-                if (isPairedToolResultMessage(message, pairedToolCallIds)) {
-                  return null;
-                }
-                const visibleToolCalls = message.toolCalls.filter(
-                  (call) => !builtInToolNames.has(call.name),
-                );
                 if (
                   (message.role === MessageRole.TOOL &&
                     message.toolName !== null &&
                     builtInToolNames.has(message.toolName)) ||
-                  (message.content === "" && visibleToolCalls.length === 0)
+                  message.content === ""
                 ) {
                   return null;
                 }
@@ -332,13 +309,6 @@ export function ConversationView({
                       ) : (
                         <p>{message.content}</p>
                       ))}
-                    {visibleToolCalls.map((call) => (
-                      <ToolCallCard
-                        key={call.id}
-                        call={call}
-                        result={toolResultsByCallId.get(call.id) ?? null}
-                      />
-                    ))}
                   </article>
                 );
               }}
@@ -825,14 +795,6 @@ function useArchiveScroll(
       window.scrollBy({ top: addedHeight, behavior: "auto" });
     previousHeight.current = null;
   }, [isLoading, messageCount]);
-}
-
-function revealOpenedDetails(event: SyntheticEvent<HTMLDetailsElement>) {
-  const details = event.currentTarget;
-  if (!details.open) return;
-  window.requestAnimationFrame(() => {
-    details.scrollIntoView({ block: "nearest" });
-  });
 }
 
 function RichText({ value }: { value: string }) {

@@ -54,6 +54,21 @@ assistant into one chronologically ordered list. `ConversationTimeline` applies 
 `renderConsumedUser`) so Studio can keep its own markup while sharing sort
 logic.
 
+`buildConversationPresentation` and `ConversationView` provide the higher-level
+conversation-first surface. Durable Messages define turns, model invocations,
+tool calls, results, repeated calls, and completed timing. Snapshot pending
+state supplies current waits; best-effort activity and assistant text Streams
+only enrich the view with progress, attempts, failures, and live output. The
+optional reasoning input exists for legacy or explicitly enabled producers;
+the presentation does not require a reasoning Stream. Every turn has one
+collapsed Work log, so losing retained Stream events never destroys the durable
+conversation structure.
+
+Completed model and tool duration is `createdAt - startedAt`. Missing or
+negative legacy timing is omitted. Running durations update once per second but
+are excluded from live-region announcements. Stream timestamps remain ordering
+metadata and are never rendered as stream duration.
+
 ## Tool call cards
 
 `pairToolCallsById` joins assistant `toolCalls` to `role=tool` messages by call

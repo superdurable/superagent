@@ -1,0 +1,304 @@
+/*
+ * Copyright (c) 2026 Super Durable, Inc.
+ * Licensed under the Apache License, Version 2.0.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  buildConversationPresentation,
+  formatDuration,
+  toolCallFingerprint,
+  unionDuration,
+} from "./conversationPresentation.js";
+import type {
+  TimelineActivityEntry,
+  TimelineSequencedMessage,
+} from "./conversationTimeline.js";
+
+const base = Date.parse("2026-09-23T12:00:00Z");
+const iso = (offset: number) => new Date(base + offset).toISOString();
+
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("expected test value");
+  return value;
+}
+
+function message(
+  sequence: number,
+  role: "user" | "assistant" | "tool",
+  content: string,
+  options: Partial<TimelineSequencedMessage["message"]> = {},
+): TimelineSequencedMessage {
+  return {
+    sequence,
+    message: {
+      role,
+      content,
+      toolCalls: [],
+      toolCallId: null,
+      toolName: null,
+      createdAt: iso(sequence * 1_000),
+      ...options,
+    },
+  };
+}
+
+describe("conversation presentation", () => {
+  it("builds model and tool work from durable messages", () => {
+    const messages = [
+      message(1, "user", "change it"),
+      message(2, "assistant", "", {
+        startedAt: iso(1_100),
+        createdAt: iso(2_000),
+        toolCalls: [
+          { id: "call-1", name: "read_file", argumentsJson: '{"b":2,"a":1}' },
+        ],
+      }),
+      message(3, "tool", "done", {
+        startedAt: iso(2_100),
+        createdAt: iso(4_100),
+        toolCallId: "call-1",
+        toolName: "read_file",
+      }),
+      message(4, "assistant", "finished", {
+        startedAt: iso(4_200),
+        createdAt: iso(5_000),
+      }),
+    ];
+    const view = buildConversationPresentation({ messages }, base + 6_000);
+    expect(view.turns).toHaveLength(1);
+    const turn = required(view.turns[0]);
+    expect(turn.models).toHaveLength(2);
+    expect(required(required(turn.tools[0]).calls[0]).durationMs).toBe(2_000);
+    expect(turn.messages.map((entry) => entry.message.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("aggregates progress and retries by call id", () => {
+    const activities: TimelineActivityEntry[] = [
+      {
+        resumeToken: "started",
+        source: "tool-source",
+        createdAt: iso(1_000),
+        value: {
+          kind: "model_tool_call",
+          message: "started",
+          callId: "call-1",
+          toolName: "exec_long_command",
+          messageSequence: 2,
+          attempt: 1,
+        },
+      },
+      ...Array.from({ length: 111 }, (_, index) => ({
+        resumeToken: `r-${String(index)}`,
+        source: "tool-source",
+        createdAt: iso(index),
+        value: {
+          kind: "tool_progress",
+          message: "working",
+          callId: "call-1",
+          toolName: "exec_long_command",
+          messageSequence: 2,
+          attempt: index === 110 ? 3 : 1,
+        },
+      })),
+    ];
+    const messages = [
+      message(1, "user", "run"),
+      message(2, "assistant", "", {
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "exec_long_command",
+            argumentsJson: '{"command":"make"}',
+          },
+        ],
+      }),
+    ];
+    const turnValue = buildConversationPresentation(
+      { messages, activities },
+      base + 120_000,
+    ).turns[0];
+    const turn = required(turnValue);
+    const item = required(required(turn.tools[0]).calls[0]);
+    expect(turn.models).toHaveLength(1);
+    expect(item.progressCount).toBe(111);
+    expect(item.attemptCount).toBe(3);
+    expect(item.status).toBe("running");
+    expect(item.durationMs).toBe(119_000);
+  });
+
+  it("attaches an in-flight or failed next model invocation to the current turn", () => {
+    const messages = [message(1, "user", "continue")];
+    const started: TimelineActivityEntry = {
+      resumeToken: "model-started",
+      source: "model-next",
+      createdAt: iso(2_000),
+      value: {
+        kind: "model_started",
+        message: "Calling model.",
+        messageSequence: 2,
+        attempt: 1,
+      },
+    };
+    const running = buildConversationPresentation(
+      { messages, activities: [started], isModelRunning: true },
+      base + 5_000,
+    );
+    const runningTurn = required(running.turns[0]);
+    expect(running.earlierActivity).toHaveLength(0);
+    expect(required(runningTurn.models[0]).status).toBe("running");
+    expect(required(runningTurn.models[0]).durationMs).toBe(3_000);
+    expect(runningTurn.durationMs).toBe(4_000);
+
+    const failed = buildConversationPresentation(
+      {
+        messages,
+        activities: [
+          started,
+          {
+            resumeToken: "model-failed",
+            source: "model-next",
+            createdAt: iso(4_000),
+            value: {
+              kind: "model_failed",
+              message: "Model failed.",
+              messageSequence: 2,
+              attempt: 1,
+            },
+          },
+        ],
+      },
+      base + 5_000,
+    );
+    expect(required(required(failed.turns[0]).models[0]).status).toBe("failed");
+    expect(required(required(failed.turns[0]).models[0]).durationMs).toBe(
+      2_000,
+    );
+  });
+
+  it("keeps current and resolved waits separate from tool execution", () => {
+    const messages = [
+      message(1, "user", "build"),
+      message(2, "assistant", "waiting", {
+        toolCalls: [
+          { id: "call-1", name: "exec_short_command", argumentsJson: "{}" },
+        ],
+      }),
+    ];
+    const current = buildConversationPresentation(
+      {
+        messages,
+        pendingWaits: [
+          { kind: "approval", callId: "call-1", startedAt: iso(5_000) },
+        ],
+        activities: [
+          {
+            resumeToken: "requested",
+            source: "approval",
+            createdAt: iso(5_000),
+            value: {
+              kind: "tool_approval_requested",
+              message: "requested",
+              callId: "call-1",
+              toolName: "exec_short_command",
+              messageSequence: 2,
+            },
+          },
+        ],
+      },
+      base + 17_000,
+    ).turns[0];
+    const currentTurn = required(current);
+    expect(required(required(currentTurn.tools[0]).calls[0]).status).toBe(
+      "waiting",
+    );
+    expect(
+      required(required(currentTurn.tools[0]).calls[0]).durationMs,
+    ).toBeNull();
+    expect(currentTurn.waitDurationMs).toBe(12_000);
+    expect(currentTurn.workDurationMs).toBeNull();
+    expect(currentTurn.durationMs).toBe(16_000);
+
+    const resolved = buildConversationPresentation(
+      {
+        messages,
+        activities: [
+          {
+            resumeToken: "requested",
+            source: "approval",
+            createdAt: iso(5_000),
+            value: {
+              kind: "tool_approval_requested",
+              message: "requested",
+              callId: "call-1",
+              toolName: "exec_short_command",
+              messageSequence: 2,
+            },
+          },
+          {
+            resumeToken: "resolved",
+            source: "approval",
+            createdAt: iso(17_000),
+            value: {
+              kind: "tool_approval_resolved",
+              message: "approved",
+              callId: "call-1",
+              toolName: "exec_short_command",
+              messageSequence: 2,
+            },
+          },
+        ],
+      },
+      base + 20_000,
+    ).turns[0];
+    expect(required(resolved).waitDurationMs).toBe(12_000);
+  });
+
+  it("groups semantically identical repeated calls", () => {
+    const messages = [
+      message(1, "user", "read"),
+      message(2, "assistant", "", {
+        toolCalls: [
+          {
+            id: "a",
+            name: "read_file",
+            argumentsJson: '{"path":"x","options":{"b":2,"a":1}}',
+          },
+          {
+            id: "b",
+            name: "read_file",
+            argumentsJson: '{"options":{"a":1,"b":2},"path":"x"}',
+          },
+        ],
+      }),
+    ];
+    const groups = required(
+      buildConversationPresentation({ messages }).turns[0],
+    ).tools;
+    expect(groups).toHaveLength(1);
+    const group = required(groups[0]);
+    expect(group.calls).toHaveLength(2);
+    expect(toolCallFingerprint(required(group.calls[0]).call)).toBe(
+      toolCallFingerprint(required(group.calls[1]).call),
+    );
+  });
+
+  it("formats durations and unions parallel work safely", () => {
+    expect(formatDuration(500)).toBe("<1s");
+    expect(formatDuration(12_000)).toBe("12s");
+    expect(formatDuration(68_000)).toBe("1m 08s");
+    expect(formatDuration(3_720_000)).toBe("1h 02m");
+    expect(formatDuration(-1)).toBeNull();
+    expect(
+      unionDuration([
+        [0, 10],
+        [5, 20],
+        [30, 40],
+      ]),
+    ).toBe(30);
+  });
+});

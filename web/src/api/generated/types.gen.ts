@@ -42,6 +42,7 @@ export const EventKind = {
     PLAN_TASK_UPDATED: 'plan_task_updated',
     INPUT_CONSUMED: 'input_consumed',
     USER_INPUT_ANSWERED: 'user_input_answered',
+    USER_INPUT_CANCELLED: 'user_input_cancelled',
     SNAPSHOT_REQUIRED: 'snapshot_required',
     STEERING_APPLIED: 'steering_applied',
     COMPACTION_FAILED: 'compaction_failed',
@@ -51,6 +52,10 @@ export const EventKind = {
     MODEL_COMPLETED: 'model_completed',
     MODEL_TOOL_CALL: 'model_tool_call',
     USER_INPUT_REQUESTED: 'user_input_requested',
+    TOOL_APPROVAL_REQUESTED: 'tool_approval_requested',
+    TOOL_APPROVAL_RESOLVED: 'tool_approval_resolved',
+    TIMER_STARTED: 'timer_started',
+    TIMER_RESOLVED: 'timer_resolved',
     TOOL_PROGRESS: 'tool_progress',
     TOOL_FAILED: 'tool_failed',
     TOOL_COMPLETED: 'tool_completed',
@@ -248,6 +253,7 @@ export type AgentMessage = {
     toolCallId: CallId | null;
     toolName: ToolName | null;
     createdAt: string;
+    startedAt?: string | null;
 };
 
 export type ToolCall = {
@@ -290,11 +296,13 @@ export type PendingApproval = {
     callId: CallId;
     toolName: ToolName;
     argumentsJson: string;
+    startedAt?: string | null;
 };
 
 export type PendingToolRecovery = {
     recoveryId: string;
     calls: Array<PendingToolRecoveryCall>;
+    startedAt?: string | null;
 };
 
 export type PendingToolRecoveryCall = {
@@ -308,11 +316,13 @@ export type PendingTimer = {
     callId: CallId;
     durationSeconds: number;
     reason: string;
+    startedAt?: string | null;
 };
 
 export type PendingUserInput = {
     callId: CallId;
     questions: Array<UserInputQuestion>;
+    startedAt?: string | null;
 };
 
 export type UserInputQuestion = {
@@ -410,6 +420,7 @@ export type AgentEvent = {
      * Exact durable inputs consumed at this boundary, or null for unrelated activity.
      */
     inputConsumption: InputConsumption | null;
+    attempt?: number | null;
 };
 
 export type InputConsumption = {
