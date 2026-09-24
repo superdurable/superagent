@@ -16,7 +16,10 @@
 
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSequenceKeyUsesUnpaddedDecimal(t *testing.T) {
 	tests := map[Sequence]string{
@@ -86,7 +89,7 @@ func TestUserInputQuestionsEnforceBatchShape(t *testing.T) {
 	}
 	invalid := []UserInputQuestion{{
 		ID:       "region",
-		Header:   "Header longer than twelve",
+		Header:   strings.Repeat("界", maximumUserInputHeaderCharacters+1),
 		Question: "Where?",
 		Options:  []UserInputOption{{Label: "West", Description: "Use west."}},
 	}}

@@ -350,6 +350,77 @@ describe("conversation presentation", () => {
     expect(required(presentation.turns[0]).tools).toHaveLength(0);
   });
 
+  it("marks a rejected input request as failed history", () => {
+    const messages = [
+      message(1, "user", "start"),
+      message(2, "assistant", "", {
+        toolCalls: [
+          {
+            id: "question-failed",
+            name: "request_user_input",
+            argumentsJson: JSON.stringify({
+              questions: [
+                {
+                  id: "scope",
+                  header: "A header rejected by the runtime",
+                  question: "Full fix?",
+                  options: [
+                    { label: "Yes", description: "Implement everything" },
+                    { label: "No", description: "Stop here" },
+                  ],
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+      message(3, "tool", '{"status":"failed","error":"invalid_user_input"}', {
+        toolCallId: "question-failed",
+        toolName: "request_user_input",
+      }),
+    ];
+
+    const question = required(
+      required(buildConversationPresentation({ messages }).turns[0])
+        .questions[0],
+    );
+    expect(question.status).toBe("failed");
+    expect(question.questions[0]?.header).toBe(
+      "A header rejected by the runtime",
+    );
+  });
+
+  it("marks legacy rejected input without a tool result as failed", () => {
+    const messages = [
+      message(1, "user", "start"),
+      message(2, "assistant", "", {
+        toolCalls: [
+          {
+            id: "question-rejected-before-execution",
+            name: "request_user_input",
+            argumentsJson: JSON.stringify({
+              questions: [
+                {
+                  id: "scope",
+                  header: "Scope",
+                  question: "Full fix?",
+                  options: [],
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+      message(3, "assistant", "Please clarify the scope."),
+    ];
+
+    const question = required(
+      required(buildConversationPresentation({ messages }).turns[0])
+        .questions[0],
+    );
+    expect(question.status).toBe("failed");
+  });
+
   it("formats durations and unions parallel work safely", () => {
     expect(formatDuration(500)).toBe("<1s");
     expect(formatDuration(12_000)).toBe("12s");

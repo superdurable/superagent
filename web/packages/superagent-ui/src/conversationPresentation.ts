@@ -72,7 +72,7 @@ export interface ConversationQuestionItem {
   key: string;
   callId: string;
   questions: ConversationQuestion[];
-  status: "pending" | "answered" | "cancelled" | "historical";
+  status: "pending" | "answered" | "cancelled" | "failed";
   answer: TimelineSequencedMessage | null;
   isMalformed: boolean;
 }
@@ -376,6 +376,7 @@ export function buildConversationPresentation(
             buildQuestionItem(
               call,
               messages,
+              resultByCall.get(call.id) ?? null,
               activityByCall,
               pendingWaitByCall,
             ),
@@ -667,6 +668,7 @@ function toolStartedAt(
 function buildQuestionItem(
   call: TimelineToolCall,
   messages: readonly TimelineSequencedMessage[],
+  result: TimelineSequencedMessage | null,
   activities: ReadonlyMap<string, TimelineActivityEntry[]>,
   pending: ReadonlyMap<string, ConversationPendingWait>,
 ): ConversationQuestionItem {
@@ -677,20 +679,42 @@ function buildQuestionItem(
   const cancelled = (activities.get(call.id) ?? []).some(
     (entry) => entry.value.kind === "user_input_cancelled",
   );
+  const failed =
+    isFailedToolResult(result) ||
+    (activities.get(call.id) ?? []).some(
+      (entry) => entry.value.kind === "tool_failed",
+    );
   return {
     key: `question-${call.id}`,
     callId: call.id,
     questions: parsed.questions,
     status: answer
       ? "answered"
-      : cancelled
-        ? "cancelled"
-        : pending.has(call.id)
-          ? "pending"
-          : "historical",
+      : failed
+        ? "failed"
+        : cancelled
+          ? "cancelled"
+          : pending.has(call.id)
+            ? "pending"
+            : "failed",
     answer,
     isMalformed: parsed.isMalformed,
   };
+}
+
+function isFailedToolResult(result: TimelineSequencedMessage | null): boolean {
+  if (result === null) return false;
+  try {
+    const value: unknown = JSON.parse(result.message.content);
+    return (
+      value !== null &&
+      typeof value === "object" &&
+      "status" in value &&
+      value.status === "failed"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function parseQuestions(argumentsJson: string): {

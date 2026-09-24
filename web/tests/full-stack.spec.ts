@@ -358,6 +358,14 @@ test("submits a question answer before steering and queued messages", async ({
 
   const questions = page.getByRole("region", { name: "Agent questions" });
   await expect(questions).toBeVisible();
+  const regionTab = questions.locator(
+    '.sa-question-tabs button[title="Region"]',
+  );
+  await expect(regionTab).toHaveAttribute("title", "Region");
+  await expect(regionTab.locator(".sa-question-tab-label")).toHaveCSS(
+    "text-overflow",
+    "ellipsis",
+  );
   const steeringRequest = queue
     .locator(".queue-message")
     .filter({ hasText: "steered after question" });
@@ -1214,6 +1222,28 @@ test("recovers visibly after invalid write_todos arguments", async ({
 
   const snapshot = await readAgentSnapshot(page, await displayedFlowID(page));
   expect(snapshot.description.plan).toBeFalsy();
+});
+
+test("marks rejected request_user_input history as failed", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+
+  await composer.fill("/invalid-question");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const failedQuestion = page.locator(
+    '.sa-question-card[data-status="failed"]',
+  );
+  await expect(failedQuestion).toBeVisible({ timeout: 20_000 });
+  await expect(failedQuestion).toContainText("Assistant requested input");
+  await expect(failedQuestion).toContainText("failed");
+  await expect(
+    page.getByRole("region", { name: "Agent questions" }),
+  ).toHaveCount(0);
+  await expectAgentWaitingForMessage(page);
 });
 
 test("disables busy Plan actions and continues a stalled active Plan", async ({

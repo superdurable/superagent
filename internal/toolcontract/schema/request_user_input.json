@@ -16,8 +16,8 @@
           "header": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 12,
-            "description": "Short label for navigation."
+            "maxLength": 32,
+            "description": "Short navigation label with at most 32 Unicode characters."
           },
           "question": {
             "type": "string",

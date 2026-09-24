@@ -3766,7 +3766,7 @@ func (s *UserInputQuestion) Validate() error {
 		if err := (validate.String{
 			MinLength:     1,
 			MinLengthSet:  true,
-			MaxLength:     12,
+			MaxLength:     32,
 			MaxLengthSet:  true,
 			Email:         false,
 			Hostname:      false,

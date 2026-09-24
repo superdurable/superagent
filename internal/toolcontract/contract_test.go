@@ -87,14 +87,14 @@ func TestRequestUserInputContract(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "minimums", encoded: `{"questions":[` + validQuestion + `]}`},
-		{name: "maximum header length", encoded: `{"questions":[{"id":"region","header":"123456789012","question":"Where?","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`},
+		{name: "maximum header length", encoded: `{"questions":[{"id":"region","header":"` + strings.Repeat("界", 32) + `","question":"Where?","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`},
 		{name: "missing questions", encoded: `{}`, wantErr: true},
 		{name: "null questions", encoded: `{"questions":null}`, wantErr: true},
 		{name: "no questions", encoded: `{"questions":[]}`, wantErr: true},
 		{name: "too many questions", encoded: `{"questions":[` + validQuestion + `,` + validQuestion + `,` + validQuestion + `,` + validQuestion + `]}`, wantErr: true},
 		{name: "empty ID", encoded: `{"questions":[{"id":"","header":"Region","question":"Where?","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`, wantErr: true},
 		{name: "empty header", encoded: `{"questions":[{"id":"region","header":"","question":"Where?","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`, wantErr: true},
-		{name: "header too long", encoded: `{"questions":[{"id":"region","header":"1234567890123","question":"Where?","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`, wantErr: true},
+		{name: "header too long", encoded: `{"questions":[{"id":"region","header":"` + strings.Repeat("界", 33) + `","question":"Where?","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`, wantErr: true},
 		{name: "empty question", encoded: `{"questions":[{"id":"region","header":"Region","question":"","options":[{"label":"West","description":"Use west."},{"label":"East","description":"Use east."}]}]}`, wantErr: true},
 		{name: "one option", encoded: `{"questions":[{"id":"region","header":"Region","question":"Where?","options":[{"label":"West","description":"Use west."}]}]}`, wantErr: true},
 		{name: "four options", encoded: `{"questions":[{"id":"region","header":"Region","question":"Where?","options":[{"label":"1","description":"1"},{"label":"2","description":"2"},{"label":"3","description":"3"},{"label":"4","description":"4"}]}]}`, wantErr: true},

@@ -4384,7 +4384,8 @@ func (s *UserInputOption) SetDescription(val string) {
 
 // Ref: #/components/schemas/UserInputQuestion
 type UserInputQuestion struct {
-	ID       string            `json:"id"`
+	ID string `json:"id"`
+	// Short navigation label with at most 32 Unicode characters.
 	Header   string            `json:"header"`
 	Question string            `json:"question"`
 	Options  []UserInputOption `json:"options"`

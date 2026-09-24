@@ -1438,7 +1438,7 @@ func (flow *Flow) contextMessages(ctx dex.Context, config AgentConfig, state Age
 	if state.InteractionMode != InteractionModePlanning {
 		result = append(result, AgentMessage{
 			Role:    MessageRoleSystem,
-			Content: "When you need user input, call request_user_input instead of asking only in assistant text. Ask 1-3 related questions in one batch. If no reply is required, finish without a follow-up question.",
+			Content: "When you need user input, call request_user_input instead of asking only in assistant text. Ask 1-3 related questions in one batch. Give each question a short navigation header of at most 32 Unicode characters. If no reply is required, finish without a follow-up question.",
 		})
 	}
 	summary, err := flow.getSummary(ctx)
