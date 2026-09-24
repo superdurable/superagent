@@ -252,8 +252,7 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 }
 
 // SendMessage queues one non-empty user message when no question is pending.
-func (flow *Flow) SendMessage(ctx dex.Context, request sendMessageRPCInput) (*dex.RPCResult[bool], error) {
-	input := request.Value
+func (flow *Flow) SendMessage(ctx dex.Context, input PendingUserMessage) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(input.Value.Content) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
@@ -267,7 +266,7 @@ func (flow *Flow) SendMessage(ctx dex.Context, request sendMessageRPCInput) (*de
 	if pending != nil {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -281,8 +280,7 @@ func (flow *Flow) SendMessage(ctx dex.Context, request sendMessageRPCInput) (*de
 }
 
 // AnswerQuestions validates and publishes one exact pending input batch atomically.
-func (flow *Flow) AnswerQuestions(ctx dex.Context, request answerQuestionsRPCInput) (*dex.RPCResult[bool], error) {
-	input := request.Value
+func (flow *Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(string(input.CallID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
@@ -297,7 +295,7 @@ func (flow *Flow) AnswerQuestions(ctx dex.Context, request answerQuestionsRPCInp
 	if !isValid {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -318,8 +316,7 @@ func (flow *Flow) AnswerQuestions(ctx dex.Context, request answerQuestionsRPCInp
 }
 
 // SteerMessage atomically moves a queued message into the Steer queue.
-func (flow *Flow) SteerMessage(ctx dex.Context, request steerMessageRPCInput) (*dex.RPCResult[bool], error) {
-	input := request.Value
+func (flow *Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(string(input.MessageID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
@@ -346,7 +343,7 @@ func (flow *Flow) SteerMessage(ctx dex.Context, request steerMessageRPCInput) (*
 		}
 		shouldDeletePendingToolRecovery = true
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -453,8 +450,7 @@ func (*Flow) GetArchivedMessages(
 }
 
 // DeleteQueuedMessage removes one exact pending user message.
-func (flow *Flow) DeleteQueuedMessage(ctx dex.Context, request deleteQueuedMessageRPCInput) (*dex.RPCResult[bool], error) {
-	messageID := request.Value
+func (flow *Flow) DeleteQueuedMessage(ctx dex.Context, messageID MessageID) (*dex.RPCResult[bool], error) {
 	if strings.TrimSpace(string(messageID)) == "" {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
@@ -466,7 +462,7 @@ func (flow *Flow) DeleteQueuedMessage(ctx dex.Context, request deleteQueuedMessa
 	if !found {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -480,8 +476,7 @@ func (flow *Flow) DeleteQueuedMessage(ctx dex.Context, request deleteQueuedMessa
 }
 
 // ApproveTool publishes an approval only for the current exact call ID.
-func (flow *Flow) ApproveTool(ctx dex.Context, request approveToolRPCInput) (*dex.RPCResult[bool], error) {
-	input := request.Value
+func (flow *Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.RPCResult[bool], error) {
 	pending, err := getPendingApproval(ctx)
 	if err != nil {
 		return nil, err
@@ -489,7 +484,7 @@ func (flow *Flow) ApproveTool(ctx dex.Context, request approveToolRPCInput) (*de
 	if pending == nil || pending.CallID != input.CallID {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -508,9 +503,8 @@ func (flow *Flow) ApproveTool(ctx dex.Context, request approveToolRPCInput) (*de
 // ResolveToolRecovery publishes one complete decision for the exact pending recovery revision.
 func (flow *Flow) ResolveToolRecovery(
 	ctx dex.Context,
-	request resolveToolRecoveryRPCInput,
+	input ResolveToolRecoveryRequest,
 ) (*dex.RPCResult[bool], error) {
-	input := request.Value
 	pending, err := getPendingToolRecovery(ctx)
 	if err != nil {
 		return nil, err
@@ -521,7 +515,7 @@ func (flow *Flow) ResolveToolRecovery(
 	if !isValidToolRecoveryResolution(*pending, input) {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -538,8 +532,7 @@ func (flow *Flow) ResolveToolRecovery(
 }
 
 // ExecutePlan schedules an exact waiting draft or active plan revision.
-func (flow *Flow) ExecutePlan(ctx dex.Context, request executePlanRPCInput) (*dex.RPCResult[bool], error) {
-	input := request.Value
+func (flow *Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex.RPCResult[bool], error) {
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
 		return nil, err
@@ -578,7 +571,7 @@ func (flow *Flow) ExecutePlan(ctx dex.Context, request executePlanRPCInput) (*de
 	if !canExecute {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx, request.FirstAttemptAt)
+	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -680,10 +673,7 @@ func clearInactivityDeadline(ctx dex.Context) error {
 	return err
 }
 
-func (flow *Flow) resetInactivityTimerForUserOperation(
-	ctx dex.Context,
-	firstAttemptAt time.Time,
-) (bool, error) {
+func (flow *Flow) resetInactivityTimerForUserOperation(ctx dex.Context) (bool, error) {
 	config, err := agentConfigAttribute.Get(ctx)
 	if err != nil {
 		return false, err
@@ -691,10 +681,11 @@ func (flow *Flow) resetInactivityTimerForUserOperation(
 	if config.InactivityTimeoutSeconds == 0 {
 		return true, nil
 	}
-	resetTarget := firstAttemptAt.UTC().Add(
+	activityAt := time.Now().UTC()
+	resetTarget := activityAt.Add(
 		time.Duration(config.InactivityTimeoutSeconds) * time.Second,
 	)
-	return flow.resetInactivityTimer(ctx, firstAttemptAt, resetTarget)
+	return flow.resetInactivityTimer(ctx, activityAt, resetTarget)
 }
 
 func (flow *Flow) resetInactivityTimer(

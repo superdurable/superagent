@@ -76,9 +76,7 @@ func TestAgentInactivityExpirationIntegration(t *testing.T) {
 		if initial.Description.InactivityDeadline == nil {
 			t.Fatalf("initial Snapshot = %#v", initial.Description)
 		}
-		// Cross the durable clock's one-second precision before testing the
-		// 100ms reset-coalescing threshold.
-		delay := time.NewTimer(1500 * time.Millisecond)
+		delay := time.NewTimer(200 * time.Millisecond)
 		defer delay.Stop()
 		select {
 		case <-delay.C:

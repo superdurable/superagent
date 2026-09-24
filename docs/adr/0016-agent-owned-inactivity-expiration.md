@@ -18,8 +18,7 @@ to every resource owner and creates competing shutdown decisions.
 `inactivity_timeout_seconds` starts one parallel `InactivityTimeout` Step and
 persists `InactivityDeadline`. Accepted user RPCs advance the Attribute and
 publish `ResetInactivityTimer` only when the extension exceeds one minute.
-The Agent Client captures one operation timestamp before any RPC lock retry and
-keeps it in the command envelope so every attempt computes the same deadline.
+The accepted RPC handler samples the current time after business validation.
 Model and ordinary tool work do not pause the deadline. `DurableWait` advances
 it to the wait target plus the configured timeout.
 
