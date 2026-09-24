@@ -100,7 +100,7 @@ func TestToolDefinitionsExposeFailureSimulationOnlyToLocalMock(t *testing.T) {
 
 func TestValidateConfigRequiresExpirationHandlerWhenTimeoutEnabled(t *testing.T) {
 	config := NewAgentConfig()
-	config.InactivityTimeoutSeconds = 60
+	config.InactivityTimeoutSeconds = 120
 	flow := &Flow{tools: staticToolRegistryForTestOnly{}}
 	if err := flow.validateConfig(config); err == nil {
 		t.Fatal("enabled inactivity timeout without handler validated")

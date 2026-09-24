@@ -56,6 +56,7 @@ func TestAgentConfigRejectsInvalidValues(t *testing.T) {
 		{"negative parallel calls", func(config *AgentConfig) { config.MaxParallelToolCalls = -1 }},
 		{"too many parallel calls", func(config *AgentConfig) { config.MaxParallelToolCalls = 33 }},
 		{"negative inactivity timeout", func(config *AgentConfig) { config.InactivityTimeoutSeconds = -1 }},
+		{"short inactivity timeout", func(config *AgentConfig) { config.InactivityTimeoutSeconds = 60 }},
 		{"excessive inactivity timeout", func(config *AgentConfig) {
 			config.InactivityTimeoutSeconds = int64((366 * 24 * time.Hour) / time.Second)
 		}},

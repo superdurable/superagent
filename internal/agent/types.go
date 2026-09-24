@@ -576,7 +576,8 @@ type AgentConfig struct {
 	EnabledMCPServers []string `json:"enabled_mcp_servers"`
 	// EnabledTools restricts tools; empty selects all tools on enabled servers.
 	EnabledTools []ToolName `json:"enabled_tools"`
-	// InactivityTimeoutSeconds closes the Agent after an idle user wait; zero disables it.
+	// InactivityTimeoutSeconds closes the Agent after user inactivity; zero disables it.
+	// Positive values must be between two minutes and one year.
 	InactivityTimeoutSeconds int64 `json:"inactivity_timeout_seconds"`
 }
 
@@ -604,6 +605,10 @@ func NewAgentConfig() AgentConfig {
 
 // Validate rejects configurations that cannot execute safely.
 func (config AgentConfig) Validate() error {
+	return config.validate(int64((2 * time.Minute) / time.Second))
+}
+
+func (config AgentConfig) validate(minimumInactivityTimeoutSeconds int64) error {
 	if _, err := config.Model.Provider(); err != nil {
 		return fmt.Errorf("model: %w", err)
 	}
@@ -629,6 +634,12 @@ func (config AgentConfig) Validate() error {
 		return fmt.Errorf("max_parallel_tool_calls must be between 1 and %d when set", MaximumParallelToolCalls)
 	case config.InactivityTimeoutSeconds < 0:
 		return errors.New("inactivity_timeout_seconds must not be negative")
+	case config.InactivityTimeoutSeconds > 0 &&
+		config.InactivityTimeoutSeconds < minimumInactivityTimeoutSeconds:
+		return fmt.Errorf(
+			"inactivity_timeout_seconds must be zero or at least %d",
+			minimumInactivityTimeoutSeconds,
+		)
 	case config.InactivityTimeoutSeconds > int64((365*24*time.Hour)/time.Second):
 		return errors.New("inactivity_timeout_seconds must not exceed one year")
 	default:
