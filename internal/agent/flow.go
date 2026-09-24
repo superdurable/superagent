@@ -266,12 +266,8 @@ func (flow *Flow) SendMessage(ctx dex.Context, input PendingUserMessage) (*dex.R
 	if pending != nil {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := queuedUserMessagesChannel.Publish(ctx, input); err != nil {
 		return nil, err
@@ -295,12 +291,8 @@ func (flow *Flow) AnswerQuestions(ctx dex.Context, input AnswerQuestionsRequest)
 	if !isValid {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := pendingUserInputAttribute.Delete(ctx); err != nil {
 		return nil, err
@@ -343,12 +335,8 @@ func (flow *Flow) SteerMessage(ctx dex.Context, input SteerMessageRequest) (*dex
 		}
 		shouldDeletePendingToolRecovery = true
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if shouldDeletePendingToolRecovery {
 		if deleteErr := pendingToolRecoveryAttribute.Delete(ctx); deleteErr != nil {
@@ -462,12 +450,8 @@ func (flow *Flow) DeleteQueuedMessage(ctx dex.Context, messageID MessageID) (*de
 	if !found {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := queuedUserMessagesChannel.Delete(ctx, message.MessageID); err != nil {
 		return nil, err
@@ -484,12 +468,8 @@ func (flow *Flow) ApproveTool(ctx dex.Context, input ToolApprovalRequest) (*dex.
 	if pending == nil || pending.CallID != input.CallID {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := pendingApprovalAttribute.Delete(ctx); err != nil {
 		return nil, err
@@ -515,12 +495,8 @@ func (flow *Flow) ResolveToolRecovery(
 	if !isValidToolRecoveryResolution(*pending, input) {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	if err := pendingToolRecoveryAttribute.Delete(ctx); err != nil {
 		return nil, err
@@ -571,12 +547,8 @@ func (flow *Flow) ExecutePlan(ctx dex.Context, input PlanExecutionRequest) (*dex
 	if !canExecute {
 		return &dex.RPCResult[bool]{Output: false}, nil
 	}
-	accepted, err := flow.resetInactivityTimerForUserOperation(ctx)
-	if err != nil {
+	if err := flow.resetInactivityTimerForUserOperation(ctx); err != nil {
 		return nil, err
-	}
-	if !accepted {
-		return &dex.RPCResult[bool]{Output: false}, nil
 	}
 	revision := plan.Revision
 	state.PendingPlanExecutionRevision = &revision
@@ -673,44 +645,36 @@ func clearInactivityDeadline(ctx dex.Context) error {
 	return err
 }
 
-func (flow *Flow) resetInactivityTimerForUserOperation(ctx dex.Context) (bool, error) {
+func (flow *Flow) resetInactivityTimerForUserOperation(ctx dex.Context) error {
 	config, err := agentConfigAttribute.Get(ctx)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if config.InactivityTimeoutSeconds == 0 {
-		return true, nil
+		return nil
 	}
-	activityAt := time.Now().UTC()
-	resetTarget := activityAt.Add(
+	resetTarget := time.Now().UTC().Add(
 		time.Duration(config.InactivityTimeoutSeconds) * time.Second,
 	)
-	return flow.resetInactivityTimer(ctx, activityAt, resetTarget)
+	return flow.resetInactivityTimer(ctx, resetTarget)
 }
 
-func (flow *Flow) resetInactivityTimer(
-	ctx dex.Context,
-	activityAt time.Time,
-	resetTarget time.Time,
-) (bool, error) {
+func (flow *Flow) resetInactivityTimer(ctx dex.Context, resetTarget time.Time) error {
 	deadline, err := inactivityDeadlineAttribute.Get(ctx)
 	if err != nil {
-		return false, err
-	}
-	if !deadline.After(activityAt.UTC()) {
-		return false, nil
+		return err
 	}
 	resetTarget = resetTarget.UTC()
 	if resetTarget.Sub(deadline) <= flow.inactivityResetMinimumExtension() {
-		return true, nil
+		return nil
 	}
 	if err := inactivityDeadlineAttribute.Set(ctx, resetTarget); err != nil {
-		return false, err
+		return err
 	}
 	if err := resetInactivityTimerChannel.Publish(ctx, resetTarget); err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 func (flow *Flow) inactivityResetMinimumExtension() time.Duration {
@@ -2084,15 +2048,11 @@ var (
 		},
 	}
 	durableWaitStepOptions = &dex.StepOptions{
-		WaitForMethodTimeout:     messageMutationStepOptions.WaitForMethodTimeout,
-		ExecuteMethodTimeout:     messageMutationStepOptions.ExecuteMethodTimeout,
-		ExecuteLoadAttributeMaps: messageMutationStepOptions.ExecuteLoadAttributeMaps,
 		WaitForLockAttributes: []dex.AttributeLock{
 			dex.LockAttribute(inactivityDeadlineAttribute),
 		},
-		ExecuteLockAttributes: messageMutationStepOptions.ExecuteLockAttributes,
 	}
-	inactivityExpirationStepOptions = &dex.StepOptions{
+	inactivityTimeoutStepOptions = &dex.StepOptions{
 		WaitForMethodTimeout: time.Minute,
 		ExecuteMethodTimeout: time.Minute,
 		ExecuteDurability:    dex.StepDurabilitySync,
@@ -3721,12 +3681,8 @@ func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, err
 		}
 		waitTarget := timer.StartedAt.UTC().Add(time.Duration(timer.DurationSeconds) * time.Second)
 		resetTarget := waitTarget.Add(time.Duration(config.InactivityTimeoutSeconds) * time.Second)
-		accepted, resetErr := step.flow.resetInactivityTimer(ctx, ctx.FirstAttemptAt(), resetTarget)
-		if resetErr != nil {
+		if resetErr := step.flow.resetInactivityTimer(ctx, resetTarget); resetErr != nil {
 			return nil, resetErr
-		}
-		if !accepted {
-			return nil, errors.New("durable wait started after inactivity expiration")
 		}
 	}
 	return dex.AnyOf(
@@ -3815,7 +3771,7 @@ func (inactivityTimeoutStep) GetStepType() string {
 }
 
 func (inactivityTimeoutStep) GetStepOptions() *dex.StepOptions {
-	return inactivityExpirationStepOptions
+	return inactivityTimeoutStepOptions
 }
 
 func (inactivityTimeoutStep) WaitFor(
@@ -3851,19 +3807,11 @@ func (step inactivityTimeoutStep) Execute(
 	if err != nil {
 		return nil, err
 	}
-	latestDeadline := currentDeadline.UTC()
-	for _, resetTarget := range resetTargets {
-		if resetTarget.After(latestDeadline) {
-			latestDeadline = resetTarget.UTC()
-		}
+	currentDeadline = currentDeadline.UTC()
+	if currentDeadline.After(deadline.UTC()) {
+		return dex.GoTo(inactivityTimeoutStep{flow: step.flow}, currentDeadline), nil
 	}
-	if latestDeadline.After(deadline.UTC()) {
-		if setErr := inactivityDeadlineAttribute.Set(ctx, latestDeadline); setErr != nil {
-			return nil, setErr
-		}
-		return dex.GoTo(inactivityTimeoutStep{flow: step.flow}, latestDeadline), nil
-	}
-	if !ctx.HasTimerFired() {
+	if len(resetTargets) > 0 || !ctx.HasTimerFired() {
 		return nil, errors.New("inactivity wait completed without a reset or deadline")
 	}
 	if step.flow.inactivityExpiration == nil {
@@ -3876,7 +3824,7 @@ func (step inactivityTimeoutStep) Execute(
 	expiration := InactivityExpiration{
 		FlowID:          FlowID(ctx.FlowID()),
 		RunID:           RunID(ctx.RunID()),
-		Deadline:        latestDeadline,
+		Deadline:        currentDeadline,
 		RuntimeMetadata: metadata,
 	}
 	if err := step.flow.inactivityExpiration.HandleInactivityExpiration(ctx, expiration); err != nil {

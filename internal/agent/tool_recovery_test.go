@@ -19,6 +19,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -174,6 +175,17 @@ func TestRegisteredStepOptionsUseBoundedTimeoutsAndModelSyncDurability(t *testin
 		modelStepOptions.ExecuteMethodTimeout != 10*time.Minute ||
 		modelStepOptions.HeartbeatTimeout != time.Minute {
 		t.Fatalf("model Step options = %+v", modelStepOptions)
+	}
+}
+
+func TestDurableWaitStepOptionsOnlyLockInactivityDeadlineDuringWaitFor(t *testing.T) {
+	want := &dex.StepOptions{
+		WaitForLockAttributes: []dex.AttributeLock{
+			dex.LockAttribute(inactivityDeadlineAttribute),
+		},
+	}
+	if !reflect.DeepEqual(durableWaitStepOptions, want) {
+		t.Fatalf("durable wait Step options = %+v, want %+v", durableWaitStepOptions, want)
 	}
 }
 
