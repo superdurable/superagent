@@ -420,9 +420,13 @@ func (s *AgentDescription) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		e.FieldStart("inactivityDeadline")
+		s.InactivityDeadline.Encode(e, json.EncodeDateTime)
+	}
 }
 
-var jsonFieldsNameOfAgentDescription = [17]string{
+var jsonFieldsNameOfAgentDescription = [18]string{
 	0:  "status",
 	1:  "waitingInputRound",
 	2:  "model",
@@ -440,6 +444,7 @@ var jsonFieldsNameOfAgentDescription = [17]string{
 	14: "pendingSteeredMessageCount",
 	15: "availableMcpServers",
 	16: "availableTools",
+	17: "inactivityDeadline",
 }
 
 // Decode decodes AgentDescription from json.
@@ -655,6 +660,16 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"availableTools\"")
 			}
+		case "inactivityDeadline":
+			requiredBitSet[2] |= 1 << 1
+			if err := func() error {
+				if err := s.InactivityDeadline.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"inactivityDeadline\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -667,7 +682,7 @@ func (s *AgentDescription) Decode(d *jx.Decoder) error {
 	for i, mask := range [3]uint8{
 		0b11111111,
 		0b11111111,
-		0b00000001,
+		0b00000011,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1541,6 +1556,8 @@ func (s *AgentStatus) Decode(d *jx.Decoder) error {
 		*s = AgentStatusWaitingForTimer
 	case AgentStatusApplyingSteering:
 		*s = AgentStatusApplyingSteering
+	case AgentStatusExpiring:
+		*s = AgentStatusExpiring
 	default:
 		*s = AgentStatus(v)
 	}
@@ -2455,6 +2472,8 @@ func (s *EventKind) Decode(d *jx.Decoder) error {
 		*s = EventKindToolRecoveryRequired
 	case EventKindToolRecoveryResolved:
 		*s = EventKindToolRecoveryResolved
+	case EventKindInactivityExpired:
+		*s = EventKindInactivityExpired
 	default:
 		*s = EventKind(v)
 	}
@@ -3691,6 +3710,52 @@ func (s NilCallID) MarshalJSON() ([]byte, error) {
 func (s *NilCallID) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
+}
+
+// Encode encodes time.Time as json.
+func (o NilDateTime) Encode(e *jx.Encoder, format func(*jx.Encoder, time.Time)) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	format(e, o.Value)
+}
+
+// Decode decodes time.Time from json.
+func (o *NilDateTime) Decode(d *jx.Decoder, format func(*jx.Decoder) (time.Time, error)) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilDateTime to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v time.Time
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	v, err := format(d)
+	if err != nil {
+		return err
+	}
+	o.Value = v
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilDateTime) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e, json.EncodeDateTime)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilDateTime) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d, json.DecodeDateTime)
 }
 
 // Encode encodes InputConsumption as json.

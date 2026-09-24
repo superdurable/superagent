@@ -60,7 +60,8 @@ export const EventKind = {
     TOOL_FAILED: 'tool_failed',
     TOOL_COMPLETED: 'tool_completed',
     TOOL_RECOVERY_REQUIRED: 'tool_recovery_required',
-    TOOL_RECOVERY_RESOLVED: 'tool_recovery_resolved'
+    TOOL_RECOVERY_RESOLVED: 'tool_recovery_resolved',
+    INACTIVITY_EXPIRED: 'inactivity_expired'
 } as const;
 
 export type EventKind = typeof EventKind[keyof typeof EventKind];
@@ -75,7 +76,8 @@ export const AgentStatus = {
     WAITING_FOR_TOOL_RECOVERY: 'waiting_for_tool_recovery',
     EXECUTING_TOOL: 'executing_tool',
     WAITING_FOR_TIMER: 'waiting_for_timer',
-    APPLYING_STEERING: 'applying_steering'
+    APPLYING_STEERING: 'applying_steering',
+    EXPIRING: 'expiring'
 } as const;
 
 export type AgentStatus = typeof AgentStatus[keyof typeof AgentStatus];
@@ -291,6 +293,7 @@ export type AgentDescription = {
     pendingSteeredMessageCount: number;
     availableMcpServers: Array<string>;
     availableTools: Array<ToolName>;
+    inactivityDeadline: string | null;
 };
 
 export type PendingApproval = {

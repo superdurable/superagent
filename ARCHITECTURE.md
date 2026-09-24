@@ -75,6 +75,17 @@ Renewable sandbox credentials are outside `AIAgentFlow`. A separately designed
 `SandboxLifecycleFlow` will own that lifecycle. This repository currently
 defines no placeholder API or compatibility path for it.
 
+An embedding application may configure `AgentConfig.InactivityTimeoutSeconds`
+and inject `InactivityExpirationHandler`. The Agent owns the inactivity
+decision because only its durable state distinguishes a user wait from active
+model/tool work and `durable_wait`. `AwaitUser`, `AwaitToolApproval`, and
+`AwaitManualToolRecovery` persist `InactivityDeadline` and race their existing
+Channels with one Dex Timer. Accepted input wins when both are ready. All other
+Steps expose a null deadline. Expiration first commits `expiring` and one
+`inactivity_expired` event, then retries the stable Flow ID, Run ID, deadline,
+and runtime-metadata callback for up to seven days. Only callback success closes
+the Agent Flow; cross-resource cleanup remains the embedding application's job.
+
 `CurrentMessages` and `ArchivedMessages` are the typed application history;
 they are not Dex execution history. `AgentState` owns the retained sequence
 range, interaction mode, status, pending tool cursor, plan revision, and

@@ -911,6 +911,7 @@ function snapshot(
       pendingSteeredMessageCount: 0,
       availableMcpServers: [],
       availableTools: [],
+      inactivityDeadline: null,
     },
     queued: [
       {

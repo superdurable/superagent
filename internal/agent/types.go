@@ -145,6 +145,7 @@ const (
 	AgentStatusExecutingTool          AgentStatus = "executing_tool"
 	AgentStatusWaitingForTimer        AgentStatus = "waiting_for_timer"
 	AgentStatusApplyingSteering       AgentStatus = "applying_steering"
+	AgentStatusExpiring               AgentStatus = "expiring"
 )
 
 // Validate rejects unknown Agent statuses.
@@ -159,7 +160,8 @@ func (status AgentStatus) Validate() error {
 		AgentStatusWaitingForToolRecovery,
 		AgentStatusExecutingTool,
 		AgentStatusWaitingForTimer,
-		AgentStatusApplyingSteering:
+		AgentStatusApplyingSteering,
+		AgentStatusExpiring:
 		return nil
 	default:
 		return newEnumValidationError("AgentStatus", string(status))
@@ -299,6 +301,7 @@ const (
 	EventKindToolCompleted         EventKind = "tool_completed"
 	EventKindToolRecoveryRequired  EventKind = "tool_recovery_required"
 	EventKindToolRecoveryResolved  EventKind = "tool_recovery_resolved"
+	EventKindInactivityExpired     EventKind = "inactivity_expired"
 )
 
 // Validate rejects unknown event kinds.
@@ -327,7 +330,8 @@ func (kind EventKind) Validate() error {
 		EventKindToolFailed,
 		EventKindToolCompleted,
 		EventKindToolRecoveryRequired,
-		EventKindToolRecoveryResolved:
+		EventKindToolRecoveryResolved,
+		EventKindInactivityExpired:
 		return nil
 	default:
 		return newEnumValidationError("EventKind", string(kind))
@@ -572,6 +576,8 @@ type AgentConfig struct {
 	EnabledMCPServers []string `json:"enabled_mcp_servers"`
 	// EnabledTools restricts tools; empty selects all tools on enabled servers.
 	EnabledTools []ToolName `json:"enabled_tools"`
+	// InactivityTimeoutSeconds closes the Agent after an idle user wait; zero disables it.
+	InactivityTimeoutSeconds int64 `json:"inactivity_timeout_seconds"`
 }
 
 // StartRequest contains Agent configuration and trusted runtime metadata.
@@ -621,6 +627,10 @@ func (config AgentConfig) Validate() error {
 		return fmt.Errorf("message_retention_limit must be at least %d and a multiple of %d", currentMessageLimit, archiveMessageChunkSize)
 	case config.MaxParallelToolCalls < 0 || config.MaxParallelToolCalls > MaximumParallelToolCalls:
 		return fmt.Errorf("max_parallel_tool_calls must be between 1 and %d when set", MaximumParallelToolCalls)
+	case config.InactivityTimeoutSeconds < 0:
+		return errors.New("inactivity_timeout_seconds must not be negative")
+	case config.InactivityTimeoutSeconds > int64((365*24*time.Hour)/time.Second):
+		return errors.New("inactivity_timeout_seconds must not exceed one year")
 	default:
 		return nil
 	}
@@ -751,6 +761,20 @@ type AgentDescription struct {
 	PendingSteeredMessageCount int                  `json:"pending_steered_message_count"`
 	AvailableMCPServers        []string             `json:"available_mcp_servers"`
 	AvailableTools             []ToolName           `json:"available_tools"`
+	InactivityDeadline         *time.Time           `json:"inactivity_deadline"`
+}
+
+// InactivityExpiration identifies one stable Agent inactivity expiration.
+type InactivityExpiration struct {
+	FlowID          FlowID     `json:"flow_id"`
+	RunID           RunID      `json:"run_id"`
+	Deadline        time.Time  `json:"deadline"`
+	RuntimeMetadata JSONObject `json:"runtime_metadata"`
+}
+
+// InactivityExpirationHandler performs the application-owned expiration callback.
+type InactivityExpirationHandler interface {
+	HandleInactivityExpiration(context.Context, InactivityExpiration) error
 }
 
 // AgentSnapshot is one atomic durable application view.

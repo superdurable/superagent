@@ -77,6 +77,7 @@ const (
 	AgentStatusExecutingTool          = agentinternal.AgentStatusExecutingTool
 	AgentStatusWaitingForTimer        = agentinternal.AgentStatusWaitingForTimer
 	AgentStatusApplyingSteering       = agentinternal.AgentStatusApplyingSteering
+	AgentStatusExpiring               = agentinternal.AgentStatusExpiring
 )
 
 const (
@@ -146,6 +147,7 @@ const (
 	EventKindToolCompleted         = agentinternal.EventKindToolCompleted
 	EventKindToolRecoveryRequired  = agentinternal.EventKindToolRecoveryRequired
 	EventKindToolRecoveryResolved  = agentinternal.EventKindToolRecoveryResolved
+	EventKindInactivityExpired     = agentinternal.EventKindInactivityExpired
 
 	CommandSendMessage         = agentinternal.CommandSendMessage
 	CommandAnswerQuestions     = agentinternal.CommandAnswerQuestions
@@ -240,11 +242,19 @@ type (
 	ToolInvocation                = agentinternal.ToolInvocation
 	ToolRegistry                  = agentinternal.ToolRegistry
 	RegisteredTool                = agentinternal.RegisteredTool
+	FlowOption                    = agentinternal.FlowOption
+	InactivityExpiration          = agentinternal.InactivityExpiration
+	InactivityExpirationHandler   = agentinternal.InactivityExpirationHandler
 )
 
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
-func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
-	return agentinternal.NewFlow(modelClient, tools)
+func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption) *Flow {
+	return agentinternal.NewFlow(modelClient, tools, options...)
+}
+
+// WithInactivityExpirationHandler configures the application-owned expiration callback.
+func WithInactivityExpirationHandler(handler InactivityExpirationHandler) FlowOption {
+	return agentinternal.WithInactivityExpirationHandler(handler)
 }
 
 // NewClient constructs an Agent application client over one Dex client and Flow definition.

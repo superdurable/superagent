@@ -533,6 +533,7 @@ components:
         - tool_completed
         - tool_recovery_required
         - tool_recovery_resolved
+        - inactivity_expired
     AgentStatus:
       type: string
       enum:
@@ -546,6 +547,7 @@ components:
         - executing_tool
         - waiting_for_timer
         - applying_steering
+        - expiring
     WaitingInputRound:
       type: integer
       format: int64
@@ -1044,6 +1046,7 @@ components:
         - pendingSteeredMessageCount
         - availableMcpServers
         - availableTools
+        - inactivityDeadline
       properties:
         status:
           $ref: "#/components/schemas/AgentStatus"
@@ -1105,6 +1108,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ToolName"
+        inactivityDeadline:
+          type: string
+          format: date-time
+          nullable: true
     PendingApproval:
       type: object
       additionalProperties: false

@@ -70,6 +70,15 @@ typed `StartRequest`. `RuntimeMetadata` is an optional JSON object of at most
 passed only to tool implementations, never to models, browser Snapshots, or
 Streams. Do not put secrets in it.
 
+Set `AgentConfig.InactivityTimeoutSeconds` to arm inactivity expiration while
+the Agent waits for a message, question answer, approval, or recovery decision;
+zero disables it. Embedders enabling the timeout must pass
+`agent.WithInactivityExpirationHandler(...)` to `agent.NewFlow`. The handler
+receives a stable Flow ID, Run ID, deadline, and runtime metadata for an
+idempotent application cleanup request. Snapshot exposes `inactivityDeadline`
+only while the Timer is armed; model work, tool work, and `durable_wait` pause
+the timeout.
+
 External tool retries belong to Dex. `ToolDefinition` controls attempt timeout,
 maximum attempts, and total duration. A registry performs exactly one call for
 each Dex attempt.

@@ -43,6 +43,15 @@ func (modelClient) CountTokens(agent.Model, []agent.AgentMessage) int {
 
 type toolRegistry struct{}
 
+type expirationHandler struct{}
+
+func (expirationHandler) HandleInactivityExpiration(
+	context.Context,
+	agent.InactivityExpiration,
+) error {
+	return nil
+}
+
 func (toolRegistry) ServerNames() []string {
 	return nil
 }
@@ -62,6 +71,7 @@ func (toolRegistry) Execute(context.Context, agent.ToolInvocation) (agent.ToolEx
 var (
 	_ agent.ModelClient                                                                                            = modelClient{}
 	_ agent.ToolRegistry                                                                                           = toolRegistry{}
+	_ agent.InactivityExpirationHandler                                                                            = expirationHandler{}
 	_ dex.Flow                                                                                                     = (*agent.Flow)(nil)
 	_ func(*dex.Client, *agent.Flow) *agent.Client                                                                 = agent.NewClient
 	_ func(*agent.Client, context.Context, agent.FlowID, agent.StartRequest) (agent.RunID, error)                  = (*agent.Client).Start
@@ -91,7 +101,11 @@ func TestExternalModuleCanConstructAndRegisterAgent(t *testing.T) {
 	if _, err := agent.ParseJSONObject(`{"type":"object"}`); err != nil {
 		t.Fatalf("parse JSON object: %v", err)
 	}
-	flow := agent.NewFlow(modelClient{}, toolRegistry{})
+	flow := agent.NewFlow(
+		modelClient{},
+		toolRegistry{},
+		agent.WithInactivityExpirationHandler(expirationHandler{}),
+	)
 	if _, err := dex.NewRegistry([]dex.Flow{flow}); err != nil {
 		t.Fatalf("register public Agent Flow: %v", err)
 	}

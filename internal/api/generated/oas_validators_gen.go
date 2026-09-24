@@ -974,6 +974,8 @@ func (s AgentStatus) Validate() error {
 		return nil
 	case "applying_steering":
 		return nil
+	case "expiring":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1280,6 +1282,8 @@ func (s EventKind) Validate() error {
 	case "tool_recovery_required":
 		return nil
 	case "tool_recovery_resolved":
+		return nil
+	case "inactivity_expired":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
