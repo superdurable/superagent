@@ -180,6 +180,47 @@ describe("conversation presentation", () => {
     );
   });
 
+  it("places historical activity in its associated or nearest turn", () => {
+    const messages = [
+      message(1, "user", "first"),
+      message(2, "assistant", "first answer"),
+      message(10, "user", "second"),
+      message(11, "assistant", "second answer"),
+    ];
+    const activities: TimelineActivityEntry[] = [
+      {
+        resumeToken: "associated",
+        source: "activity",
+        createdAt: iso(3_000),
+        value: {
+          kind: "compacted",
+          message: "Compacted through message 2.",
+          messageSequence: 2,
+        },
+      },
+      {
+        resumeToken: "legacy",
+        source: "activity",
+        createdAt: iso(9_000),
+        value: {
+          kind: "compacted",
+          message: "Legacy compaction event.",
+          messageSequence: null,
+        },
+      },
+    ];
+
+    const view = buildConversationPresentation({ messages, activities });
+
+    expect(view.earlierActivity).toHaveLength(0);
+    expect(required(view.turns[0]).historicalActivities).toEqual([
+      activities[0],
+    ]);
+    expect(required(view.turns[1]).historicalActivities).toEqual([
+      activities[1],
+    ]);
+  });
+
   it("keeps current and resolved waits separate from tool execution", () => {
     const messages = [
       message(1, "user", "build"),

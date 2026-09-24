@@ -322,6 +322,36 @@ function WorkLog({
   );
 }
 
+function HistoricalActivity({
+  entries,
+}: {
+  entries: readonly (TimelineActivityEntry | TimelineLiveTextEntry)[];
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <details className="sa-earlier-activity">
+      <summary>
+        Historical activity · {entries.length} event
+        {entries.length === 1 ? "" : "s"}
+      </summary>
+      <ol>
+        {entries.map((entry, index) => (
+          <li
+            key={
+              ("resumeToken" in entry ? entry.resumeToken : entry.source) +
+              String(index)
+            }
+          >
+            {typeof entry.value === "string"
+              ? entry.value
+              : entry.value.message}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 export function ConversationView({
   messages,
   consumedUserMessages = [],
@@ -390,28 +420,7 @@ export function ConversationView({
 
   return (
     <section className={className} aria-label="Conversation">
-      {presentation.earlierActivity.length > 0 ? (
-        <details className="sa-earlier-activity">
-          <summary>
-            Earlier activity · {presentation.earlierActivity.length} recovered
-            events
-          </summary>
-          <ol>
-            {presentation.earlierActivity.map((entry, index) => (
-              <li
-                key={
-                  ("resumeToken" in entry ? entry.resumeToken : entry.source) +
-                  String(index)
-                }
-              >
-                {typeof entry.value === "string"
-                  ? entry.value
-                  : entry.value.message}
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
+      <HistoricalActivity entries={presentation.earlierActivity} />
       {presentation.turns.map((turn) => (
         <section
           className="sa-conversation-turn"
@@ -446,6 +455,7 @@ export function ConversationView({
               <div className="sa-conversation-user">{entry.value.content}</div>
             </MessageFrame>
           ))}
+          <HistoricalActivity entries={turn.historicalActivities} />
           <WorkLog turn={turn} renderToolCall={renderToolCall} />
           {turn.questions.map((question) => (
             <div key={question.key}>

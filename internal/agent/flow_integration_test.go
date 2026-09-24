@@ -892,6 +892,13 @@ func TestAgentModelHooksIntegration(t *testing.T) {
 		if compactionBefore.Load() == 0 || modelClient.summarizeCalls.Load() == 0 {
 			t.Fatalf("compaction before/model calls = %d/%d", compactionBefore.Load(), modelClient.summarizeCalls.Load())
 		}
+		compacted := readActivityUntil(t, environment.agent, flowID, func(event AgentEvent) bool {
+			return event.Kind == EventKindCompacted
+		})
+		if compacted.Activity.MessageSequence == nil ||
+			!strings.Contains(compacted.Activity.Message, fmt.Sprintf("message %d", *compacted.Activity.MessageSequence)) {
+			t.Fatalf("compaction Activity = %#v", compacted.Activity)
+		}
 	})
 
 	t.Run("business rejection skips model and after hook", func(t *testing.T) {

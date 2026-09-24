@@ -102,6 +102,67 @@ describe("ConversationView", () => {
     );
   });
 
+  it("renders legacy historical activity in its nearest turn", () => {
+    const { container } = render(
+      <ConversationView
+        messages={[
+          {
+            sequence: 1,
+            message: {
+              role: "user",
+              content: "first",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 1_000).toISOString(),
+            },
+          },
+          {
+            sequence: 2,
+            message: {
+              role: "assistant",
+              content: "first answer",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 2_000).toISOString(),
+            },
+          },
+          {
+            sequence: 10,
+            message: {
+              role: "user",
+              content: "second",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 10_000).toISOString(),
+            },
+          },
+        ]}
+        activities={[
+          {
+            resumeToken: "legacy-compaction",
+            source: "activity",
+            createdAt: new Date(base + 9_000).toISOString(),
+            value: {
+              kind: "compacted",
+              message: "Compacted conversation through message 2.",
+              messageSequence: null,
+            },
+          },
+        ]}
+      />,
+    );
+
+    const turns = container.querySelectorAll(".sa-conversation-turn");
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).not.toHaveTextContent("Compacted conversation");
+    expect(turns[1]).toHaveTextContent("Historical activity · 1 event");
+    expect(turns[1]).toHaveTextContent("Compacted conversation");
+    expect(container).not.toHaveTextContent("recovered events");
+  });
+
   it("updates a running tool duration without announcing every tick", () => {
     vi.useFakeTimers();
     vi.setSystemTime(base + 2_000);

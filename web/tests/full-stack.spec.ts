@@ -108,11 +108,11 @@ test("renders chronological transient activity and durable queue interactions", 
       "/reason Checked the constraints | Durable answer",
     ),
   ).toHaveCount(0);
-  const recoveredActivity = history.locator("details.sa-earlier-activity");
-  await expect(recoveredActivity.locator("summary")).toContainText(
-    "1 recovered event",
+  const historicalActivity = history.locator("details.sa-earlier-activity");
+  await expect(historicalActivity.locator("summary")).toContainText(
+    "Historical activity · 1 event",
   );
-  await expect(recoveredActivity).toContainText(
+  await expect(historicalActivity).toContainText(
     "Consumed 1 queued user message.",
   );
   expect(snapshots.length).toBeGreaterThanOrEqual(2);

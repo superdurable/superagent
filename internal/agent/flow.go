@@ -2426,7 +2426,7 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 	})
 	if err != nil {
 		if eventErr := step.flow.writeActivity(ctx, AgentEvent{
-			Kind: EventKindCompactionFailed, Message: "Context compaction failed.",
+			Kind: EventKindCompactionFailed, Message: "Context compaction failed.", MessageSequence: &input,
 		}); eventErr != nil {
 			return nil, errors.Join(err, eventErr)
 		}
@@ -2450,7 +2450,7 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 		return nil, err
 	}
 	activity := AgentEvent{
-		Kind: EventKindCompacted,
+		Kind: EventKindCompacted, MessageSequence: &input,
 		Message: condenseActivityMessage(fmt.Sprintf(
 			"Compacted conversation through message %d.", input,
 		)),
@@ -2828,7 +2828,7 @@ func (flow *Flow) callCompactionModel(
 	})
 	if err != nil {
 		if eventErr := flow.writeActivity(ctx, AgentEvent{
-			Kind: EventKindCompactionFailed, Message: "Context compaction failed.",
+			Kind: EventKindCompactionFailed, Message: "Context compaction failed.", MessageSequence: &throughSequence,
 		}); eventErr != nil {
 			return modelCallResult{}, errors.Join(err, eventErr)
 		}
@@ -2966,7 +2966,7 @@ func (flow *Flow) applyCompactionModelResult(
 		return "", err
 	}
 	activity := AgentEvent{
-		Kind: EventKindCompacted,
+		Kind: EventKindCompacted, MessageSequence: &result.ThroughSequence,
 		Message: condenseActivityMessage(fmt.Sprintf(
 			"Compacted conversation through message %d.", result.ThroughSequence,
 		)),
