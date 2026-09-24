@@ -79,9 +79,10 @@ An embedding application may configure `AgentConfig.InactivityTimeoutSeconds`
 and inject `InactivityExpirationHandler`. The Agent owns the inactivity
 decision through one `InactivityTimeout` branch started beside the Agent loop.
 Accepted user RPCs atomically advance `InactivityDeadline` and publish
-`ResetInactivityTimer` only when the extension exceeds one minute. Model and
-ordinary tool work do not pause the deadline. `DurableWait` extends it through
-the wait target. Expiration retries the stable Flow ID, Run ID, deadline, and
+`ResetInactivityTimer` only when the extension exceeds one minute. The Agent
+Client records the operation timestamp once before any RPC lock retry. Model
+and ordinary tool work do not pause the deadline. `DurableWait` extends it
+through the wait target. Expiration retries the stable Flow ID, Run ID, deadline, and
 runtime-metadata callback for up to seven days. Callback success commits
 `expiring`, emits `inactivity_expired`, and force-completes the Agent; cross-
 resource cleanup remains the embedding application's job.

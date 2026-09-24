@@ -115,8 +115,9 @@ func (client *Client) SendMessage(ctx context.Context, flowID FlowID, message Us
 		return err
 	}
 	pending := PendingUserMessage{MessageID: MessageID(uuid.NewString()), Value: message}
+	request := sendMessageRPCInput{FirstAttemptAt: time.Now().UTC(), Value: pending}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, pending, accepted)
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SendMessage, request, accepted)
 	})
 	if err != nil {
 		return err
@@ -136,8 +137,9 @@ func (client *Client) AnswerQuestions(
 	if err := validateAnswerQuestionsRequest(request); err != nil {
 		return err
 	}
+	rpcRequest := answerQuestionsRPCInput{FirstAttemptAt: time.Now().UTC(), Value: request}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, request, accepted)
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.AnswerQuestions, rpcRequest, accepted)
 	})
 	if err != nil {
 		return err
@@ -184,8 +186,9 @@ func (client *Client) SteerMessage(ctx context.Context, flowID FlowID, request S
 	if err := validateMessageID(request.MessageID); err != nil {
 		return err
 	}
+	rpcRequest := steerMessageRPCInput{FirstAttemptAt: time.Now().UTC(), Value: request}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
-		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, request, accepted)
+		return client.sdk.InvokeRPC(ctx, string(flowID), client.flow.SteerMessage, rpcRequest, accepted)
 	})
 	if err != nil {
 		return err
@@ -284,11 +287,12 @@ func (client *Client) DeleteQueuedMessage(ctx context.Context, flowID FlowID, me
 		return err
 	}
 	var deleted bool
+	request := deleteQueuedMessageRPCInput{FirstAttemptAt: time.Now().UTC(), Value: messageID}
 	if err := client.sdk.InvokeRPC(
 		ctx,
 		string(flowID),
 		client.flow.DeleteQueuedMessage,
-		messageID,
+		request,
 		&deleted,
 	); err != nil {
 		return err
@@ -308,7 +312,8 @@ func (client *Client) ApproveTool(ctx context.Context, flowID FlowID, request To
 		return errors.New("call ID must not be empty")
 	}
 	var accepted bool
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, request, &accepted); err != nil {
+	rpcRequest := approveToolRPCInput{FirstAttemptAt: time.Now().UTC(), Value: request}
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ApproveTool, rpcRequest, &accepted); err != nil {
 		return err
 	}
 	return ensureAccepted(accepted, CommandApproveTool)
@@ -337,12 +342,13 @@ func (client *Client) ResolveToolRecovery(
 			return err
 		}
 	}
+	rpcRequest := resolveToolRecoveryRPCInput{FirstAttemptAt: time.Now().UTC(), Value: request}
 	accepted, err := invokeLockedCommand(ctx, client.commandTimeout, func(ctx context.Context, accepted *bool) error {
 		return client.sdk.InvokeRPC(
 			ctx,
 			string(flowID),
 			client.flow.ResolveToolRecovery,
-			request,
+			rpcRequest,
 			accepted,
 		)
 	})
@@ -361,7 +367,8 @@ func (client *Client) ExecutePlan(ctx context.Context, flowID FlowID, request Pl
 		return errors.New("plan revision must be positive")
 	}
 	var accepted bool
-	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, request, &accepted); err != nil {
+	rpcRequest := executePlanRPCInput{FirstAttemptAt: time.Now().UTC(), Value: request}
+	if err := client.sdk.InvokeRPC(ctx, string(flowID), client.flow.ExecutePlan, rpcRequest, &accepted); err != nil {
 		return err
 	}
 	return ensureAccepted(accepted, CommandExecutePlan)

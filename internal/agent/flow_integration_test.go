@@ -68,7 +68,7 @@ func TestAgentInactivityExpirationIntegration(t *testing.T) {
 		)
 		flowID := FlowID("agent-inactivity-reset-" + randomLocalID(t))
 		config := NewAgentConfig()
-		config.InactivityTimeoutSeconds = 2
+		config.InactivityTimeoutSeconds = 5
 		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +76,9 @@ func TestAgentInactivityExpirationIntegration(t *testing.T) {
 		if initial.Description.InactivityDeadline == nil {
 			t.Fatalf("initial Snapshot = %#v", initial.Description)
 		}
-		delay := time.NewTimer(200 * time.Millisecond)
+		// Cross the durable clock's one-second precision before testing the
+		// 100ms reset-coalescing threshold.
+		delay := time.NewTimer(1500 * time.Millisecond)
 		defer delay.Stop()
 		select {
 		case <-delay.C:

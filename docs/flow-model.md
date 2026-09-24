@@ -216,9 +216,10 @@ When `inactivity_timeout_seconds` is positive, `Init` starts one parallel
 `InactivityTimeout` Step and persists its exact `InactivityDeadline`. Accepted
 messages, answers, plan execution, steering, queue deletion, approvals, and
 recovery decisions advance the deadline transactionally. Extensions of one
-minute or less do not publish another reset. Snapshot and Stream reads do not
-reset it. Model calls and serial or parallel tools continue under the same
-deadline. `DurableWait` advances it to the wait target plus the timeout.
+minute or less do not publish another reset. The Agent Client captures the
+operation timestamp once before any RPC lock retry. Snapshot and Stream reads
+do not reset it. Model calls and serial or parallel tools continue under the
+same deadline. `DurableWait` advances it to the wait target plus the timeout.
 
 ## Durable resources
 

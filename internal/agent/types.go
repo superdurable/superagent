@@ -753,6 +753,41 @@ type PendingUserMessage struct {
 	Value     UserMessage `json:"value"`
 }
 
+type sendMessageRPCInput struct {
+	FirstAttemptAt time.Time          `json:"first_attempt_at"`
+	Value          PendingUserMessage `json:"value"`
+}
+
+type answerQuestionsRPCInput struct {
+	FirstAttemptAt time.Time              `json:"first_attempt_at"`
+	Value          AnswerQuestionsRequest `json:"value"`
+}
+
+type steerMessageRPCInput struct {
+	FirstAttemptAt time.Time           `json:"first_attempt_at"`
+	Value          SteerMessageRequest `json:"value"`
+}
+
+type deleteQueuedMessageRPCInput struct {
+	FirstAttemptAt time.Time `json:"first_attempt_at"`
+	Value          MessageID `json:"value"`
+}
+
+type approveToolRPCInput struct {
+	FirstAttemptAt time.Time           `json:"first_attempt_at"`
+	Value          ToolApprovalRequest `json:"value"`
+}
+
+type resolveToolRecoveryRPCInput struct {
+	FirstAttemptAt time.Time                  `json:"first_attempt_at"`
+	Value          ResolveToolRecoveryRequest `json:"value"`
+}
+
+type executePlanRPCInput struct {
+	FirstAttemptAt time.Time            `json:"first_attempt_at"`
+	Value          PlanExecutionRequest `json:"value"`
+}
+
 // AgentDescription is the durable application state needed to render a conversation.
 type AgentDescription struct {
 	Status                     AgentStatus          `json:"status"`
