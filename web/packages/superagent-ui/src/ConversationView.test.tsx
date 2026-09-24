@@ -7,7 +7,10 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConversationView } from "./ConversationView.js";
+import {
+  ConversationView,
+  type ConversationViewProps,
+} from "./ConversationView.js";
 
 const base = Date.parse("2026-09-23T12:00:00Z");
 
@@ -16,6 +19,41 @@ afterEach(() => {
 });
 
 describe("ConversationView", () => {
+  it("summarizes successful and failed operations in a collapsed work log", () => {
+    const { container } = render(
+      <ConversationView
+        messages={toolTurn([
+          { id: "success", name: "read_file", content: "done" },
+          {
+            id: "failure",
+            name: "apply_patch",
+            content: '{"isError":true}',
+          },
+        ])}
+      />,
+    );
+
+    expect(container).toHaveTextContent("3 operations");
+    expect(container).toHaveTextContent("2 succeeded");
+    expect(container).toHaveTextContent("1 failed");
+    expect(screen.getByText("Work log").closest("details")).not.toHaveAttribute(
+      "open",
+    );
+  });
+
+  it("keeps a zero failure count visible for successful work", () => {
+    const { container } = render(
+      <ConversationView
+        messages={toolTurn([
+          { id: "success", name: "read_file", content: "done" },
+        ])}
+      />,
+    );
+
+    expect(container).toHaveTextContent("2 succeeded");
+    expect(container).toHaveTextContent("0 failed");
+  });
+
   it("updates a running tool duration without announcing every tick", () => {
     vi.useFakeTimers();
     vi.setSystemTime(base + 2_000);
@@ -202,4 +240,48 @@ function toggleWorkLog(open: boolean) {
   if (details === null) throw new Error("work log details missing");
   details.open = open;
   fireEvent(details, new Event("toggle"));
+}
+
+function toolTurn(
+  tools: readonly { id: string; name: string; content: string }[],
+): ConversationViewProps["messages"] {
+  return [
+    {
+      sequence: 1,
+      message: {
+        role: "user",
+        content: "run tools",
+        toolCalls: [],
+        toolCallId: null,
+        toolName: null,
+        createdAt: new Date(base).toISOString(),
+      },
+    },
+    {
+      sequence: 2,
+      message: {
+        role: "assistant",
+        content: "",
+        toolCalls: tools.map(({ id, name }) => ({
+          id,
+          name,
+          argumentsJson: "{}",
+        })),
+        toolCallId: null,
+        toolName: null,
+        createdAt: new Date(base + 500).toISOString(),
+      },
+    },
+    ...tools.map(({ id, name, content }, index) => ({
+      sequence: index + 3,
+      message: {
+        role: "tool" as const,
+        content,
+        toolCalls: [],
+        toolCallId: id,
+        toolName: name,
+        createdAt: new Date(base + 1_000 + index * 500).toISOString(),
+      },
+    })),
+  ];
 }

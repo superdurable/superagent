@@ -882,6 +882,15 @@
   gap: 10px;
 }
 
+.sa-work-log__summary-count {
+  color: var(--sa-muted-color, #667066);
+  font-size: 11px;
+}
+
+.sa-work-log__summary-count--failed {
+  color: var(--sa-danger-color, #9b2c25);
+}
+
 .sa-work-log__body {
   display: flex;
   flex-direction: column;

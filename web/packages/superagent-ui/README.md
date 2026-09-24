@@ -79,6 +79,10 @@ negative legacy timing is omitted. Running durations update once per second but
 are excluded from live-region announcements. Stream timestamps remain ordering
 metadata and are never rendered as stream duration.
 
+Collapsed Work logs show separate succeeded and failed operation counts. Active
+and unknown counts appear when those states are present, so one failed operation
+does not make the entire log look unsuccessful.
+
 Set `isExecutionLive={false}` for terminal history. Unpaired legacy calls then
 show `unknown` and do not start the elapsed-time interval. Collapsed Work logs
 do not mount tool result bodies or call `renderToolCall` until expanded.
