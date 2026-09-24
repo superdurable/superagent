@@ -1143,6 +1143,15 @@ type ModelReply struct {
 	ProviderContextItems []ProviderContextItem `json:"provider_context_items"`
 }
 
+// ModelUsage records the exact token usage reported by one model call.
+type ModelUsage struct {
+	InputTokens       int64 `json:"input_tokens"`
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+	OutputTokens      int64 `json:"output_tokens"`
+	ReasoningTokens   int64 `json:"reasoning_tokens"`
+	TotalTokens       int64 `json:"total_tokens"`
+}
+
 // ToolDefinition is one provider-neutral function schema and execution policy.
 type ToolDefinition struct {
 	Name                      ToolName
@@ -1180,6 +1189,7 @@ type ModelRequest struct {
 	WriteActivity  ActivityWriter
 	ForcedTool     ToolName
 	FlowID         FlowID
+	CallID         CallID
 }
 
 // SummarizeRequest contains one cumulative compaction invocation.
@@ -1188,13 +1198,26 @@ type SummarizeRequest struct {
 	PreviousSummary string
 	Messages        []AgentMessage
 	FlowID          FlowID
+	CallID          CallID
 }
 
 // ModelClient is the provider-neutral model boundary.
 type ModelClient interface {
-	Complete(context.Context, ModelRequest) (ModelReply, error)
-	Summarize(context.Context, SummarizeRequest) (string, error)
+	Complete(context.Context, ModelRequest) (ModelReply, ModelUsage, error)
+	Summarize(context.Context, SummarizeRequest) (string, ModelUsage, error)
 	CountTokens(Model, []AgentMessage) int
+}
+
+// BeforeModelCallHook admits or rejects one model call before provider dispatch.
+type BeforeModelCallHook func(context.Context, FlowID, CallID, Model, bool) (bool, error)
+
+// AfterModelCallHook synchronizes exact usage after one successful model call.
+type AfterModelCallHook func(context.Context, FlowID, CallID, ModelUsage) error
+
+// ModelHooksConfig configures optional durable boundaries around model calls.
+type ModelHooksConfig struct {
+	BeforeModelCall BeforeModelCallHook
+	AfterModelCall  AfterModelCallHook
 }
 
 // ToolInvocation contains one trusted-registry execution request.

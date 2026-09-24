@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
@@ -33,6 +34,7 @@ var (
 	agentConfigAttribute          = dex.DefineAttribute[AgentConfig]("AgentConfig")
 	agentRuntimeMetadataAttribute = dex.DefineAttribute[JSONObject]("AgentRuntimeMetadata")
 	agentStateAttribute           = dex.DefineAttribute[AgentState]("AgentState")
+	modelUsageAttribute           = dex.DefineAttribute[ModelUsage]("ModelUsage")
 	waitingInputRoundAttribute    = dex.DefineAttribute[WaitingInputRound]("WaitingInputRound")
 	contextSummaryAttribute       = dex.DefineAttribute[ContextSummary]("ContextSummary")
 	currentMessagesAttribute      = dex.DefineAttributeMap[AgentMessage]("CurrentMessages")
@@ -59,6 +61,7 @@ var (
 // Flow is the durable AI Agent state machine.
 type Flow struct {
 	modelClient                                ModelClient
+	modelHooks                                 *ModelHooksConfig
 	tools                                      ToolRegistry
 	inactivityExpiration                       InactivityExpirationHandler
 	rpcDefinitionsForTestOnly                  []dex.RPCDef
@@ -78,6 +81,16 @@ func WithInactivityExpirationHandler(handler InactivityExpirationHandler) FlowOp
 	}
 	return func(flow *Flow) {
 		flow.inactivityExpiration = handler
+	}
+}
+
+// WithModelHooks configures optional durable boundaries around model calls.
+func WithModelHooks(config *ModelHooksConfig) FlowOption {
+	return func(flow *Flow) {
+		if config != nil && (config.BeforeModelCall == nil || config.AfterModelCall == nil) {
+			panic("both model hooks are required")
+		}
+		flow.modelHooks = config
 	}
 }
 
@@ -129,6 +142,10 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(answeredInputStep{flow: flow}),
 		dex.DefineStep(compactContextStep{flow: flow}),
 		dex.DefineStep(callModelStep{flow: flow}),
+		dex.DefineStep(beforeModelCallStep{flow: flow}),
+		dex.DefineStep(callModelWithHooksStep{flow: flow}),
+		dex.DefineStep(afterModelCallStep{flow: flow}),
+		dex.DefineStep(applyModelResultStep{flow: flow}),
 		dex.DefineStep(checkSteeredStep{flow: flow}),
 		dex.DefineStep(routeToolStep{flow: flow}),
 		dex.DefineStep(awaitToolApprovalStep{flow: flow}),
@@ -222,6 +239,7 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 			agentConfigAttribute,
 			agentRuntimeMetadataAttribute,
 			agentStateAttribute,
+			modelUsageAttribute,
 			waitingInputRoundAttribute,
 			contextSummaryAttribute,
 			currentMessagesAttribute,
@@ -1934,6 +1952,10 @@ const (
 	stepTypeAnsweredInput         stepType = "AnsweredInput"
 	stepTypeCompactContext        stepType = "CompactContext"
 	stepTypeCallModel             stepType = "CallModel"
+	stepTypeBeforeModelCall       stepType = "BeforeModelCall"
+	stepTypeCallModelWithHooks    stepType = "CallModelWithHooks"
+	stepTypeAfterModelCall        stepType = "AfterModelCall"
+	stepTypeApplyModelResult      stepType = "ApplyModelResult"
 	stepTypeCheckSteered          stepType = "CheckSteered"
 	stepTypeRouteTool             stepType = "RouteTool"
 	stepTypeAwaitApproval         stepType = "AwaitToolApproval"
@@ -1953,6 +1975,54 @@ const (
 
 type continuation string
 type stepType string
+
+type modelCallKind string
+
+const (
+	modelCallKindResponse   modelCallKind = "response"
+	modelCallKindCompaction modelCallKind = "compaction"
+)
+
+type modelCallPreparation struct {
+	Kind            modelCallKind `json:"kind"`
+	ThroughSequence Sequence      `json:"through_sequence,omitempty"`
+}
+
+type modelCallInput struct {
+	CallID          CallID        `json:"call_id"`
+	Kind            modelCallKind `json:"kind"`
+	ThroughSequence Sequence      `json:"through_sequence,omitempty"`
+}
+
+type modelResponseResult struct {
+	Reply                   ModelReply `json:"reply"`
+	StartedAt               time.Time  `json:"started_at"`
+	ExpectedMessageSequence Sequence   `json:"expected_message_sequence"`
+}
+
+type modelCompactionResult struct {
+	Summary         string   `json:"summary"`
+	ThroughSequence Sequence `json:"through_sequence"`
+}
+
+type modelCallResult struct {
+	CallID     CallID                 `json:"call_id"`
+	Kind       modelCallKind          `json:"kind"`
+	Response   *modelResponseResult   `json:"response,omitempty"`
+	Compaction *modelCompactionResult `json:"compaction,omitempty"`
+}
+
+func modelCallID(ctx dex.Context, kind modelCallKind) CallID {
+	encoded, err := json.Marshal(struct {
+		FlowID          string        `json:"flow_id"`
+		StepExecutionID string        `json:"step_execution_id"`
+		Kind            modelCallKind `json:"kind"`
+	}{ctx.FlowID(), ctx.StepExecutionID(), kind})
+	if err != nil {
+		panic(fmt.Sprintf("encode model call identity: %v", err))
+	}
+	return CallID(uuid.NewSHA1(uuid.NameSpaceOID, encoded).String())
+}
 
 type heartbeatPhase string
 
@@ -2340,9 +2410,18 @@ func (step answeredInputStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDec
 		return nil, err
 	}
 	if cutoff != nil {
-		return dex.GoTo(compactContextStep{flow: step.flow}, *cutoff), nil
+		if step.flow.modelHooks == nil {
+			return dex.GoTo(compactContextStep{flow: step.flow}, *cutoff), nil
+		}
+		return dex.GoTo(beforeModelCallStep{flow: step.flow}, modelCallPreparation{
+			Kind:            modelCallKindCompaction,
+			ThroughSequence: *cutoff,
+		}), nil
 	}
-	return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
+	if step.flow.modelHooks == nil {
+		return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
+	}
+	return dex.GoTo(beforeModelCallStep{flow: step.flow}, modelCallPreparation{Kind: modelCallKindResponse}), nil
 }
 
 type compactContextStep struct {
@@ -2368,12 +2447,7 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 	if err != nil {
 		return nil, err
 	}
-	messages, err := step.flow.loadMessages(
-		ctx,
-		state.SummarizedThroughSequence+1,
-		input,
-		config,
-	)
+	messages, err := step.flow.loadMessages(ctx, state.SummarizedThroughSequence+1, input, config)
 	if err != nil {
 		return nil, err
 	}
@@ -2382,28 +2456,28 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 		return nil, err
 	}
 	if heartbeatErr := ctx.RecordHeartbeat(compactionHeartbeat{
-		Phase:           heartbeatPhaseCompacting,
-		ThroughSequence: input,
+		Phase: heartbeatPhaseCompacting, ThroughSequence: input,
 	}); heartbeatErr != nil {
 		return nil, heartbeatErr
 	}
-	summary, err := step.flow.modelClient.Summarize(ctx, SummarizeRequest{
-		Config:          config,
-		PreviousSummary: previousSummary.Content,
-		Messages:        messages,
-		FlowID:          FlowID(ctx.FlowID()),
+	summary, usage, err := step.flow.modelClient.Summarize(ctx, SummarizeRequest{
+		Config: config, PreviousSummary: previousSummary.Content, Messages: messages,
+		FlowID: FlowID(ctx.FlowID()), CallID: modelCallID(ctx, modelCallKindCompaction),
 	})
 	if err != nil {
-		if eventErr := step.flow.writeActivity(ctx, AgentEvent{Kind: EventKindCompactionFailed, Message: "Context compaction failed."}); eventErr != nil {
+		if eventErr := step.flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindCompactionFailed, Message: "Context compaction failed.",
+		}); eventErr != nil {
 			return nil, errors.Join(err, eventErr)
 		}
 		return nil, err
 	}
+	if usageErr := modelUsageAttribute.Set(ctx, usage); usageErr != nil {
+		return nil, usageErr
+	}
 	generation := state.CompactionGeneration + 1
 	if err := contextSummaryAttribute.Set(ctx, ContextSummary{
-		Generation:                generation,
-		SummarizedThroughSequence: input,
-		Content:                   summary,
+		Generation: generation, SummarizedThroughSequence: input, Content: summary,
 	}); err != nil {
 		return nil, err
 	}
@@ -2416,10 +2490,11 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 		return nil, err
 	}
 	activity := AgentEvent{
-		Kind:    EventKindCompacted,
-		Message: fmt.Sprintf("Compacted conversation through message %d.", input),
+		Kind: EventKindCompacted,
+		Message: condenseActivityMessage(fmt.Sprintf(
+			"Compacted conversation through message %d.", input,
+		)),
 	}
-	activity.Message = condenseActivityMessage(activity.Message)
 	if err := agentActivityStream.Write(ctx, activity); err != nil {
 		return nil, err
 	}
@@ -2463,9 +2538,7 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	progress := modelProgress{
-		ctx:               ctx,
-		activityWriteFunc: step.flow.writeActivity,
-		messageSequence:   state.NextSequence,
+		ctx: ctx, activityWriteFunc: step.flow.writeActivity, messageSequence: state.NextSequence,
 	}
 	modelStartedAt := ctx.FirstAttemptAt().UTC()
 	attempt := ctx.Attempt()
@@ -2481,44 +2554,47 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		return reasoningWriter.Write(chunk)
 	}
-	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + ".", Attempt: &attempt}); activityErr != nil {
+	if activityErr := progress.writeActivity(AgentEvent{
+		Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + ".", Attempt: &attempt,
+	}); activityErr != nil {
 		return nil, activityErr
 	}
 	messages, err := step.flow.contextMessages(ctx, config, state)
 	if err != nil {
 		return nil, err
 	}
-	reply, err := step.flow.modelClient.Complete(ctx, ModelRequest{
-		Config:         config,
-		Messages:       messages,
-		Tools:          tools,
-		WriteAssistant: writeAssistant,
-		WriteReasoning: writeReasoning,
-		WriteActivity:  progress.writeActivity,
-		ForcedTool:     forcedToolName,
-		FlowID:         FlowID(ctx.FlowID()),
+	reply, usage, err := step.flow.modelClient.Complete(ctx, ModelRequest{
+		Config: config, Messages: messages, Tools: tools,
+		WriteAssistant: writeAssistant, WriteReasoning: writeReasoning,
+		WriteActivity: progress.writeActivity, ForcedTool: forcedToolName,
+		FlowID: FlowID(ctx.FlowID()), CallID: modelCallID(ctx, modelCallKindResponse),
 	})
 	if err != nil {
-		if eventErr := progress.writeActivity(AgentEvent{Kind: EventKindModelFailed, Message: "Model request failed.", Attempt: &attempt}); eventErr != nil {
+		if eventErr := progress.writeActivity(AgentEvent{
+			Kind: EventKindModelFailed, Message: "Model request failed.", Attempt: &attempt,
+		}); eventErr != nil {
 			return nil, errors.Join(err, eventErr)
 		}
 		return nil, err
 	}
+	if usageErr := modelUsageAttribute.Set(ctx, usage); usageErr != nil {
+		return nil, usageErr
+	}
 	if strings.TrimSpace(reply.Content) == "" && len(reply.ToolCalls) == 0 {
 		return nil, errors.New("the model returned no content or tool calls")
 	}
-	messageSequence, appendErr := step.flow.appendMessage(ctx, AgentMessage{
-		Role:                 MessageRoleAssistant,
-		Content:              reply.Content,
-		ToolCalls:            reply.ToolCalls,
-		ProviderContextItems: reply.ProviderContextItems,
-		StartedAt:            &modelStartedAt,
+	messageSequence, err := step.flow.appendMessage(ctx, AgentMessage{
+		Role: MessageRoleAssistant, Content: reply.Content,
+		ToolCalls: reply.ToolCalls, ProviderContextItems: reply.ProviderContextItems,
+		StartedAt: &modelStartedAt,
 	})
-	if appendErr != nil {
-		return nil, appendErr
+	if err != nil {
+		return nil, err
 	}
 	if messageSequence != progress.messageSequence {
-		return nil, fmt.Errorf("assistant message sequence changed from %d to %d", progress.messageSequence, messageSequence)
+		return nil, fmt.Errorf(
+			"assistant message sequence changed from %d to %d", progress.messageSequence, messageSequence,
+		)
 	}
 	eventMessage := "Model response completed."
 	if len(reply.ToolCalls) > 0 {
@@ -2528,7 +2604,9 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		eventMessage = "Model requested: " + strings.Join(names, ", ")
 	}
-	if activityErr := progress.writeActivity(AgentEvent{Kind: EventKindModelCompleted, Message: eventMessage, Attempt: &attempt}); activityErr != nil {
+	if activityErr := progress.writeActivity(AgentEvent{
+		Kind: EventKindModelCompleted, Message: eventMessage, Attempt: &attempt,
+	}); activityErr != nil {
 		return nil, activityErr
 	}
 	state, err = agentStateAttribute.Get(ctx)
@@ -2574,6 +2652,437 @@ func (step callModelStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	return dex.GoTo(checkSteeredStep{flow: step.flow}, continueRouteTool), nil
 }
 
+type beforeModelCallStep struct {
+	dex.StepDefaultsNoWaitFor[modelCallPreparation]
+	flow *Flow
+}
+
+var _ dex.Step[modelCallPreparation] = beforeModelCallStep{}
+
+func (beforeModelCallStep) GetStepType() string { return string(stepTypeBeforeModelCall) }
+
+func (beforeModelCallStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
+
+func (step beforeModelCallStep) Execute(
+	ctx dex.Context,
+	input modelCallPreparation,
+) (*dex.StepDecision, error) {
+	if step.flow.modelHooks == nil {
+		return nil, errors.New("model hooks are not configured")
+	}
+	model, err := modelForCall(ctx, input.Kind)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := model.Provider()
+	if err != nil {
+		return nil, err
+	}
+	if provider != ProviderOpenAI && provider != ProviderMock {
+		return nil, fmt.Errorf("model hooks require an exact-usage provider, got %q", provider)
+	}
+	callID := modelCallID(ctx, input.Kind)
+	admitted, err := step.flow.modelHooks.BeforeModelCall(
+		ctx,
+		FlowID(ctx.FlowID()),
+		callID,
+		model,
+		input.Kind == modelCallKindCompaction,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !admitted {
+		if err := step.flow.writeActivity(ctx, AgentEvent{
+			Kind:    EventKindModelFailed,
+			Message: "Model call was not admitted.",
+		}); err != nil {
+			return nil, err
+		}
+		return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
+	}
+	return dex.GoTo(callModelWithHooksStep{flow: step.flow}, modelCallInput{
+		CallID:          callID,
+		Kind:            input.Kind,
+		ThroughSequence: input.ThroughSequence,
+	}), nil
+}
+
+type callModelWithHooksStep struct {
+	dex.StepDefaultsNoWaitFor[modelCallInput]
+	flow *Flow
+}
+
+var _ dex.Step[modelCallInput] = callModelWithHooksStep{}
+
+func (callModelWithHooksStep) GetStepType() string { return string(stepTypeCallModelWithHooks) }
+
+func (callModelWithHooksStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
+
+func (step callModelWithHooksStep) Execute(
+	ctx dex.Context,
+	input modelCallInput,
+) (*dex.StepDecision, error) {
+	var result modelCallResult
+	var err error
+	switch input.Kind {
+	case modelCallKindResponse:
+		result, err = step.flow.callResponseModel(ctx, input.CallID)
+	case modelCallKindCompaction:
+		result, err = step.flow.callCompactionModel(ctx, input.CallID, input.ThroughSequence)
+	default:
+		err = fmt.Errorf("unknown model call kind %q", input.Kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return dex.GoTo(afterModelCallStep{flow: step.flow}, result), nil
+}
+
+type afterModelCallStep struct {
+	dex.StepDefaultsNoWaitFor[modelCallResult]
+	flow *Flow
+}
+
+var _ dex.Step[modelCallResult] = afterModelCallStep{}
+
+func (afterModelCallStep) GetStepType() string { return string(stepTypeAfterModelCall) }
+
+func (afterModelCallStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
+
+func (step afterModelCallStep) Execute(
+	ctx dex.Context,
+	input modelCallResult,
+) (*dex.StepDecision, error) {
+	if step.flow.modelHooks == nil {
+		return nil, errors.New("model hooks are not configured")
+	}
+	usage, err := modelUsageAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := step.flow.modelHooks.AfterModelCall(
+		ctx,
+		FlowID(ctx.FlowID()),
+		input.CallID,
+		usage,
+	); err != nil {
+		return nil, err
+	}
+	return dex.GoTo(applyModelResultStep{flow: step.flow}, input), nil
+}
+
+type applyModelResultStep struct {
+	dex.StepDefaultsNoWaitFor[modelCallResult]
+	flow *Flow
+}
+
+var _ dex.Step[modelCallResult] = applyModelResultStep{}
+
+func (applyModelResultStep) GetStepType() string { return string(stepTypeApplyModelResult) }
+
+func (applyModelResultStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
+
+func (step applyModelResultStep) Execute(
+	ctx dex.Context,
+	input modelCallResult,
+) (*dex.StepDecision, error) {
+	switch input.Kind {
+	case modelCallKindResponse:
+		if input.Response == nil || input.Compaction != nil {
+			return nil, errors.New("response model result is invalid")
+		}
+		next, err := step.flow.applyResponseModelResult(ctx, *input.Response)
+		if err != nil {
+			return nil, err
+		}
+		return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+	case modelCallKindCompaction:
+		if input.Compaction == nil || input.Response != nil {
+			return nil, errors.New("compaction model result is invalid")
+		}
+		next, err := step.flow.applyCompactionModelResult(ctx, *input.Compaction)
+		if err != nil {
+			return nil, err
+		}
+		return dex.GoTo(checkSteeredStep{flow: step.flow}, next), nil
+	default:
+		return nil, fmt.Errorf("unknown model call kind %q", input.Kind)
+	}
+}
+
+func modelForCall(ctx dex.Context, kind modelCallKind) (Model, error) {
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	switch kind {
+	case modelCallKindResponse:
+		return config.Model, nil
+	case modelCallKindCompaction:
+		if config.CompactionModel != nil {
+			return *config.CompactionModel, nil
+		}
+		return config.Model, nil
+	default:
+		return "", fmt.Errorf("unknown model call kind %q", kind)
+	}
+}
+
+func (flow *Flow) callCompactionModel(
+	ctx dex.Context,
+	callID CallID,
+	throughSequence Sequence,
+) (modelCallResult, error) {
+	if err := flow.updateStatus(ctx, AgentStatusCompactingContext); err != nil {
+		return modelCallResult{}, err
+	}
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	messages, err := flow.loadMessages(ctx, state.SummarizedThroughSequence+1, throughSequence, config)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	previousSummary, err := flow.getSummary(ctx)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	if heartbeatErr := ctx.RecordHeartbeat(compactionHeartbeat{
+		Phase:           heartbeatPhaseCompacting,
+		ThroughSequence: throughSequence,
+	}); heartbeatErr != nil {
+		return modelCallResult{}, heartbeatErr
+	}
+	summary, usage, err := flow.modelClient.Summarize(ctx, SummarizeRequest{
+		Config:          config,
+		PreviousSummary: previousSummary.Content,
+		Messages:        messages,
+		FlowID:          FlowID(ctx.FlowID()),
+		CallID:          callID,
+	})
+	if err != nil {
+		if eventErr := flow.writeActivity(ctx, AgentEvent{
+			Kind: EventKindCompactionFailed, Message: "Context compaction failed.",
+		}); eventErr != nil {
+			return modelCallResult{}, errors.Join(err, eventErr)
+		}
+		return modelCallResult{}, err
+	}
+	if usageErr := modelUsageAttribute.Set(ctx, usage); usageErr != nil {
+		return modelCallResult{}, usageErr
+	}
+	return modelCallResult{
+		CallID: callID,
+		Kind:   modelCallKindCompaction,
+		Compaction: &modelCompactionResult{
+			Summary: summary, ThroughSequence: throughSequence,
+		},
+	}, nil
+}
+
+func (flow *Flow) callResponseModel(ctx dex.Context, callID CallID) (modelCallResult, error) {
+	if err := flow.updateStatus(ctx, AgentStatusCallingModel); err != nil {
+		return modelCallResult{}, err
+	}
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	tools := flow.invocationToolDefinitions(config, state)
+	var forcedToolName ToolName
+	if state.InteractionMode == InteractionModePlanning && state.PlanningRequiresWrite {
+		forcedToolName = ToolNameWriteTodos
+	}
+	assistantWriter, err := dex.NewBufferedTextStream(ctx, assistantTextStream)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	reasoningWriter, err := dex.NewBufferedTextStream(ctx, reasoningSummaryStream)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	progress := modelProgress{
+		ctx: ctx, activityWriteFunc: flow.writeActivity, messageSequence: state.NextSequence,
+	}
+	modelStartedAt := ctx.FirstAttemptAt().UTC()
+	attempt := ctx.Attempt()
+	writeAssistant := func(chunk string) error {
+		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseAssistantStream}); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		return assistantWriter.Write(chunk)
+	}
+	writeReasoning := func(chunk string) error {
+		if heartbeatErr := ctx.RecordHeartbeat(modelHeartbeat{Phase: heartbeatPhaseReasoningStream}); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		return reasoningWriter.Write(chunk)
+	}
+	if activityErr := progress.writeActivity(AgentEvent{
+		Kind: EventKindModelStarted, Message: "Calling " + string(config.Model) + ".", Attempt: &attempt,
+	}); activityErr != nil {
+		return modelCallResult{}, activityErr
+	}
+	messages, err := flow.contextMessages(ctx, config, state)
+	if err != nil {
+		return modelCallResult{}, err
+	}
+	reply, usage, err := flow.modelClient.Complete(ctx, ModelRequest{
+		Config: config, Messages: messages, Tools: tools,
+		WriteAssistant: writeAssistant, WriteReasoning: writeReasoning,
+		WriteActivity: progress.writeActivity, ForcedTool: forcedToolName,
+		FlowID: FlowID(ctx.FlowID()), CallID: callID,
+	})
+	if err != nil {
+		if eventErr := progress.writeActivity(AgentEvent{
+			Kind: EventKindModelFailed, Message: "Model request failed.", Attempt: &attempt,
+		}); eventErr != nil {
+			return modelCallResult{}, errors.Join(err, eventErr)
+		}
+		return modelCallResult{}, err
+	}
+	if strings.TrimSpace(reply.Content) == "" && len(reply.ToolCalls) == 0 {
+		return modelCallResult{}, errors.New("the model returned no content or tool calls")
+	}
+	if usageErr := modelUsageAttribute.Set(ctx, usage); usageErr != nil {
+		return modelCallResult{}, usageErr
+	}
+	eventMessage := "Model response completed."
+	if len(reply.ToolCalls) > 0 {
+		names := make([]string, 0, len(reply.ToolCalls))
+		for _, call := range reply.ToolCalls {
+			names = append(names, string(call.Name))
+		}
+		eventMessage = "Model requested: " + strings.Join(names, ", ")
+	}
+	if err := progress.writeActivity(AgentEvent{
+		Kind: EventKindModelCompleted, Message: eventMessage, Attempt: &attempt,
+	}); err != nil {
+		return modelCallResult{}, err
+	}
+	return modelCallResult{
+		CallID: callID,
+		Kind:   modelCallKindResponse,
+		Response: &modelResponseResult{
+			Reply: reply, StartedAt: modelStartedAt, ExpectedMessageSequence: progress.messageSequence,
+		},
+	}, nil
+}
+
+func (flow *Flow) applyCompactionModelResult(
+	ctx dex.Context,
+	result modelCompactionResult,
+) (continuation, error) {
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	generation := state.CompactionGeneration + 1
+	if err := contextSummaryAttribute.Set(ctx, ContextSummary{
+		Generation: generation, SummarizedThroughSequence: result.ThroughSequence, Content: result.Summary,
+	}); err != nil {
+		return "", err
+	}
+	state.SummarizedThroughSequence = result.ThroughSequence
+	state.CompactionGeneration = generation
+	if err := agentStateAttribute.Set(ctx, state); err != nil {
+		return "", err
+	}
+	if _, err := flow.trimSummarizedMessages(ctx, config, state); err != nil {
+		return "", err
+	}
+	activity := AgentEvent{
+		Kind: EventKindCompacted,
+		Message: condenseActivityMessage(fmt.Sprintf(
+			"Compacted conversation through message %d.", result.ThroughSequence,
+		)),
+	}
+	if err := agentActivityStream.Write(ctx, activity); err != nil {
+		return "", err
+	}
+	return continueCallModel, nil
+}
+
+func (flow *Flow) applyResponseModelResult(
+	ctx dex.Context,
+	result modelResponseResult,
+) (continuation, error) {
+	messageSequence, err := flow.appendMessage(ctx, AgentMessage{
+		Role: MessageRoleAssistant, Content: result.Reply.Content,
+		ToolCalls: result.Reply.ToolCalls, ProviderContextItems: result.Reply.ProviderContextItems,
+		StartedAt: &result.StartedAt,
+	})
+	if err != nil {
+		return "", err
+	}
+	if messageSequence != result.ExpectedMessageSequence {
+		return "", fmt.Errorf(
+			"assistant message sequence changed from %d to %d",
+			result.ExpectedMessageSequence,
+			messageSequence,
+		)
+	}
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	state, err := agentStateAttribute.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	state, err = flow.trimSummarizedMessages(ctx, config, state)
+	if err != nil {
+		return "", err
+	}
+	if len(result.Reply.ToolCalls) == 0 {
+		plan, err := flow.getPlan(ctx)
+		if err != nil {
+			return "", err
+		}
+		if plan == nil || plan.Status == PlanStatusCompleted {
+			state.InteractionMode = InteractionModeChat
+			state.PlanningRequiresWrite = false
+			state.PlanNoProgressAttempts = 0
+			if err := agentStateAttribute.Set(ctx, state); err != nil {
+				return "", err
+			}
+		} else if plan.Status == PlanStatusActive &&
+			state.InteractionMode == InteractionModeExecuting &&
+			!allTasksCompleted(plan.Tasks) {
+			state.PlanNoProgressAttempts++
+			if err := agentStateAttribute.Set(ctx, state); err != nil {
+				return "", err
+			}
+			if state.PlanNoProgressAttempts <= maximumAutomaticPlanRecoveryCount {
+				return continueCallModel, nil
+			}
+		}
+		return continueAwaitUser, nil
+	}
+	state.Status = AgentStatusRoutingTool
+	state.PendingToolCalls = result.Reply.ToolCalls
+	state.PendingToolIndex = 0
+	state.PlanNoProgressAttempts = 0
+	if err := agentStateAttribute.Set(ctx, state); err != nil {
+		return "", err
+	}
+	return continueRouteTool, nil
+}
+
 type checkSteeredStep struct {
 	dex.StepDefaults
 	flow *Flow
@@ -2607,13 +3116,25 @@ func (step checkSteeredStep) Execute(ctx dex.Context, input continuation) (*dex.
 			return nil, err
 		}
 		if cutoff != nil {
-			return dex.GoTo(compactContextStep{flow: step.flow}, *cutoff), nil
+			if step.flow.modelHooks == nil {
+				return dex.GoTo(compactContextStep{flow: step.flow}, *cutoff), nil
+			}
+			return dex.GoTo(beforeModelCallStep{flow: step.flow}, modelCallPreparation{
+				Kind:            modelCallKindCompaction,
+				ThroughSequence: *cutoff,
+			}), nil
 		}
-		return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
+		if step.flow.modelHooks == nil {
+			return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
+		}
+		return dex.GoTo(beforeModelCallStep{flow: step.flow}, modelCallPreparation{Kind: modelCallKindResponse}), nil
 	case continueAwaitUser:
 		return dex.GoTo(awaitUserStep{flow: step.flow}, nil), nil
 	case continueCallModel:
-		return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
+		if step.flow.modelHooks == nil {
+			return dex.GoTo(callModelStep{flow: step.flow}, nil), nil
+		}
+		return dex.GoTo(beforeModelCallStep{flow: step.flow}, modelCallPreparation{Kind: modelCallKindResponse}), nil
 	case continueRouteTool:
 		return dex.GoTo(routeToolStep{flow: step.flow}, nil), nil
 	case continueAwaitToolApproval:

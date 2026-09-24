@@ -731,6 +731,243 @@ func TestAgentRejectsInvalidWriteTodosIntegration(t *testing.T) {
 	}
 }
 
+func TestAgentModelHooksIntegration(t *testing.T) {
+	t.Run("retry preserves CallID and usage is not accumulated", func(t *testing.T) {
+		modelClient := &usageIntegrationModel{}
+		var mutex sync.Mutex
+		beforeCallIDs := make([]CallID, 0, 3)
+		afterCallIDs := make([]CallID, 0, 2)
+		afterUsages := make([]ModelUsage, 0, 2)
+		beforeAttempts := 0
+		afterAttempts := 0
+		hooks := &ModelHooksConfig{
+			BeforeModelCall: func(_ context.Context, _ FlowID, callID CallID, _ Model, isCompaction bool) (bool, error) {
+				if isCompaction {
+					return false, errors.New("unexpected compaction")
+				}
+				mutex.Lock()
+				defer mutex.Unlock()
+				beforeCallIDs = append(beforeCallIDs, callID)
+				beforeAttempts++
+				if beforeAttempts == 1 {
+					return false, errors.New("retry admission")
+				}
+				return true, nil
+			},
+			AfterModelCall: func(_ context.Context, _ FlowID, callID CallID, usage ModelUsage) error {
+				mutex.Lock()
+				defer mutex.Unlock()
+				afterCallIDs = append(afterCallIDs, callID)
+				afterUsages = append(afterUsages, usage)
+				afterAttempts++
+				if afterAttempts == 1 {
+					return errors.New("retry usage synchronization")
+				}
+				return nil
+			},
+		}
+		environment := newAgentIntegrationEnvironment(
+			t, modelClient, newIntegrationToolRegistry(), WithModelHooks(hooks),
+		)
+		flowID := FlowID("agent-model-hooks-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage
+		})
+		for _, message := range []string{"first", "second"} {
+			if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: message}); err != nil {
+				t.Fatal(err)
+			}
+			waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+				return snapshot.Description.Status == AgentStatusWaitingForMessage &&
+					historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: "+message)
+			})
+		}
+		mutex.Lock()
+		defer mutex.Unlock()
+		if len(beforeCallIDs) != 3 || beforeCallIDs[0] == "" || beforeCallIDs[0] != beforeCallIDs[1] || beforeCallIDs[2] == beforeCallIDs[1] {
+			t.Fatalf("before CallIDs = %q", beforeCallIDs)
+		}
+		if len(afterCallIDs) != 3 || afterCallIDs[0] != beforeCallIDs[1] ||
+			afterCallIDs[1] != beforeCallIDs[1] || afterCallIDs[2] != beforeCallIDs[2] {
+			t.Fatalf("after CallIDs = %q, before = %q", afterCallIDs, beforeCallIDs)
+		}
+		if len(afterUsages) != 3 || afterUsages[0].TotalTokens != 1 ||
+			afterUsages[1].TotalTokens != 1 || afterUsages[2].TotalTokens != 2 {
+			t.Fatalf("after usage = %#v", afterUsages)
+		}
+		if modelClient.completeCalls.Load() != 2 {
+			t.Fatalf("model calls = %d, want 2", modelClient.completeCalls.Load())
+		}
+	})
+
+	t.Run("Worker replacement after Call retries only After", func(t *testing.T) {
+		modelClient := &usageIntegrationModel{}
+		afterStarted := make(chan struct{})
+		var afterCalls atomic.Int32
+		hooks := &ModelHooksConfig{
+			BeforeModelCall: func(context.Context, FlowID, CallID, Model, bool) (bool, error) {
+				return true, nil
+			},
+			AfterModelCall: func(_ context.Context, _ FlowID, _ CallID, _ ModelUsage) error {
+				if afterCalls.Add(1) == 1 {
+					close(afterStarted)
+					return errors.New("replace Worker before After retry")
+				}
+				return nil
+			},
+		}
+		environment := newAgentIntegrationEnvironment(
+			t, modelClient, newIntegrationToolRegistry(), WithModelHooks(hooks),
+		)
+		flowID := FlowID("agent-model-hooks-replace-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage
+		})
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "replace"}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-afterStarted:
+		case <-time.After(integrationWaitTimeout):
+			t.Fatal("After hook did not start")
+		}
+		environment.replaceWorker(t, flowID)
+		waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description.Status == AgentStatusWaitingForMessage &&
+				historyHasMessage(snapshot.History.Messages, MessageRoleAssistant, "integration response: replace")
+		})
+		if modelClient.completeCalls.Load() != 1 || afterCalls.Load() < 2 {
+			t.Fatalf("model/after calls = %d/%d, want 1/at least 2", modelClient.completeCalls.Load(), afterCalls.Load())
+		}
+	})
+
+	t.Run("compaction uses hooks", func(t *testing.T) {
+		modelClient := &usageIntegrationModel{}
+		var compactionBefore atomic.Int32
+		hooks := &ModelHooksConfig{
+			BeforeModelCall: func(_ context.Context, _ FlowID, _ CallID, _ Model, isCompaction bool) (bool, error) {
+				if isCompaction {
+					compactionBefore.Add(1)
+				}
+				return true, nil
+			},
+			AfterModelCall: func(context.Context, FlowID, CallID, ModelUsage) error { return nil },
+		}
+		environment := newAgentIntegrationEnvironment(
+			t, modelClient, newIntegrationToolRegistry(), WithModelHooks(hooks),
+		)
+		flowID := FlowID("agent-model-hooks-compaction-" + randomLocalID(t))
+		config := NewAgentConfig()
+		config.MaxContextTokens = 80
+		config.CompactionTriggerFraction = 0.60
+		config.CompactionKeepFraction = 0.20
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+			t.Fatal(err)
+		}
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage
+		})
+		for index := 0; index < 6 && compactionBefore.Load() == 0; index++ {
+			message := fmt.Sprintf("long-%d-%s", index, strings.Repeat("context ", 8))
+			previousSequence := readSnapshot(t, environment, flowID).Description.LastSequence
+			previousCompactions := compactionBefore.Load()
+			if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: message}); err != nil {
+				t.Fatal(err)
+			}
+			state := waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+				return state.Status == AgentStatusWaitingForMessage && state.LastSequence >= previousSequence+2
+			})
+			wantResponse := "integration response: " + message
+			if compactionBefore.Load() > previousCompactions {
+				wantResponse = "integration response: "
+			}
+			assertApplicationMessage(t, environment, flowID, state.LastSequence, MessageRoleAssistant, wantResponse)
+		}
+		if compactionBefore.Load() == 0 || modelClient.summarizeCalls.Load() == 0 {
+			t.Fatalf("compaction before/model calls = %d/%d", compactionBefore.Load(), modelClient.summarizeCalls.Load())
+		}
+	})
+
+	t.Run("business rejection skips model and after hook", func(t *testing.T) {
+		modelClient := &usageIntegrationModel{}
+		var afterCalls atomic.Int32
+		hooks := &ModelHooksConfig{
+			BeforeModelCall: func(context.Context, FlowID, CallID, Model, bool) (bool, error) {
+				return false, nil
+			},
+			AfterModelCall: func(context.Context, FlowID, CallID, ModelUsage) error {
+				afterCalls.Add(1)
+				return nil
+			},
+		}
+		environment := newAgentIntegrationEnvironment(
+			t, modelClient, newIntegrationToolRegistry(), WithModelHooks(hooks),
+		)
+		flowID := FlowID("agent-model-hooks-rejected-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage
+		})
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "rejected"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description.Status == AgentStatusWaitingForMessage &&
+				historyHasMessage(snapshot.History.Messages, MessageRoleUser, "rejected")
+		})
+		if modelClient.completeCalls.Load() != 0 || afterCalls.Load() != 0 {
+			t.Fatalf("model/after calls = %d/%d, want 0/0", modelClient.completeCalls.Load(), afterCalls.Load())
+		}
+	})
+
+	t.Run("provider without exact usage fails before dispatch", func(t *testing.T) {
+		modelClient := &usageIntegrationModel{}
+		var beforeCalls atomic.Int32
+		hooks := &ModelHooksConfig{
+			BeforeModelCall: func(context.Context, FlowID, CallID, Model, bool) (bool, error) {
+				beforeCalls.Add(1)
+				return true, nil
+			},
+			AfterModelCall: func(context.Context, FlowID, CallID, ModelUsage) error { return nil },
+		}
+		environment := newAgentIntegrationEnvironment(
+			t, modelClient, newIntegrationToolRegistry(), WithModelHooks(hooks),
+		)
+		flowID := FlowID("agent-model-hooks-provider-" + randomLocalID(t))
+		config := NewAgentConfig()
+		config.Model = "anthropic/claude-test"
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+			t.Fatal(err)
+		}
+		waitForAgentState(t, environment, flowID, func(state AgentState) bool {
+			return state.Status == AgentStatusWaitingForMessage
+		})
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "unsupported"}); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), integrationWaitTimeout)
+		defer cancel()
+		result, err := environment.sdk.WaitForFlow(ctx, string(flowID), dex.WaitForFlowOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != dex.FlowFailed {
+			t.Fatalf("Flow status = %v, want failed", result.Status)
+		}
+		if beforeCalls.Load() != 0 || modelClient.completeCalls.Load() != 0 {
+			t.Fatalf("before/model calls = %d/%d, want 0/0", beforeCalls.Load(), modelClient.completeCalls.Load())
+		}
+	})
+}
+
 func TestAgentFlowDurabilityIntegration(t *testing.T) {
 	modelClient := integrationModel{}
 	toolRegistry := newIntegrationToolRegistry()
@@ -2520,7 +2757,43 @@ type integrationModel struct{}
 
 var _ ModelClient = integrationModel{}
 
-func (integrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+type usageIntegrationModel struct {
+	integrationModel
+	completeCalls  atomic.Int32
+	summarizeCalls atomic.Int32
+}
+
+func (model *usageIntegrationModel) Complete(
+	ctx context.Context,
+	request ModelRequest,
+) (ModelReply, ModelUsage, error) {
+	reply, _, err := model.integrationModel.Complete(ctx, request)
+	if err != nil {
+		return ModelReply{}, ModelUsage{}, err
+	}
+	call := int64(model.completeCalls.Add(1))
+	return reply, ModelUsage{InputTokens: call, TotalTokens: call}, nil
+}
+
+func (model *usageIntegrationModel) Summarize(
+	ctx context.Context,
+	request SummarizeRequest,
+) (string, ModelUsage, error) {
+	summary, _, err := model.integrationModel.Summarize(ctx, request)
+	if err != nil {
+		return "", ModelUsage{}, err
+	}
+	call := int64(model.summarizeCalls.Add(1))
+	return summary, ModelUsage{InputTokens: call, TotalTokens: call}, nil
+}
+
+func (model integrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, ModelUsage, error) {
+	reply, err := model.complete(ctx, request)
+	usage := ModelUsage{InputTokens: 11, OutputTokens: 7, TotalTokens: 18}
+	return reply, usage, err
+}
+
+func (integrationModel) complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
 	if request.WriteAssistant == nil || request.WriteReasoning == nil || request.WriteActivity == nil {
 		return ModelReply{}, errors.New("integration model writers are required")
 	}
@@ -2662,7 +2935,12 @@ func (integrationModel) Complete(ctx context.Context, request ModelRequest) (Mod
 	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
 }
 
-func (integrationModel) Summarize(_ context.Context, request SummarizeRequest) (string, error) {
+func (model integrationModel) Summarize(ctx context.Context, request SummarizeRequest) (string, ModelUsage, error) {
+	summary, err := model.summarize(ctx, request)
+	return summary, ModelUsage{InputTokens: 13, OutputTokens: 5, TotalTokens: 18}, err
+}
+
+func (integrationModel) summarize(_ context.Context, request SummarizeRequest) (string, error) {
 	parts := make([]string, 0, len(request.Messages)+1)
 	if request.PreviousSummary != "" {
 		parts = append(parts, request.PreviousSummary)
@@ -2701,7 +2979,7 @@ func newBlockingFirstModel() *blockingFirstModel {
 	return &blockingFirstModel{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (model *blockingFirstModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+func (model *blockingFirstModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, ModelUsage, error) {
 	shouldBlock := false
 	model.once.Do(func() {
 		shouldBlock = true
@@ -2711,7 +2989,7 @@ func (model *blockingFirstModel) Complete(ctx context.Context, request ModelRequ
 		select {
 		case <-model.release:
 		case <-ctx.Done():
-			return ModelReply{}, ctx.Err()
+			return ModelReply{}, ModelUsage{}, ctx.Err()
 		}
 	}
 	return model.integrationModel.Complete(ctx, request)
@@ -2726,7 +3004,7 @@ func newBlockingPlanModel() *blockingPlanModel {
 	}
 }
 
-func (model *blockingPlanModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+func (model *blockingPlanModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, ModelUsage, error) {
 	if _, hasActivePlan := integrationActivePlanTaskStatus(request.Messages); !hasActivePlan {
 		return model.integrationModel.Complete(ctx, request)
 	}
@@ -2736,14 +3014,14 @@ func (model *blockingPlanModel) Complete(ctx context.Context, request ModelReque
 		select {
 		case <-model.release:
 		case <-ctx.Done():
-			return ModelReply{}, ctx.Err()
+			return ModelReply{}, ModelUsage{}, ctx.Err()
 		}
 	}
 	content := "integration stopped before completing the active plan"
 	if err := request.WriteAssistant(content); err != nil {
-		return ModelReply{}, err
+		return ModelReply{}, ModelUsage{}, err
 	}
-	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, nil
+	return ModelReply{Content: content, ToolCalls: []ToolCall{}}, ModelUsage{InputTokens: 11, OutputTokens: 7, TotalTokens: 18}, nil
 }
 
 func integrationToolReply(request ModelRequest, name ToolName, arguments JSONObject, content string) (ModelReply, error) {
@@ -2871,7 +3149,7 @@ type parallelIntegrationModel struct {
 	integrationModel
 }
 
-func (parallelIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+func (parallelIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, ModelUsage, error) {
 	if integrationLastUserContent(request.Messages) != "/parallel" {
 		return integrationModel{}.Complete(ctx, request)
 	}
@@ -2879,7 +3157,7 @@ func (parallelIntegrationModel) Complete(ctx context.Context, request ModelReque
 		return integrationModel{}.Complete(ctx, request)
 	}
 	if err := request.WriteAssistant("reading in parallel"); err != nil {
-		return ModelReply{}, err
+		return ModelReply{}, ModelUsage{}, err
 	}
 	return ModelReply{
 		Content: "reading in parallel",
@@ -2887,14 +3165,14 @@ func (parallelIntegrationModel) Complete(ctx context.Context, request ModelReque
 			integrationToolCall(request, "parallel_read_a", MustJSONObject(`{}`)),
 			integrationToolCall(request, "parallel_read_b", MustJSONObject(`{}`)),
 		},
-	}, nil
+	}, ModelUsage{InputTokens: 11, OutputTokens: 7, TotalTokens: 18}, nil
 }
 
 type mixedParallelIntegrationModel struct {
 	integrationModel
 }
 
-func (mixedParallelIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, error) {
+func (mixedParallelIntegrationModel) Complete(ctx context.Context, request ModelRequest) (ModelReply, ModelUsage, error) {
 	if integrationLastUserContent(request.Messages) != "/parallel-recovery" {
 		return integrationModel{}.Complete(ctx, request)
 	}
@@ -2902,7 +3180,7 @@ func (mixedParallelIntegrationModel) Complete(ctx context.Context, request Model
 		return integrationModel{}.Complete(ctx, request)
 	}
 	if err := request.WriteAssistant("reading mixed parallel results"); err != nil {
-		return ModelReply{}, err
+		return ModelReply{}, ModelUsage{}, err
 	}
 	names := []ToolName{
 		"parallel_success",
@@ -2914,7 +3192,7 @@ func (mixedParallelIntegrationModel) Complete(ctx context.Context, request Model
 	for _, name := range names {
 		calls = append(calls, integrationToolCall(request, name, MustJSONObject(`{}`)))
 	}
-	return ModelReply{Content: "reading mixed parallel results", ToolCalls: calls}, nil
+	return ModelReply{Content: "reading mixed parallel results", ToolCalls: calls}, ModelUsage{InputTokens: 11, OutputTokens: 7, TotalTokens: 18}, nil
 }
 
 type mixedParallelToolRegistryForTestOnly struct{}

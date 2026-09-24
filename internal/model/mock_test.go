@@ -61,7 +61,7 @@ func TestMockClientPlansAndWaitsDeterministically(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			reply, err := client.Complete(context.Background(), agent.ModelRequest{
+			reply, _, err := client.Complete(context.Background(), agent.ModelRequest{
 				Config:         agent.NewAgentConfig(),
 				Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: test.request}},
 				Tools:          test.tools,
@@ -94,11 +94,11 @@ func TestMockClientProducesStableCallIDsForRetries(t *testing.T) {
 		WriteActivity:  discardActivity,
 		FlowID:         agent.FlowID("stable-flow"),
 	}
-	first, err := NewMockClient().Complete(context.Background(), request)
+	first, _, err := NewMockClient().Complete(context.Background(), request)
 	if err != nil {
 		t.Fatalf("first Complete() error = %v", err)
 	}
-	second, err := NewMockClient().Complete(context.Background(), request)
+	second, _, err := NewMockClient().Complete(context.Background(), request)
 	if err != nil {
 		t.Fatalf("second Complete() error = %v", err)
 	}
@@ -110,7 +110,7 @@ func TestMockClientProducesStableCallIDsForRetries(t *testing.T) {
 func TestMockClientDoesNotRepeatFailureCommandAfterToolResult(t *testing.T) {
 	toolName := agent.ToolNameSimulateFailure
 	callID := agent.CallID("call-1")
-	reply, err := NewMockClient().Complete(context.Background(), agent.ModelRequest{
+	reply, _, err := NewMockClient().Complete(context.Background(), agent.ModelRequest{
 		Config: agent.NewAgentConfig(),
 		Messages: []agent.AgentMessage{
 			{Role: agent.MessageRoleUser, Content: "/tool-failure"},
@@ -134,7 +134,7 @@ func TestMockClientDoesNotRepeatFailureCommandAfterToolResult(t *testing.T) {
 func TestMockClientStreamsVisibleResponse(t *testing.T) {
 	client := NewMockClient()
 	var streamed strings.Builder
-	reply, err := client.Complete(context.Background(), agent.ModelRequest{
+	reply, usage, err := client.Complete(context.Background(), agent.ModelRequest{
 		Config:   agent.NewAgentConfig(),
 		Messages: []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "hello"}},
 		WriteAssistant: func(chunk string) error {
@@ -151,12 +151,15 @@ func TestMockClientStreamsVisibleResponse(t *testing.T) {
 	if streamed.String() != reply.Content || reply.Content != "Local demo response: hello" {
 		t.Fatalf("stream = %q, reply = %q", streamed.String(), reply.Content)
 	}
+	if usage.InputTokens <= 0 || usage.OutputTokens <= 0 || usage.TotalTokens != usage.InputTokens+usage.OutputTokens {
+		t.Fatalf("usage = %#v", usage)
+	}
 }
 
 func TestMockClientStreamsProviderReasoningSummary(t *testing.T) {
 	client := NewMockClient()
 	var reasoning strings.Builder
-	reply, err := client.Complete(t.Context(), agent.ModelRequest{
+	reply, _, err := client.Complete(t.Context(), agent.ModelRequest{
 		Config:         agent.NewAgentConfig(),
 		Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "/reason Checked constraints | Ready to proceed"}},
 		WriteAssistant: discardText,

@@ -67,7 +67,12 @@ func NewAnthropicClient(credentials *CredentialStore, httpClient *http.Client, b
 }
 
 // Complete sends one typed Anthropic Messages request.
-func (client *AnthropicClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
+func (client *AnthropicClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
+	reply, err := client.complete(ctx, request)
+	return reply, agent.ModelUsage{}, err
+}
+
+func (client *AnthropicClient) complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
 	if err := validateModelRequest(request, agent.ProviderAnthropic); err != nil {
 		return agent.ModelReply{}, err
 	}
@@ -111,7 +116,12 @@ func (client *AnthropicClient) Complete(ctx context.Context, request agent.Model
 }
 
 // Summarize compacts application messages with Anthropic.
-func (client *AnthropicClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
+func (client *AnthropicClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, agent.ModelUsage, error) {
+	summary, err := client.summarize(ctx, request)
+	return summary, agent.ModelUsage{}, err
+}
+
+func (client *AnthropicClient) summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
 	model := request.Config.Model
 	if request.Config.CompactionModel != nil {
 		model = *request.Config.CompactionModel

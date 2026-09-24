@@ -67,7 +67,12 @@ func NewGroqClient(credentials *CredentialStore, httpClient *http.Client, baseUR
 }
 
 // Complete sends one typed Groq completion and writes its complete visible text once.
-func (client *GroqClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
+func (client *GroqClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
+	reply, err := client.complete(ctx, request)
+	return reply, agent.ModelUsage{}, err
+}
+
+func (client *GroqClient) complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
 	if err := validateModelRequest(request, agent.ProviderGroq); err != nil {
 		return agent.ModelReply{}, err
 	}
@@ -138,7 +143,12 @@ func (client *GroqClient) Complete(ctx context.Context, request agent.ModelReque
 }
 
 // Summarize compacts application messages with Groq.
-func (client *GroqClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
+func (client *GroqClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, agent.ModelUsage, error) {
+	summary, err := client.summarize(ctx, request)
+	return summary, agent.ModelUsage{}, err
+}
+
+func (client *GroqClient) summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
 	model := request.Config.Model
 	if request.Config.CompactionModel != nil {
 		model = *request.Config.CompactionModel

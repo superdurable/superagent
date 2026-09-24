@@ -35,6 +35,11 @@ retry, and recovery settings. Every regular attempt uses a one-minute heartbeat
 timeout. Ordinary Step methods use a one-minute method timeout, while model
 methods retain their explicit ten-minute method timeout.
 
+When `WithModelHooks` is absent, `CompactContext` and `CallModel` keep their
+existing identities and inputs. When it is present, both model-call kinds use
+the four-Step hook path below. Only OpenAI and Mock provide exact usage in this
+release, so a hooked Flow rejects other providers before dispatch.
+
 The Worker negotiates the highest common protocol with the Server before
 Attribute index synchronization or Worker binding. Deploy the Server before the
 Worker. Startup fails when `GetServerInfo` is missing, either interval is
@@ -63,6 +68,13 @@ CallModel
   -> CheckSteered -> CallModel                 (first active-plan no-progress response)
   -> CheckSteered -> AwaitUser                 (ordinary or repeated no-progress response)
   -> CheckSteered -> RouteTool                 (tool calls)
+
+Hooks-enabled response or compaction
+  -> BeforeModelCall                           (admit and create stable CallID)
+  -> CallModelWithHooks                        (provider call; overwrite ModelUsage)
+  -> AfterModelCall                            (read ModelUsage; synchronize usage)
+  -> ApplyModelResult                          (mutate Agent history or summary)
+  -> existing continuation
 
 RouteTool
   -> CheckSteered -> AwaitToolApproval         (untrusted write)
@@ -161,6 +173,10 @@ history, and makes the model replan.
 | `AnsweredInput`        | none                                                                                | Route an accepted answer through compaction directly to the model before checking steering                                                                 |
 | `CompactContext`       | none                                                                                | Call the summary provider, commit the covered range and summary, then trim only summarized retained messages                                               |
 | `CallModel`            | none                                                                                | Rebuild context, stream buffered deltas, commit the assistant message and pending calls; retry one active-plan response that made no durable progress      |
+| `BeforeModelCall`      | none                                                                                | Resolve the selected model, create the stable call ID, and invoke optional admission                                                                        |
+| `CallModelWithHooks`   | none                                                                                | Call the provider once per Dex attempt, overwrite exact `ModelUsage`, and persist the result in Step output                                                  |
+| `AfterModelCall`       | none                                                                                | Read `ModelUsage` and invoke the application-owned idempotent synchronization hook                                                                           |
+| `ApplyModelResult`     | none                                                                                | Apply the persisted assistant response or compaction summary without repeating model or hook side effects                                                    |
 | `CheckSteered`         | bounded steered batch                                                               | Apply steering at a safe boundary or route the explicit continuation                                                                                       |
 | `RouteTool`            | none                                                                                | Validate built-in arguments and select approval, MCP execution, timer, input, or next-call path                                                            |
 | `AwaitToolApproval`    | exact call-ID approval or steering                                                  | Persist waiting status; consume one decision or replan on steering                                                                                         |
@@ -228,6 +244,7 @@ deadline. `DurableWait` advances it to the wait target plus the timeout.
 | `AgentConfig`          | Attribute    | Immutable execution configuration                                                            |
 | `AgentRuntimeMetadata` | Attribute    | Trusted runtime routing metadata; never model or browser context                             |
 | `AgentState`           | Attribute    | Sequence range, mode, status, plan revision, pending-call cursor, and Plan no-progress count |
+| `ModelUsage`           | Attribute    | Exact usage from the last successful model call; overwritten, never accumulated              |
 | `WaitingInputRound`    | Attribute    | Monotonic durable browser watermark, initialized to zero                                     |
 | `ContextSummary`       | Attribute    | Cumulative summary and explicit covered sequence                                             |
 | `CurrentMessages`      | AttributeMap | Recent provider-neutral messages keyed by sequence                                           |

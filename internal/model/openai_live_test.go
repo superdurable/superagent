@@ -49,7 +49,7 @@ func TestLiveOpenAIResponses(t *testing.T) {
 	config := agent.NewAgentConfig()
 	config.Model = "openai/gpt-5-mini"
 	config.SystemPrompt = "Answer concisely and accurately."
-	reply, err := client.Complete(ctx, agent.ModelRequest{
+	reply, usage, err := client.Complete(ctx, agent.ModelRequest{
 		Config: config,
 		Messages: []agent.AgentMessage{{
 			Role:    agent.MessageRoleUser,
@@ -65,6 +65,9 @@ func TestLiveOpenAIResponses(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if usage.TotalTokens <= 0 {
+		t.Fatalf("usage = %#v", usage)
 	}
 	if strings.TrimSpace(reply.Content) == "" || reply.Content != streamed.String() {
 		t.Fatal("OpenAI response was empty or differed from streamed content")

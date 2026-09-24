@@ -306,6 +306,7 @@ func buildModelClient(section *config.Providers, credentials *model.CredentialSt
 		model.NewMockClient(),
 		model.NewOpenAIClient(credentials, httpClient, section.OpenAI.BaseURL, &model.OpenAIClientConfig{
 			ReasoningSummaryStreamingEnabled: true,
+			DisableModelResponseStore:        section.OpenAIDisableModelResponseStore,
 		}),
 		anthropic,
 		gemini,

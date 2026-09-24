@@ -32,23 +32,24 @@ import (
 type EnvironmentVariable string
 
 const (
-	EnvHTTPAddress           EnvironmentVariable = "SUPERAGENT_HTTP_ADDRESS"
-	EnvHTTPAllowedOrigins    EnvironmentVariable = "SUPERAGENT_HTTP_ALLOWED_ORIGINS"
-	EnvStreamRecoveryLimit   EnvironmentVariable = "SUPERAGENT_STREAM_RECOVERY_LIMIT"
-	EnvDexFlowServiceAddress EnvironmentVariable = "DEX_FLOW_SERVICE_ADDRESS"
-	EnvDexWorkerBindAddress  EnvironmentVariable = "DEX_WORKER_BIND_ADDRESS"
-	EnvDexWorkerTarget       EnvironmentVariable = "DEX_WORKER_TARGET"
-	EnvBlobCacheDirectory    EnvironmentVariable = "DEX_BLOB_CACHE_DIR"
-	EnvBlobCacheMaxBytes     EnvironmentVariable = "DEX_BLOB_CACHE_MAX_BYTES"
-	EnvMCPConfig             EnvironmentVariable = "DEX_AGENT_MCP_CONFIG"
-	EnvOpenAIAPIKey          EnvironmentVariable = "OPENAI_API_KEY"    //nolint:gosec // Environment variable name, not a credential.
-	EnvAnthropicAPIKey       EnvironmentVariable = "ANTHROPIC_API_KEY" //nolint:gosec // Environment variable name, not a credential.
-	EnvGeminiAPIKey          EnvironmentVariable = "GEMINI_API_KEY"    //nolint:gosec // Environment variable name, not a credential.
-	EnvGroqAPIKey            EnvironmentVariable = "GROQ_API_KEY"      //nolint:gosec // Environment variable name, not a credential.
-	EnvOpenAIBaseURL         EnvironmentVariable = "OPENAI_BASE_URL"
-	EnvAnthropicBaseURL      EnvironmentVariable = "ANTHROPIC_BASE_URL"
-	EnvGeminiBaseURL         EnvironmentVariable = "GEMINI_BASE_URL"
-	EnvGroqBaseURL           EnvironmentVariable = "GROQ_BASE_URL"
+	EnvHTTPAddress                     EnvironmentVariable = "SUPERAGENT_HTTP_ADDRESS"
+	EnvHTTPAllowedOrigins              EnvironmentVariable = "SUPERAGENT_HTTP_ALLOWED_ORIGINS"
+	EnvStreamRecoveryLimit             EnvironmentVariable = "SUPERAGENT_STREAM_RECOVERY_LIMIT"
+	EnvDexFlowServiceAddress           EnvironmentVariable = "DEX_FLOW_SERVICE_ADDRESS"
+	EnvDexWorkerBindAddress            EnvironmentVariable = "DEX_WORKER_BIND_ADDRESS"
+	EnvDexWorkerTarget                 EnvironmentVariable = "DEX_WORKER_TARGET"
+	EnvBlobCacheDirectory              EnvironmentVariable = "DEX_BLOB_CACHE_DIR"
+	EnvBlobCacheMaxBytes               EnvironmentVariable = "DEX_BLOB_CACHE_MAX_BYTES"
+	EnvMCPConfig                       EnvironmentVariable = "DEX_AGENT_MCP_CONFIG"
+	EnvOpenAIAPIKey                    EnvironmentVariable = "OPENAI_API_KEY"    //nolint:gosec // Environment variable name, not a credential.
+	EnvAnthropicAPIKey                 EnvironmentVariable = "ANTHROPIC_API_KEY" //nolint:gosec // Environment variable name, not a credential.
+	EnvGeminiAPIKey                    EnvironmentVariable = "GEMINI_API_KEY"    //nolint:gosec // Environment variable name, not a credential.
+	EnvGroqAPIKey                      EnvironmentVariable = "GROQ_API_KEY"      //nolint:gosec // Environment variable name, not a credential.
+	EnvOpenAIBaseURL                   EnvironmentVariable = "OPENAI_BASE_URL"
+	EnvOpenAIDisableModelResponseStore EnvironmentVariable = "OPENAI_DISABLE_MODEL_RESPONSE_STORE"
+	EnvAnthropicBaseURL                EnvironmentVariable = "ANTHROPIC_BASE_URL"
+	EnvGeminiBaseURL                   EnvironmentVariable = "GEMINI_BASE_URL"
+	EnvGroqBaseURL                     EnvironmentVariable = "GROQ_BASE_URL"
 )
 
 const (
@@ -114,11 +115,12 @@ type MCP struct {
 
 // Providers configures credentials and trusted API origins.
 type Providers struct {
-	OpenAI         *Provider
-	Anthropic      *Provider
-	Gemini         *Provider
-	Groq           *Provider
-	RequestTimeout time.Duration
+	OpenAI                          *Provider
+	Anthropic                       *Provider
+	Gemini                          *Provider
+	Groq                            *Provider
+	OpenAIDisableModelResponseStore bool
+	RequestTimeout                  time.Duration
 }
 
 // Provider contains one provider's process credential and optional origin override.
@@ -148,6 +150,10 @@ func load(lookup Lookup) (*Config, error) {
 		return nil, err
 	}
 	streamRecoveryLimit, err := optionalPositiveInt(lookup, EnvStreamRecoveryLimit, defaultStreamRecoveryLimit)
+	if err != nil {
+		return nil, err
+	}
+	disableOpenAIResponseStore, err := optionalBool(lookup, EnvOpenAIDisableModelResponseStore, false)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +195,8 @@ func load(lookup Lookup) (*Config, error) {
 				APIKey:  optional(lookup, EnvGroqAPIKey, ""),
 				BaseURL: optional(lookup, EnvGroqBaseURL, ""),
 			},
-			RequestTimeout: defaultProviderRequestTimeout,
+			OpenAIDisableModelResponseStore: disableOpenAIResponseStore,
+			RequestTimeout:                  defaultProviderRequestTimeout,
 		},
 	}
 	if err := config.Validate(); err != nil {
@@ -354,6 +361,18 @@ func optional(lookup Lookup, name EnvironmentVariable, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(value)
+}
+
+func optionalBool(lookup Lookup, name EnvironmentVariable, fallback bool) (bool, error) {
+	value, found := lookup(string(name))
+	if !found || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", name)
+	}
+	return parsed, nil
 }
 
 func optionalPositiveInt64(lookup Lookup, name EnvironmentVariable, fallback int64) (int64, error) {

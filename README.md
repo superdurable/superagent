@@ -79,6 +79,25 @@ idempotent application cleanup request. Accepted user mutations coalesce Timer
 resets within one minute. A `durable_wait` extends the deadline through its
 target; model and ordinary tool work do not pause it.
 
+Embedders that need admission and accounting boundaries can pass
+`agent.WithModelHooks(...)`. A non-nil configuration requires both hooks. Dex
+runs `BeforeModelCall`, `CallModelWithHooks`, `AfterModelCall`, and
+`ApplyModelResult` as separate Steps, so an After retry never repeats the model
+call. The Call Step overwrites the `ModelUsage` Attribute with the provider's
+exact usage for that call; the After hook receives that same value. SuperAgent
+does not accumulate account usage.
+
+```go
+flow := agent.NewFlow(modelClient, tools, agent.WithModelHooks(&agent.ModelHooksConfig{
+    BeforeModelCall: admitModelCall,
+    AfterModelCall:  synchronizeModelUsage,
+}))
+```
+
+The Before hook returns `false, nil` for a business rejection. Hook errors use
+the owning Dex Step retry policy. The After hook must be safely repeatable by
+its supplied `CallID`.
+
 External tool retries belong to Dex. `ToolDefinition` controls attempt timeout,
 maximum attempts, and total duration. A registry performs exactly one call for
 each Dex attempt.
@@ -152,6 +171,7 @@ available.
 | `DEX_BLOB_CACHE_MAX_BYTES`         | BlobCache size limit in bytes                                 | `536870912`                  |
 | `DEX_AGENT_MCP_CONFIG`             | Trusted MCP YAML path                                         | disabled                     |
 | `OPENAI_API_KEY`                   | OpenAI credential                                             | unset                        |
+| `OPENAI_DISABLE_MODEL_RESPONSE_STORE` | Send `store=false` for OpenAI Responses calls              | `false`                      |
 | `ANTHROPIC_API_KEY`                | Anthropic credential                                          | unset                        |
 | `GEMINI_API_KEY`                   | Gemini credential                                             | unset                        |
 | `GROQ_API_KEY`                     | Groq credential                                               | unset                        |
@@ -161,6 +181,11 @@ Each provider accepts a trusted HTTPS origin override named
 persisted in Dex state or logged. Copy
 [`web/mcp-servers.example.yaml`](web/mcp-servers.example.yaml) to configure
 trusted MCP servers.
+
+OpenAI Responses calls always send `store` explicitly. The default is
+`store=true`; set `OPENAI_DISABLE_MODEL_RESPONSE_STORE=true` only when the
+deployment requires provider-side response storage to be disabled. This setting
+is independent of model hooks.
 
 Each configured tool defaults to `running_type: short_running`. Use
 `long_running` when more than half of expected calls exceed five seconds. This
