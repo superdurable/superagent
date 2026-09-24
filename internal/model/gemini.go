@@ -64,7 +64,12 @@ func NewGeminiClient(credentials *CredentialStore, httpClient *http.Client, base
 }
 
 // Complete sends one typed Gemini generateContent request.
-func (client *GeminiClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
+func (client *GeminiClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
+	reply, err := client.complete(ctx, request)
+	return reply, agent.ModelUsage{}, err
+}
+
+func (client *GeminiClient) complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
 	if err := validateModelRequest(request, agent.ProviderGemini); err != nil {
 		return agent.ModelReply{}, err
 	}
@@ -116,7 +121,12 @@ func (client *GeminiClient) Complete(ctx context.Context, request agent.ModelReq
 }
 
 // Summarize compacts application messages with Gemini.
-func (client *GeminiClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
+func (client *GeminiClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, agent.ModelUsage, error) {
+	summary, err := client.summarize(ctx, request)
+	return summary, agent.ModelUsage{}, err
+}
+
+func (client *GeminiClient) summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
 	model := request.Config.Model
 	if request.Config.CompactionModel != nil {
 		model = *request.Config.CompactionModel

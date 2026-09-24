@@ -111,7 +111,7 @@ func assertProviderReply(
 	t.Helper()
 	assistant := make([]string, 0)
 	activity := make([]agent.AgentEvent, 0)
-	reply, err := client.Complete(context.Background(), agent.ModelRequest{
+	reply, _, err := client.Complete(context.Background(), agent.ModelRequest{
 		Config:   agent.AgentConfig{Model: model, SystemPrompt: "Be helpful."},
 		Messages: []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Check weather."}},
 		Tools: []agent.ToolDefinition{{

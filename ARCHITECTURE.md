@@ -60,7 +60,12 @@ depending on `internal/model` or duplicating provider wiring.
 `model.OpenAIClientConfig` controls whether the OpenAI Responses adapter asks
 for and forwards provider-authored reasoning summaries. It is disabled by
 default; encrypted reasoning content remains included for stateless turn
-continuation regardless of that display setting.
+continuation regardless of that display setting or response-storage policy.
+
+The same configuration independently controls response storage through
+`DisableModelResponseStore`. Every OpenAI Complete and Summarize request sends
+`store` explicitly. Storage defaults to enabled and is disabled only when that
+field is true.
 
 ## Durable Agent model
 
@@ -153,6 +158,14 @@ Each `WaitFor`, `Execute`, and RPC invocation is an independent Dex atomic commi
 boundary. Waiting state is written in the `WaitFor` that establishes the wait.
 Provider and MCP calls occur only in `Execute`. The complete graph and resource
 table are in `docs/flow-model.md`.
+
+`WithModelHooks` adds four durable model boundaries without changing the
+legacy Step identities. Before admission generates a stable call ID from the
+Flow and Step execution. The Call Step performs the provider request and
+overwrites the single `ModelUsage` Attribute. The After Step reads that
+Attribute and invokes the idempotent application hook; Apply then mutates Agent
+history. No accounting totals, provider callback, model checkpoint state, or
+model-recovery API exists in SuperAgent.
 
 History-reading Steps declare bounded AttributeMap loads explicitly. Integration
 tests use verb-first `ForTestOnly` RPCs rather than generic Dex Client resource

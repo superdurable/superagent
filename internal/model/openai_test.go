@@ -30,7 +30,7 @@ import (
 	"github.com/superdurable/superagent/internal/agent"
 )
 
-func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
+func TestOpenAICompleteMapsUsageStoresByDefaultAndSeparatesStreams(t *testing.T) {
 	t.Parallel()
 	requestReceived := make(chan openAIRequestFixture, 1)
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -39,6 +39,9 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 		}
 		if request.Header.Get("Authorization") != "Bearer test-openai-key" {
 			return fixtureResponse(request, http.StatusUnauthorized, "application/json", `{"error":{"message":"unexpected authorization"}}`), nil
+		}
+		if request.Header.Get("Idempotency-Key") != "model-call-1" {
+			return fixtureResponse(request, http.StatusBadRequest, "application/json", `{"error":{"message":"unexpected idempotency key"}}`), nil
 		}
 		var payload openAIRequestFixture
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
@@ -50,7 +53,7 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 			sse(`{"type":"response.output_text.delta","delta":"I can help.","item_id":"msg-new","output_index":1,"content_index":0,"logprobs":[],"sequence_number":2}`),
 			sse(`{"type":"response.output_item.done","output_index":0,"sequence_number":3,"item":{"id":"rs-new","type":"reasoning","summary":[{"type":"summary_text","text":"Checking constraints."}],"encrypted_content":"encrypted-new","status":"completed"}}`),
 			sse(`{"type":"response.output_item.done","output_index":1,"sequence_number":4,"item":{"id":"fc-new","type":"function_call","call_id":"call-plan","name":"write_todos","arguments":"{\"todos\":[]}","status":"completed"}}`),
-			sse(`{"type":"response.completed","response":{"status":"completed"},"sequence_number":5}`),
+			sse(`{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":1,"cache_write_tokens":0},"output_tokens":4,"output_tokens_details":{"reasoning_tokens":3},"total_tokens":6}},"sequence_number":5}`),
 			"data: [DONE]\n\n",
 		}, "")
 		return fixtureResponse(request, http.StatusOK, "text/event-stream", body), nil
@@ -73,7 +76,7 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 	assistantChunks := make([]string, 0)
 	reasoningChunks := make([]string, 0)
 	activity := make([]agent.AgentEvent, 0)
-	reply, err := client.Complete(context.Background(), agent.ModelRequest{
+	reply, usage, err := client.Complete(context.Background(), agent.ModelRequest{
 		Config: agent.AgentConfig{
 			Model:        "openai/gpt-5-mini",
 			SystemPrompt: "Be helpful.",
@@ -117,17 +120,21 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 			return nil
 		},
 		FlowID: flowID,
+		CallID: "model-call-1",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if usage.TotalTokens != 6 || usage.InputTokens != 2 || usage.CachedInputTokens != 1 || usage.OutputTokens != 4 || usage.ReasoningTokens != 3 {
+		t.Fatalf("usage = %#v", usage)
 	}
 
 	payload := <-requestReceived
 	if payload.Model != "gpt-5-mini" || payload.Instructions != "Be helpful." {
 		t.Fatalf("unexpected request model/instructions: %#v", payload)
 	}
-	if payload.Store || !payload.Stream || !payload.ParallelToolCalls {
-		t.Fatalf("request must be stateless, streaming, and allow parallel tool calls: %#v", payload)
+	if !payload.Store || !payload.Stream || !payload.ParallelToolCalls {
+		t.Fatalf("request must be stored, streaming, and allow parallel tool calls: %#v", payload)
 	}
 	if !slices.Equal(payload.Include, []string{"reasoning.encrypted_content"}) {
 		t.Fatalf("include = %q", payload.Include)
@@ -168,6 +175,57 @@ func TestOpenAICompleteUsesStatelessResponsesAndSeparatesStreams(t *testing.T) {
 	}
 }
 
+func TestOpenAIDisableModelResponseStoreAppliesToCompleteAndSummarize(t *testing.T) {
+	t.Parallel()
+	stores := make(chan bool, 2)
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var payload struct {
+			Store  bool `json:"store"`
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		stores <- payload.Store
+		if payload.Stream {
+			body := sse(`{"type":"response.output_text.delta","delta":"Done.","item_id":"msg","output_index":0,"content_index":0,"logprobs":[],"sequence_number":1}`) +
+				sse(`{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2}},"sequence_number":2}`) +
+				"data: [DONE]\n\n"
+			return fixtureResponse(request, http.StatusOK, "text/event-stream", body), nil
+		}
+		body := `{"status":"completed","output":[{"type":"message","id":"msg","status":"completed","role":"assistant","content":[{"type":"output_text","text":"summary","annotations":[],"logprobs":[]}]}],"usage":{"input_tokens":3,"input_tokens_details":{"cached_tokens":1,"cache_write_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":5}}`
+		return fixtureResponse(request, http.StatusOK, "application/json", body), nil
+	})}
+	credentials := NewCredentialStore()
+	if err := credentials.SetDefaultAPIKey(agent.ProviderOpenAI, "test-openai-key"); err != nil {
+		t.Fatal(err)
+	}
+	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test", &OpenAIClientConfig{
+		DisableModelResponseStore: true,
+	})
+	config := agent.AgentConfig{Model: "openai/gpt-5-mini", SystemPrompt: "Be helpful."}
+	if _, _, err := client.Complete(t.Context(), agent.ModelRequest{
+		Config: config, Messages: []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Hello"}},
+		WriteAssistant: discardText, WriteReasoning: discardText, WriteActivity: discardActivity,
+		FlowID: "flow-disable-store", CallID: "complete-call",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, usage, err := client.Summarize(t.Context(), agent.SummarizeRequest{
+		Config: config, Messages: []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Hello"}},
+		FlowID: "flow-disable-store", CallID: "summary-call",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary != "summary" || usage.TotalTokens != 5 || usage.CachedInputTokens != 1 || usage.ReasoningTokens != 1 {
+		t.Fatalf("summary/usage = %q/%#v", summary, usage)
+	}
+	if first, second := <-stores, <-stores; first || second {
+		t.Fatalf("store values = %t, %t; want false, false", first, second)
+	}
+}
+
 func TestOpenAICompleteSkipsReasoningSummaryWhenStreamingIsDisabled(t *testing.T) {
 	t.Parallel()
 	requestReceived := make(chan openAIRequestFixture, 1)
@@ -193,7 +251,7 @@ func TestOpenAICompleteSkipsReasoningSummaryWhenStreamingIsDisabled(t *testing.T
 	}
 	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test", &OpenAIClientConfig{})
 	reasoningChunks := make([]string, 0)
-	reply, err := client.Complete(context.Background(), agent.ModelRequest{
+	reply, _, err := client.Complete(context.Background(), agent.ModelRequest{
 		Config:         agent.AgentConfig{Model: "openai/gpt-5-mini", SystemPrompt: "Be helpful."},
 		Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Say ready."}},
 		WriteAssistant: func(string) error { return nil },
@@ -253,7 +311,7 @@ func TestOpenAIDisablesSDKRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := NewOpenAIClient(credentials, httpClient, "https://api.openai.test", &OpenAIClientConfig{})
-	_, err := client.Complete(context.Background(), agent.ModelRequest{
+	_, _, err := client.Complete(context.Background(), agent.ModelRequest{
 		Config:         agent.AgentConfig{Model: "openai/gpt-5-mini", SystemPrompt: "Be helpful."},
 		Messages:       []agent.AgentMessage{{Role: agent.MessageRoleUser, Content: "Hello"}},
 		WriteAssistant: func(string) error { return nil },

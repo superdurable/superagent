@@ -58,31 +58,31 @@ func NewClient(
 }
 
 // Complete routes one provider-qualified completion.
-func (client *Client) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
+func (client *Client) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
 	provider, err := request.Config.Model.Provider()
 	if err != nil {
-		return agent.ModelReply{}, err
+		return agent.ModelReply{}, agent.ModelUsage{}, err
 	}
 	adapter, err := client.adapter(provider)
 	if err != nil {
-		return agent.ModelReply{}, err
+		return agent.ModelReply{}, agent.ModelUsage{}, err
 	}
 	return adapter.Complete(ctx, request)
 }
 
 // Summarize routes compaction to its explicitly configured provider.
-func (client *Client) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
+func (client *Client) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, agent.ModelUsage, error) {
 	model := request.Config.Model
 	if request.Config.CompactionModel != nil {
 		model = *request.Config.CompactionModel
 	}
 	provider, err := model.Provider()
 	if err != nil {
-		return "", err
+		return "", agent.ModelUsage{}, err
 	}
 	adapter, err := client.adapter(provider)
 	if err != nil {
-		return "", err
+		return "", agent.ModelUsage{}, err
 	}
 	return adapter.Summarize(ctx, request)
 }

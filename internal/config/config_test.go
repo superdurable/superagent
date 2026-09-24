@@ -28,8 +28,37 @@ func TestLoadUsesValidatedDefaults(t *testing.T) {
 		len(config.HTTP.AllowedOrigins) != 0 ||
 		config.Events.RecoveryLimit != defaultStreamRecoveryLimit ||
 		config.Dex.WorkerTarget != defaultWorkerBindAddress ||
-		config.BlobCache.MaxBytes != defaultBlobCacheMaxBytes {
+		config.BlobCache.MaxBytes != defaultBlobCacheMaxBytes ||
+		config.Providers.OpenAIDisableModelResponseStore {
 		t.Fatalf("unexpected defaults: %#v", config)
+	}
+}
+
+func TestLoadDisablesOpenAIResponseStoreExplicitly(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{string(EnvOpenAIDisableModelResponseStore): "true"}
+	config, err := load(func(name string) (string, bool) {
+		value, found := values[name]
+		return value, found
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.Providers.OpenAIDisableModelResponseStore {
+		t.Fatal("OpenAI response store disable flag = false, want true")
+	}
+}
+
+func TestLoadRejectsInvalidOpenAIResponseStoreFlag(t *testing.T) {
+	t.Parallel()
+	_, err := load(func(name string) (string, bool) {
+		if name == string(EnvOpenAIDisableModelResponseStore) {
+			return "sometimes", true
+		}
+		return "", false
+	})
+	if err == nil {
+		t.Fatal("load error = nil")
 	}
 }
 

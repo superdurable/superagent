@@ -29,12 +29,12 @@ import (
 
 type modelClient struct{}
 
-func (modelClient) Complete(context.Context, agent.ModelRequest) (agent.ModelReply, error) {
-	return agent.ModelReply{}, nil
+func (modelClient) Complete(context.Context, agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
+	return agent.ModelReply{}, agent.ModelUsage{}, nil
 }
 
-func (modelClient) Summarize(context.Context, agent.SummarizeRequest) (string, error) {
-	return "", nil
+func (modelClient) Summarize(context.Context, agent.SummarizeRequest) (string, agent.ModelUsage, error) {
+	return "", agent.ModelUsage{}, nil
 }
 
 func (modelClient) CountTokens(agent.Model, []agent.AgentMessage) int {

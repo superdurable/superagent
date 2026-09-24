@@ -232,6 +232,7 @@ type (
 	InputConsumption              = agentinternal.InputConsumption
 	StreamEvent                   = agentinternal.StreamEvent
 	ModelReply                    = agentinternal.ModelReply
+	ModelUsage                    = agentinternal.ModelUsage
 	ToolDefinition                = agentinternal.ToolDefinition
 	ToolExecutionResult           = agentinternal.ToolExecutionResult
 	TextWriter                    = agentinternal.TextWriter
@@ -239,6 +240,9 @@ type (
 	ModelRequest                  = agentinternal.ModelRequest
 	SummarizeRequest              = agentinternal.SummarizeRequest
 	ModelClient                   = agentinternal.ModelClient
+	BeforeModelCallHook           = agentinternal.BeforeModelCallHook
+	AfterModelCallHook            = agentinternal.AfterModelCallHook
+	ModelHooksConfig              = agentinternal.ModelHooksConfig
 	ToolInvocation                = agentinternal.ToolInvocation
 	ToolRegistry                  = agentinternal.ToolRegistry
 	RegisteredTool                = agentinternal.RegisteredTool
@@ -255,6 +259,11 @@ func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption)
 // WithInactivityExpirationHandler configures the application-owned expiration callback.
 func WithInactivityExpirationHandler(handler InactivityExpirationHandler) FlowOption {
 	return agentinternal.WithInactivityExpirationHandler(handler)
+}
+
+// WithModelHooks configures optional durable boundaries around model calls.
+func WithModelHooks(config *ModelHooksConfig) FlowOption {
+	return agentinternal.WithModelHooks(config)
 }
 
 // NewClient constructs an Agent application client over one Dex client and Flow definition.

@@ -40,7 +40,24 @@ func NewMockClient() *MockClient {
 }
 
 // Complete implements the deterministic mock/dex command language.
-func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
+func (client *MockClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
+	reply, err := client.complete(ctx, request)
+	if err != nil {
+		return agent.ModelReply{}, agent.ModelUsage{}, err
+	}
+	inputTokens := int64(estimatedTokens(request.Messages))
+	outputTokens := int64(len(reply.Content) / 4)
+	if outputTokens == 0 && reply.Content != "" {
+		outputTokens = 1
+	}
+	return reply, agent.ModelUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  inputTokens + outputTokens,
+	}, nil
+}
+
+func (*MockClient) complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
 	if request.WriteAssistant == nil || request.WriteReasoning == nil || request.WriteActivity == nil {
 		return agent.ModelReply{}, errors.New("mock model writers are required")
 	}
@@ -282,7 +299,24 @@ func (*MockClient) Complete(ctx context.Context, request agent.ModelRequest) (ag
 }
 
 // Summarize creates a bounded local transcript.
-func (*MockClient) Summarize(_ context.Context, request agent.SummarizeRequest) (string, error) {
+func (client *MockClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, agent.ModelUsage, error) {
+	summary, err := client.summarize(ctx, request)
+	if err != nil {
+		return "", agent.ModelUsage{}, err
+	}
+	inputTokens := int64(estimatedTokens(request.Messages))
+	outputTokens := int64(len(summary) / 4)
+	if outputTokens == 0 && summary != "" {
+		outputTokens = 1
+	}
+	return summary, agent.ModelUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  inputTokens + outputTokens,
+	}, nil
+}
+
+func (*MockClient) summarize(_ context.Context, request agent.SummarizeRequest) (string, error) {
 	parts := make([]string, 0, len(request.Messages)+1)
 	if request.PreviousSummary != "" {
 		parts = append(parts, request.PreviousSummary)

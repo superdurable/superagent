@@ -34,12 +34,13 @@ import (
 
 const compactionInstruction = "Compact the conversation faithfully. Preserve decisions, user preferences, unresolved work, tool outcomes, identifiers, and facts needed by future turns."
 
-// OpenAIClient implements the stateless OpenAI Responses API boundary.
+// OpenAIClient implements the OpenAI Responses API boundary.
 type OpenAIClient struct {
 	credentials                      *CredentialStore
 	httpClient                       *http.Client
 	baseURL                          string
 	reasoningSummaryStreamingEnabled bool
+	disableModelResponseStore        bool
 }
 
 var _ agent.ModelClient = (*OpenAIClient)(nil)
@@ -48,6 +49,8 @@ var _ agent.ModelClient = (*OpenAIClient)(nil)
 type OpenAIClientConfig struct {
 	// ReasoningSummaryStreamingEnabled defaults to false, is immutable after construction, and requests and forwards provider reasoning summaries when enabled.
 	ReasoningSummaryStreamingEnabled bool
+	// DisableModelResponseStore explicitly sends store=false. The default explicitly sends store=true.
+	DisableModelResponseStore bool
 }
 
 // NewOpenAIClient constructs an adapter with an explicitly owned HTTP client.
@@ -71,25 +74,26 @@ func NewOpenAIClient(
 		httpClient:                       httpClient,
 		baseURL:                          strings.TrimSpace(baseURL),
 		reasoningSummaryStreamingEnabled: configuration.ReasoningSummaryStreamingEnabled,
+		disableModelResponseStore:        configuration.DisableModelResponseStore,
 	}
 }
 
-// Complete streams one stateless Responses API turn.
-func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, error) {
+// Complete streams one Responses API turn.
+func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelRequest) (agent.ModelReply, agent.ModelUsage, error) {
 	if err := validateModelRequest(request, agent.ProviderOpenAI); err != nil {
-		return agent.ModelReply{}, err
+		return agent.ModelReply{}, agent.ModelUsage{}, err
 	}
 	modelName, err := request.Config.Model.ProviderModel()
 	if err != nil {
-		return agent.ModelReply{}, err
+		return agent.ModelReply{}, agent.ModelUsage{}, err
 	}
 	input, err := openAIInput(request.Messages)
 	if err != nil {
-		return agent.ModelReply{}, err
+		return agent.ModelReply{}, agent.ModelUsage{}, err
 	}
 	tools, err := openAITools(request.Tools)
 	if err != nil {
-		return agent.ModelReply{}, err
+		return agent.ModelReply{}, agent.ModelUsage{}, err
 	}
 	params := responses.ResponseNewParams{
 		Instructions: openai.String(request.Config.SystemPrompt),
@@ -100,7 +104,7 @@ func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelReq
 		Include: []responses.ResponseIncludable{
 			responses.ResponseIncludableReasoningEncryptedContent,
 		},
-		Store:             openai.Bool(false),
+		Store:             openai.Bool(!client.disableModelResponseStore),
 		ParallelToolCalls: openai.Bool(true),
 		Tools:             tools,
 	}
@@ -109,7 +113,7 @@ func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelReq
 	}
 	if request.ForcedTool != "" {
 		if !hasDefinition(request.Tools, request.ForcedTool) {
-			return agent.ModelReply{}, fmt.Errorf("forced tool %q is not available", request.ForcedTool)
+			return agent.ModelReply{}, agent.ModelUsage{}, fmt.Errorf("forced tool %q is not available", request.ForcedTool)
 		}
 		params.ToolChoice.OfFunctionTool = &responses.ToolChoiceFunctionParam{
 			Name: string(request.ForcedTool),
@@ -117,31 +121,31 @@ func (client *OpenAIClient) Complete(ctx context.Context, request agent.ModelReq
 	}
 
 	sdkClient := client.newSDKClient(request.FlowID)
-	stream := sdkClient.Responses.NewStreaming(ctx, params)
+	stream := sdkClient.Responses.NewStreaming(ctx, params, openAIRequestOptions(request.CallID)...)
 	defer func() { _ = stream.Close() }()
 	return consumeOpenAIStream(stream, request, client.reasoningSummaryStreamingEnabled)
 }
 
-// Summarize compacts application history without persisting provider-side state.
-func (client *OpenAIClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, error) {
+// Summarize compacts application history.
+func (client *OpenAIClient) Summarize(ctx context.Context, request agent.SummarizeRequest) (string, agent.ModelUsage, error) {
 	model := request.Config.Model
 	if request.Config.CompactionModel != nil {
 		model = *request.Config.CompactionModel
 	}
 	provider, err := model.Provider()
 	if err != nil {
-		return "", err
+		return "", agent.ModelUsage{}, err
 	}
 	if provider != agent.ProviderOpenAI {
-		return "", fmt.Errorf("OpenAI adapter cannot summarize with provider %q", provider)
+		return "", agent.ModelUsage{}, fmt.Errorf("OpenAI adapter cannot summarize with provider %q", provider)
 	}
 	modelName, err := model.ProviderModel()
 	if err != nil {
-		return "", err
+		return "", agent.ModelUsage{}, err
 	}
 	transcript, err := json.Marshal(request.Messages)
 	if err != nil {
-		return "", fmt.Errorf("encode compaction transcript: %w", err)
+		return "", agent.ModelUsage{}, fmt.Errorf("encode compaction transcript: %w", err)
 	}
 	prompt := "Previous summary:\n" + request.PreviousSummary + "\n\nMessages:\n" + string(transcript)
 	sdkClient := client.newSDKClient(request.FlowID)
@@ -151,19 +155,26 @@ func (client *OpenAIClient) Summarize(ctx context.Context, request agent.Summari
 			OfString: param.NewOpt(prompt),
 		},
 		Model: modelName,
-		Store: openai.Bool(false),
-	})
+		Store: openai.Bool(!client.disableModelResponseStore),
+	}, openAIRequestOptions(request.CallID)...)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI compaction request: %w", err)
+		return "", agent.ModelUsage{}, fmt.Errorf("OpenAI compaction request: %w", err)
 	}
 	if response.Status != responses.ResponseStatusCompleted {
-		return "", newOpenAIResponseError(response)
+		return "", agent.ModelUsage{}, newOpenAIResponseError(response)
 	}
 	summary := strings.TrimSpace(response.OutputText())
 	if summary == "" {
-		return "", errors.New("OpenAI compaction response was empty")
+		return "", agent.ModelUsage{}, errors.New("OpenAI compaction response was empty")
 	}
-	return summary, nil
+	return summary, openAIUsage(response.Usage), nil
+}
+
+func openAIRequestOptions(callID agent.CallID) []option.RequestOption {
+	if callID == "" {
+		return nil
+	}
+	return []option.RequestOption{option.WithHeader("Idempotency-Key", string(callID))}
 }
 
 // CountTokens returns a conservative local estimate used only to trigger compaction.
@@ -284,26 +295,26 @@ func consumeOpenAIStream(
 	stream openAIResponseStream,
 	request agent.ModelRequest,
 	reasoningSummaryStreamingEnabled bool,
-) (agent.ModelReply, error) {
+) (agent.ModelReply, agent.ModelUsage, error) {
 	var content strings.Builder
 	toolCalls := make(map[int64]agent.ToolCall)
 	providerItems := make([]agent.ProviderContextItem, 0)
-	completed := false
+	var completed *responses.Response
 	for stream.Next() {
 		event := stream.Current()
 		switch value := event.AsAny().(type) {
 		case responses.ResponseTextDeltaEvent:
 			if err := writeTextDelta(&content, value.Delta, request.WriteAssistant); err != nil {
-				return agent.ModelReply{}, err
+				return agent.ModelReply{}, agent.ModelUsage{}, err
 			}
 		case responses.ResponseRefusalDeltaEvent:
 			if err := writeTextDelta(&content, value.Delta, request.WriteAssistant); err != nil {
-				return agent.ModelReply{}, err
+				return agent.ModelReply{}, agent.ModelUsage{}, err
 			}
 		case responses.ResponseReasoningSummaryTextDeltaEvent:
 			if reasoningSummaryStreamingEnabled && value.Delta != "" {
 				if err := request.WriteReasoning(value.Delta); err != nil {
-					return agent.ModelReply{}, fmt.Errorf("write reasoning summary: %w", err)
+					return agent.ModelReply{}, agent.ModelUsage{}, fmt.Errorf("write reasoning summary: %w", err)
 				}
 			}
 		case responses.ResponseOutputItemDoneEvent:
@@ -311,7 +322,7 @@ func consumeOpenAIStream(
 			case responses.ResponseReasoningItem:
 				encoded, err := encodeReasoningItem(item)
 				if err != nil {
-					return agent.ModelReply{}, err
+					return agent.ModelReply{}, agent.ModelUsage{}, err
 				}
 				providerItems = append(providerItems, agent.ProviderContextItem{
 					Provider: agent.ProviderOpenAI,
@@ -320,31 +331,31 @@ func consumeOpenAIStream(
 			case responses.ResponseFunctionToolCall:
 				call, err := openAIToolCall(item)
 				if err != nil {
-					return agent.ModelReply{}, err
+					return agent.ModelReply{}, agent.ModelUsage{}, err
 				}
 				if _, duplicate := toolCalls[value.OutputIndex]; duplicate {
-					return agent.ModelReply{}, fmt.Errorf("OpenAI returned duplicate output index %d", value.OutputIndex)
+					return agent.ModelReply{}, agent.ModelUsage{}, fmt.Errorf("OpenAI returned duplicate output index %d", value.OutputIndex)
 				}
 				toolCalls[value.OutputIndex] = call
 				if err := writeToolActivities([]agent.ToolCall{call}, request.WriteActivity); err != nil {
-					return agent.ModelReply{}, err
+					return agent.ModelReply{}, agent.ModelUsage{}, err
 				}
 			}
 		case responses.ResponseCompletedEvent:
-			completed = true
+			completed = &value.Response
 		case responses.ResponseFailedEvent:
-			return agent.ModelReply{}, newOpenAIResponseError(&value.Response)
+			return agent.ModelReply{}, agent.ModelUsage{}, newOpenAIResponseError(&value.Response)
 		case responses.ResponseIncompleteEvent:
-			return agent.ModelReply{}, newOpenAIResponseError(&value.Response)
+			return agent.ModelReply{}, agent.ModelUsage{}, newOpenAIResponseError(&value.Response)
 		case responses.ResponseErrorEvent:
-			return agent.ModelReply{}, fmt.Errorf("OpenAI stream error %q", value.Code)
+			return agent.ModelReply{}, agent.ModelUsage{}, fmt.Errorf("OpenAI stream error %q", value.Code)
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return agent.ModelReply{}, fmt.Errorf("read OpenAI response stream: %w", err)
+		return agent.ModelReply{}, agent.ModelUsage{}, fmt.Errorf("read OpenAI response stream: %w", err)
 	}
-	if !completed {
-		return agent.ModelReply{}, errors.New("OpenAI response stream ended without a completed event")
+	if completed == nil {
+		return agent.ModelReply{}, agent.ModelUsage{}, errors.New("OpenAI response stream ended without a completed event")
 	}
 	ordered := make([]agent.ToolCall, 0, len(toolCalls))
 	for index := int64(0); len(ordered) < len(toolCalls); index++ {
@@ -352,14 +363,24 @@ func consumeOpenAIStream(
 			ordered = append(ordered, call)
 		}
 		if index > int64(len(toolCalls))+1024 {
-			return agent.ModelReply{}, errors.New("OpenAI returned invalid sparse tool indexes")
+			return agent.ModelReply{}, agent.ModelUsage{}, errors.New("OpenAI returned invalid sparse tool indexes")
 		}
 	}
 	return agent.ModelReply{
 		Content:              content.String(),
 		ToolCalls:            ordered,
 		ProviderContextItems: providerItems,
-	}, nil
+	}, openAIUsage(completed.Usage), nil
+}
+
+func openAIUsage(usage responses.ResponseUsage) agent.ModelUsage {
+	return agent.ModelUsage{
+		InputTokens:       usage.InputTokens,
+		CachedInputTokens: usage.InputTokensDetails.CachedTokens,
+		OutputTokens:      usage.OutputTokens,
+		ReasoningTokens:   usage.OutputTokensDetails.ReasoningTokens,
+		TotalTokens:       usage.TotalTokens,
+	}
 }
 
 func writeTextDelta(content *strings.Builder, delta string, write agent.TextWriter) error {
