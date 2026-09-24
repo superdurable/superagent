@@ -102,6 +102,7 @@ const activeDescription: AgentDescription = {
   pendingSteeredMessageCount: 0,
   availableMcpServers: ["local-tools"],
   availableTools: ["local-tools.search"],
+  inactivityDeadline: null,
 };
 
 const snapshot: AgentSnapshot = {

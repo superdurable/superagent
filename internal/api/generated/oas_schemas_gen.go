@@ -155,6 +155,7 @@ type AgentDescription struct {
 	PendingSteeredMessageCount int                    `json:"pendingSteeredMessageCount"`
 	AvailableMcpServers        []string               `json:"availableMcpServers"`
 	AvailableTools             []ToolName             `json:"availableTools"`
+	InactivityDeadline         NilDateTime            `json:"inactivityDeadline"`
 }
 
 // GetStatus returns the value of Status.
@@ -242,6 +243,11 @@ func (s *AgentDescription) GetAvailableTools() []ToolName {
 	return s.AvailableTools
 }
 
+// GetInactivityDeadline returns the value of InactivityDeadline.
+func (s *AgentDescription) GetInactivityDeadline() NilDateTime {
+	return s.InactivityDeadline
+}
+
 // SetStatus sets the value of Status.
 func (s *AgentDescription) SetStatus(val AgentStatus) {
 	s.Status = val
@@ -325,6 +331,11 @@ func (s *AgentDescription) SetAvailableMcpServers(val []string) {
 // SetAvailableTools sets the value of AvailableTools.
 func (s *AgentDescription) SetAvailableTools(val []ToolName) {
 	s.AvailableTools = val
+}
+
+// SetInactivityDeadline sets the value of InactivityDeadline.
+func (s *AgentDescription) SetInactivityDeadline(val NilDateTime) {
+	s.InactivityDeadline = val
 }
 
 // Ref: #/components/schemas/AgentEvent
@@ -688,6 +699,7 @@ const (
 	AgentStatusExecutingTool          AgentStatus = "executing_tool"
 	AgentStatusWaitingForTimer        AgentStatus = "waiting_for_timer"
 	AgentStatusApplyingSteering       AgentStatus = "applying_steering"
+	AgentStatusExpiring               AgentStatus = "expiring"
 )
 
 // AllValues returns all AgentStatus values.
@@ -703,6 +715,7 @@ func (AgentStatus) AllValues() []AgentStatus {
 		AgentStatusExecutingTool,
 		AgentStatusWaitingForTimer,
 		AgentStatusApplyingSteering,
+		AgentStatusExpiring,
 	}
 }
 
@@ -728,6 +741,8 @@ func (s AgentStatus) MarshalText() ([]byte, error) {
 	case AgentStatusWaitingForTimer:
 		return []byte(s), nil
 	case AgentStatusApplyingSteering:
+		return []byte(s), nil
+	case AgentStatusExpiring:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -766,6 +781,9 @@ func (s *AgentStatus) UnmarshalText(data []byte) error {
 		return nil
 	case AgentStatusApplyingSteering:
 		*s = AgentStatusApplyingSteering
+		return nil
+	case AgentStatusExpiring:
+		*s = AgentStatusExpiring
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -981,6 +999,7 @@ const (
 	EventKindToolCompleted         EventKind = "tool_completed"
 	EventKindToolRecoveryRequired  EventKind = "tool_recovery_required"
 	EventKindToolRecoveryResolved  EventKind = "tool_recovery_resolved"
+	EventKindInactivityExpired     EventKind = "inactivity_expired"
 )
 
 // AllValues returns all EventKind values.
@@ -1010,6 +1029,7 @@ func (EventKind) AllValues() []EventKind {
 		EventKindToolCompleted,
 		EventKindToolRecoveryRequired,
 		EventKindToolRecoveryResolved,
+		EventKindInactivityExpired,
 	}
 }
 
@@ -1063,6 +1083,8 @@ func (s EventKind) MarshalText() ([]byte, error) {
 	case EventKindToolRecoveryRequired:
 		return []byte(s), nil
 	case EventKindToolRecoveryResolved:
+		return []byte(s), nil
+	case EventKindInactivityExpired:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -1143,6 +1165,9 @@ func (s *EventKind) UnmarshalText(data []byte) error {
 		return nil
 	case EventKindToolRecoveryResolved:
 		*s = EventKindToolRecoveryResolved
+		return nil
+	case EventKindInactivityExpired:
+		*s = EventKindInactivityExpired
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1631,6 +1656,51 @@ func (o NilCallID) Get() (v CallID, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o NilCallID) Or(d CallID) CallID {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilDateTime returns new NilDateTime with value set to v.
+func NewNilDateTime(v time.Time) NilDateTime {
+	return NilDateTime{
+		Value: v,
+	}
+}
+
+// NilDateTime is nullable time.Time.
+type NilDateTime struct {
+	Value time.Time
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilDateTime) SetTo(v time.Time) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilDateTime) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilDateTime) SetToNull() {
+	o.Null = true
+	var v time.Time
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilDateTime) Get() (v time.Time, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilDateTime) Or(d time.Time) time.Time {
 	if v, ok := o.Get(); ok {
 		return v
 	}

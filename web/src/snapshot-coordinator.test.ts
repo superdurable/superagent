@@ -180,6 +180,7 @@ function snapshot(runId: string): AgentSnapshot {
       pendingSteeredMessageCount: 0,
       availableMcpServers: [],
       availableTools: [],
+      inactivityDeadline: null,
     },
     queued: [],
     steered: [],

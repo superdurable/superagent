@@ -43,6 +43,279 @@ const integrationToolName ToolName = "integration_tool"
 
 const integrationWaitTimeout = 30 * time.Second
 
+func TestAgentInactivityExpirationIntegration(t *testing.T) {
+	t.Run("message wait expires once and survives Worker replacement", func(t *testing.T) {
+		handler := newIntegrationExpirationHandler(0)
+		environment := newAgentIntegrationEnvironment(
+			t,
+			integrationModel{},
+			newIntegrationToolRegistry(),
+			WithInactivityExpirationHandler(handler),
+		)
+		flowID := FlowID("agent-inactivity-message-" + randomLocalID(t))
+		config := NewAgentConfig()
+		config.InactivityTimeoutSeconds = 2
+		metadata := MustJSONObject(`{"session_id":"session-1"}`)
+		runID, err := environment.agent.Start(t.Context(), flowID, StartRequest{
+			Config: config, RuntimeMetadata: metadata,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := readSnapshot(t, environment, flowID)
+		if snapshot.Description.InactivityDeadline == nil ||
+			snapshot.Description.Status != AgentStatusWaitingForMessage {
+			t.Fatalf("armed Snapshot = %#v", snapshot.Description)
+		}
+		environment.replaceWorker(t, flowID)
+		expiration := handler.waitForSuccess(t)
+		if expiration.FlowID != flowID || expiration.RunID != runID ||
+			expiration.RuntimeMetadata != metadata ||
+			!expiration.Deadline.Equal(*snapshot.Description.InactivityDeadline) {
+			t.Fatalf("expiration = %#v, Snapshot = %#v", expiration, snapshot.Description)
+		}
+		assertInactivityCompleted(t, environment, flowID)
+		handler.assertAttempts(t, 1)
+		assertInactivityEventCount(t, environment.agent, flowID, 1)
+	})
+
+	t.Run("question approval and recovery waits expire", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			tools ToolRegistry
+			start func(*testing.T, *agentIntegrationEnvironment, FlowID)
+		}{
+			{
+				name:  "question",
+				tools: newIntegrationToolRegistry(),
+				start: func(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) {
+					if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/questions"}); err != nil {
+						t.Fatal(err)
+					}
+					waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+						return snapshot.Description.PendingUserInput != nil && snapshot.Description.InactivityDeadline != nil
+					})
+				},
+			},
+			{
+				name:  "approval",
+				tools: newIntegrationToolRegistry(),
+				start: func(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) {
+					if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+						t.Fatal(err)
+					}
+					waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+						return snapshot.Description.PendingApproval != nil && snapshot.Description.InactivityDeadline != nil
+					})
+				},
+			},
+			{
+				name: "manual recovery",
+				tools: func() ToolRegistry {
+					registry := newRetryToolRegistryForTestOnly(0, false)
+					registry.returnedUnknown = true
+					registry.retryExhaustionPolicy = ToolRetryExhaustionPolicyManualRecovery
+					return registry
+				}(),
+				start: func(t *testing.T, environment *agentIntegrationEnvironment, flowID FlowID) {
+					if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/tool"}); err != nil {
+						t.Fatal(err)
+					}
+					waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+						return snapshot.Description.PendingToolRecovery != nil && snapshot.Description.InactivityDeadline != nil
+					})
+				},
+			},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				handler := newIntegrationExpirationHandler(0)
+				environment := newAgentIntegrationEnvironment(
+					t, integrationModel{}, test.tools, WithInactivityExpirationHandler(handler),
+				)
+				flowID := FlowID("agent-inactivity-" + strings.ReplaceAll(test.name, " ", "-") + "-" + randomLocalID(t))
+				config := NewAgentConfig()
+				config.InactivityTimeoutSeconds = 1
+				if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+					t.Fatal(err)
+				}
+				test.start(t, environment, flowID)
+				_ = handler.waitForSuccess(t)
+				assertInactivityCompleted(t, environment, flowID)
+				handler.assertAttempts(t, 1)
+			})
+		}
+	})
+
+	t.Run("durable wait pauses and restarts the full window", func(t *testing.T) {
+		handler := newIntegrationExpirationHandler(0)
+		environment := newAgentIntegrationEnvironment(
+			t, integrationModel{}, newIntegrationToolRegistry(), WithInactivityExpirationHandler(handler),
+		)
+		flowID := FlowID("agent-inactivity-durable-wait-" + randomLocalID(t))
+		config := NewAgentConfig()
+		config.InactivityTimeoutSeconds = 1
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+			t.Fatal(err)
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "/wait"}); err != nil {
+			t.Fatal(err)
+		}
+		waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description.Status == AgentStatusWaitingForTimer &&
+				snapshot.Description.PendingTimer != nil && snapshot.Description.InactivityDeadline == nil
+		})
+		observation := time.NewTimer(1500 * time.Millisecond)
+		defer observation.Stop()
+		select {
+		case expiration := <-handler.successes:
+			t.Fatalf("expired during durable wait: %#v", expiration)
+		case <-observation.C:
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "resume after durable wait"}); err != nil {
+			t.Fatal(err)
+		}
+		queued := waitForQueuedMessages(t, environment, flowID, 1)
+		if err := environment.agent.SteerMessage(t.Context(), flowID, SteerMessageRequest{MessageID: queued[0].Value.MessageID}); err != nil {
+			t.Fatal(err)
+		}
+		rearmed := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description.Status == AgentStatusWaitingForMessage &&
+				snapshot.Description.InactivityDeadline != nil
+		})
+		if rearmed.Description.InactivityDeadline == nil || time.Until(*rearmed.Description.InactivityDeadline) <= 0 {
+			t.Fatalf("rearmed Snapshot = %#v", rearmed.Description)
+		}
+		_ = handler.waitForSuccess(t)
+		assertInactivityCompleted(t, environment, flowID)
+	})
+
+	t.Run("callback retries with one stable expiration", func(t *testing.T) {
+		handler := newIntegrationExpirationHandler(2)
+		environment := newAgentIntegrationEnvironment(
+			t, integrationModel{}, newIntegrationToolRegistry(), WithInactivityExpirationHandler(handler),
+		)
+		flowID := FlowID("agent-inactivity-retry-" + randomLocalID(t))
+		config := NewAgentConfig()
+		config.InactivityTimeoutSeconds = 1
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+			t.Fatal(err)
+		}
+		want := handler.waitForSuccess(t)
+		assertInactivityCompleted(t, environment, flowID)
+		handler.assertStableAttempts(t, 3, want)
+		assertInactivityEventCount(t, environment.agent, flowID, 1)
+	})
+}
+
+type integrationExpirationHandler struct {
+	mutex             sync.Mutex
+	failuresRemaining int
+	attempts          []InactivityExpiration
+	successes         chan InactivityExpiration
+}
+
+func newIntegrationExpirationHandler(failures int) *integrationExpirationHandler {
+	return &integrationExpirationHandler{
+		failuresRemaining: failures,
+		successes:         make(chan InactivityExpiration, 1),
+	}
+}
+
+func (handler *integrationExpirationHandler) HandleInactivityExpiration(
+	_ context.Context,
+	expiration InactivityExpiration,
+) error {
+	handler.mutex.Lock()
+	defer handler.mutex.Unlock()
+	handler.attempts = append(handler.attempts, expiration)
+	if handler.failuresRemaining > 0 {
+		handler.failuresRemaining--
+		return errors.New("temporary expiration callback failure")
+	}
+	select {
+	case handler.successes <- expiration:
+	default:
+	}
+	return nil
+}
+
+func (handler *integrationExpirationHandler) waitForSuccess(t *testing.T) InactivityExpiration {
+	t.Helper()
+	select {
+	case expiration := <-handler.successes:
+		return expiration
+	case <-time.After(integrationWaitTimeout):
+		t.Fatal("timed out waiting for inactivity expiration")
+		return InactivityExpiration{}
+	}
+}
+
+func (handler *integrationExpirationHandler) assertAttempts(t *testing.T, want int) {
+	t.Helper()
+	handler.mutex.Lock()
+	defer handler.mutex.Unlock()
+	if len(handler.attempts) != want {
+		t.Fatalf("expiration attempts = %d, want %d: %#v", len(handler.attempts), want, handler.attempts)
+	}
+}
+
+func (handler *integrationExpirationHandler) assertStableAttempts(
+	t *testing.T,
+	wantCount int,
+	want InactivityExpiration,
+) {
+	t.Helper()
+	handler.mutex.Lock()
+	defer handler.mutex.Unlock()
+	if len(handler.attempts) != wantCount {
+		t.Fatalf("expiration attempts = %d, want %d: %#v", len(handler.attempts), wantCount, handler.attempts)
+	}
+	for _, attempt := range handler.attempts {
+		if attempt != want {
+			t.Fatalf("expiration attempt changed: got %#v, want %#v", attempt, want)
+		}
+	}
+}
+
+func assertInactivityCompleted(
+	t *testing.T,
+	environment *agentIntegrationEnvironment,
+	flowID FlowID,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), integrationWaitTimeout)
+	defer cancel()
+	result, err := environment.sdk.WaitForFlow(ctx, string(flowID), dex.WaitForFlowOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != dex.FlowCompleted {
+		t.Fatalf("Flow status = %v, want completed", result.Status)
+	}
+	snapshot := readSnapshot(t, environment, flowID)
+	if snapshot.Description.Status != AgentStatusExpiring || snapshot.Description.InactivityDeadline != nil {
+		t.Fatalf("expired Snapshot = %#v", snapshot.Description)
+	}
+}
+
+func assertInactivityEventCount(t *testing.T, client *Client, flowID FlowID, want int) {
+	t.Helper()
+	events, err := client.ListRecentEvents(t.Context(), flowID, EventStreamActivity, MaximumRecentEventLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.Activity.Kind == EventKindInactivityExpired {
+			count++
+		}
+	}
+	if count != want {
+		t.Fatalf("inactivity event count = %d, want %d: %#v", count, want, events)
+	}
+}
+
 func TestAgentToolRetryIntegration(t *testing.T) {
 	t.Run("transient failure succeeds through Dex retry", func(t *testing.T) {
 		tools := newRetryToolRegistryForTestOnly(2, false)
@@ -1668,9 +1941,14 @@ func registerRPCDefinitionsForTestOnly(flow *Flow) {
 	}
 }
 
-func newAgentIntegrationEnvironment(t *testing.T, modelClient ModelClient, tools ToolRegistry) *agentIntegrationEnvironment {
+func newAgentIntegrationEnvironment(
+	t *testing.T,
+	modelClient ModelClient,
+	tools ToolRegistry,
+	options ...FlowOption,
+) *agentIntegrationEnvironment {
 	t.Helper()
-	flow := NewFlow(modelClient, tools)
+	flow := NewFlow(modelClient, tools, options...)
 	registerRPCDefinitionsForTestOnly(flow)
 	environment := &agentIntegrationEnvironment{
 		flow:          flow,

@@ -631,6 +631,16 @@ func transportOptionalDateTime(value *time.Time) transportapi.OptNilDateTime {
 	return result
 }
 
+func transportNilDateTime(value *time.Time) transportapi.NilDateTime {
+	result := transportapi.NilDateTime{}
+	if value == nil || value.IsZero() {
+		result.SetToNull()
+		return result
+	}
+	result.SetTo(value.UTC())
+	return result
+}
+
 func transportAgentDescription(description agent.AgentDescription) (transportapi.AgentDescription, error) {
 	status, err := transportAgentStatus(description.Status)
 	if err != nil {
@@ -664,6 +674,7 @@ func transportAgentDescription(description agent.AgentDescription) (transportapi
 		PendingSteeredMessageCount: description.PendingSteeredMessageCount,
 		AvailableMcpServers:        availableMCPServers,
 		AvailableTools:             availableTools,
+		InactivityDeadline:         transportNilDateTime(description.InactivityDeadline),
 	}, nil
 }
 
@@ -812,6 +823,8 @@ func transportAgentStatus(status agent.AgentStatus) (transportapi.AgentStatus, e
 		return transportapi.AgentStatusWaitingForTimer, nil
 	case agent.AgentStatusApplyingSteering:
 		return transportapi.AgentStatusApplyingSteering, nil
+	case agent.AgentStatusExpiring:
+		return transportapi.AgentStatusExpiring, nil
 	default:
 		return "", &agent.EnumValidationError{Type: "AgentStatus", Value: string(status)}
 	}

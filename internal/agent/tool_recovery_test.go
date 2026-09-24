@@ -98,6 +98,33 @@ func TestToolDefinitionsExposeFailureSimulationOnlyToLocalMock(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRequiresExpirationHandlerWhenTimeoutEnabled(t *testing.T) {
+	config := NewAgentConfig()
+	config.InactivityTimeoutSeconds = 60
+	flow := &Flow{tools: staticToolRegistryForTestOnly{}}
+	if err := flow.validateConfig(config); err == nil {
+		t.Fatal("enabled inactivity timeout without handler validated")
+	}
+	flow.inactivityExpiration = inactivityExpirationHandlerFunc(func(
+		context.Context,
+		InactivityExpiration,
+	) error {
+		return nil
+	})
+	if err := flow.validateConfig(config); err != nil {
+		t.Fatalf("enabled inactivity timeout with handler: %v", err)
+	}
+}
+
+type inactivityExpirationHandlerFunc func(context.Context, InactivityExpiration) error
+
+func (handler inactivityExpirationHandlerFunc) HandleInactivityExpiration(
+	ctx context.Context,
+	expiration InactivityExpiration,
+) error {
+	return handler(ctx, expiration)
+}
+
 func TestToolStepOptionsMapRunningTypeWithOneMinuteHeartbeat(t *testing.T) {
 	flow := &Flow{}
 	short := parallelDefinitionForTestOnly("short")

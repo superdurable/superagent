@@ -55,6 +55,10 @@ func TestAgentConfigRejectsInvalidValues(t *testing.T) {
 		{"retention not chunk aligned", func(config *AgentConfig) { config.MessageRetentionLimit = 25 }},
 		{"negative parallel calls", func(config *AgentConfig) { config.MaxParallelToolCalls = -1 }},
 		{"too many parallel calls", func(config *AgentConfig) { config.MaxParallelToolCalls = 33 }},
+		{"negative inactivity timeout", func(config *AgentConfig) { config.InactivityTimeoutSeconds = -1 }},
+		{"excessive inactivity timeout", func(config *AgentConfig) {
+			config.InactivityTimeoutSeconds = int64((366 * 24 * time.Hour) / time.Second)
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

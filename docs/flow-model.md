@@ -7,8 +7,8 @@
 - Start input: typed `AgentConfig`; trusted `RuntimeMetadata` is an optional
   initial Attribute and must be one JSON object no larger than 16 KiB
 - ID reuse: Dex `IDReuseDisallow`
-- Completion: intentionally open-ended; the Agent waits for the next user
-  command after each turn
+- Completion: open-ended when inactivity timeout is disabled; otherwise a
+  successful application expiration callback closes an inactive Agent
 - RPCs: `SendMessage`, `AnswerQuestions`, `SteerMessage`, `ApproveTool`,
   `ResolveToolRecovery`, `ExecutePlan`, `DeleteQueuedMessage`, `GetSnapshot`, and
   `GetArchivedMessages`
@@ -104,6 +104,9 @@ AwaitManualToolRecovery
 DurableWait
   -> next tool or CompactContext               (timer fired)
   -> CompactContext                            (steered)
+
+AwaitUser / AwaitToolApproval / AwaitManualToolRecovery
+  -> BeginInactivityExpiration -> ExpireInactivity (inactivity Timer fired)
 ```
 
 ### Tool-call routing
@@ -165,6 +168,8 @@ history, and makes the model replan.
 | `PrepareManualToolRecovery` | none                                                                            | Capture a serial returned-unknown or exhausted call and its redacted error type                                                                              |
 | `AwaitManualToolRecovery` | exact recovery decision or steering                                               | Persist recovery state; retry selected calls, continue unknowns, stop the sequence, or replan                                                               |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
+| `BeginInactivityExpiration` | none                                                                          | Clear the deadline, persist `expiring`, emit one expiration event, and schedule the callback                                                               |
+| `ExpireInactivity`     | none                                                                                | Invoke the application handler with stable identity under bounded retry; complete only after success                                                       |
 
 ### Tool StepOptions resolution
 
@@ -204,6 +209,14 @@ Approval and timer waits never change the round. The
 next value must remain within JavaScript's safe integer range or the WaitFor
 fails explicitly.
 
+When `inactivity_timeout_seconds` is positive, the three user-controlled waits
+append a Dex Timer and persist its exact `InactivityDeadline`. Ready answers,
+messages, plan execution, steering, approvals, and recovery decisions are read
+before the Timer outcome, so accepted input wins a simultaneous wake. Leaving a
+user wait deletes the deadline. Model calls, serial or parallel tools, and
+`DurableWait` never carry an inactivity Timer. After a durable wait completes or
+is steered, the next user wait receives a complete new timeout window.
+
 ## Durable resources
 
 | Resource               | Kind         | Purpose                                                                                      |
@@ -220,6 +233,7 @@ fails explicitly.
 | `PendingToolRecovery`  | Attribute    | Exact recovery revision and redacted failed-call presentation                                |
 | `PendingTimer`         | Attribute    | Current durable wait presentation                                                            |
 | `PendingUserInput`     | Attribute    | Current structured question batch                                                            |
+| `InactivityDeadline`   | Attribute    | Exact deadline only while one user-controlled wait is armed                                  |
 | `AnsweredUserInputs`   | Channel      | Validated answers awaiting immediate consumption                                             |
 | `QueuedUserMessages`   | Channel      | FIFO `PendingUserMessage` payloads with stable application IDs                               |
 | `SteeredUserMessages`  | Channel      | Safe-boundary steering payloads preserving the same application IDs                          |

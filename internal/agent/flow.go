@@ -42,6 +42,7 @@ var (
 	pendingToolRecoveryAttribute  = dex.DefineAttribute[PendingToolRecovery]("PendingToolRecovery")
 	pendingTimerAttribute         = dex.DefineAttribute[PendingTimer]("PendingTimer")
 	pendingUserInputAttribute     = dex.DefineAttribute[PendingUserInput]("PendingUserInput")
+	inactivityDeadlineAttribute   = dex.DefineAttribute[time.Time]("InactivityDeadline")
 	answeredUserInputsChannel     = dex.DefineChannel[AnsweredUserInput]("AnsweredUserInputs")
 	queuedUserMessagesChannel     = dex.DefineChannel[PendingUserMessage]("QueuedUserMessages")
 	steeredUserMessagesChannel    = dex.DefineChannel[PendingUserMessage]("SteeredUserMessages")
@@ -58,20 +59,41 @@ var (
 type Flow struct {
 	modelClient               ModelClient
 	tools                     ToolRegistry
+	inactivityExpiration      InactivityExpirationHandler
 	rpcDefinitionsForTestOnly []dex.RPCDef
 }
 
 var _ dex.Flow = (*Flow)(nil)
 
+// FlowOption configures an application boundary for one Agent Flow definition.
+type FlowOption func(*Flow)
+
+// WithInactivityExpirationHandler configures the application-owned expiration callback.
+func WithInactivityExpirationHandler(handler InactivityExpirationHandler) FlowOption {
+	if handler == nil {
+		panic("inactivity expiration handler is required")
+	}
+	return func(flow *Flow) {
+		flow.inactivityExpiration = handler
+	}
+}
+
 // NewFlow constructs an Agent from its model and trusted tool boundaries.
-func NewFlow(modelClient ModelClient, tools ToolRegistry) *Flow {
+func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption) *Flow {
 	if modelClient == nil {
 		panic("model client is required")
 	}
 	if tools == nil {
 		panic("tool registry is required")
 	}
-	return &Flow{modelClient: modelClient, tools: tools}
+	flow := &Flow{modelClient: modelClient, tools: tools}
+	for _, option := range options {
+		if option == nil {
+			panic("Flow option is required")
+		}
+		option(flow)
+	}
+	return flow
 }
 
 const flowTypeAIAgent = "AIAgentFlow"
@@ -115,6 +137,8 @@ func (flow *Flow) GetSteps() []dex.StepDef {
 		dex.DefineStep(prepareManualToolRecoveryStep{flow: flow}),
 		dex.DefineStep(awaitManualToolRecoveryStep{flow: flow}),
 		dex.DefineStep(durableWaitStep{flow: flow}),
+		dex.DefineStep(beginInactivityExpirationStep{flow: flow}),
+		dex.DefineStep(expireInactivityStep{flow: flow}),
 	}
 }
 
@@ -186,6 +210,7 @@ func (*Flow) GetPersistenceSchema() dex.PersistenceSchema {
 			pendingToolRecoveryAttribute,
 			pendingTimerAttribute,
 			pendingUserInputAttribute,
+			inactivityDeadlineAttribute,
 		},
 		Channels: []dex.ChannelDef{
 			answeredUserInputsChannel,
@@ -521,6 +546,10 @@ func (flow *Flow) describe(
 	if err != nil {
 		return AgentDescription{}, err
 	}
+	inactivityDeadline, err := getInactivityDeadline(ctx)
+	if err != nil {
+		return AgentDescription{}, err
+	}
 	definitions := flow.toolDefinitions(config)
 	availableTools := make([]ToolName, 0, len(definitions)+1)
 	availableTools = append(availableTools, ToolNameWriteTodos)
@@ -545,7 +574,56 @@ func (flow *Flow) describe(
 		PendingSteeredMessageCount: steeredMessageCount,
 		AvailableMCPServers:        flow.tools.ServerNames(),
 		AvailableTools:             availableTools,
+		InactivityDeadline:         inactivityDeadline,
 	}, nil
+}
+
+func getInactivityDeadline(ctx dex.Context) (*time.Time, error) {
+	deadline, err := inactivityDeadlineAttribute.Get(ctx)
+	if isAttributeNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	deadline = deadline.UTC()
+	return &deadline, nil
+}
+
+func clearInactivityDeadline(ctx dex.Context) error {
+	err := inactivityDeadlineAttribute.Delete(ctx)
+	if isAttributeNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func (flow *Flow) waitForUserActivity(
+	ctx dex.Context,
+	conditions ...dex.Condition,
+) (*dex.Wait, error) {
+	config, err := agentConfigAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if config.InactivityTimeoutSeconds == 0 {
+		if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+			return nil, clearErr
+		}
+		return dex.AnyOf(conditions...), nil
+	}
+	deadline := ctx.FirstAttemptAt().UTC().Add(
+		time.Duration(config.InactivityTimeoutSeconds) * time.Second,
+	)
+	if err := inactivityDeadlineAttribute.Set(ctx, deadline); err != nil {
+		return nil, err
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		remaining = time.Nanosecond
+	}
+	conditions = append(conditions, dex.Timer(remaining))
+	return dex.AnyOf(conditions...), nil
 }
 
 func (flow *Flow) initializingSnapshot(
@@ -597,6 +675,9 @@ func findPendingUserMessage(
 func (flow *Flow) validateConfig(config AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
+	}
+	if config.InactivityTimeoutSeconds > 0 && flow.inactivityExpiration == nil {
+		return errors.New("inactivity expiration handler is required when inactivity timeout is enabled")
 	}
 	if !config.MCPEnabled && (len(config.EnabledMCPServers) > 0 || len(config.EnabledTools) > 0) {
 		return errors.New("disabled MCP cannot select servers or tools")
@@ -1763,6 +1844,8 @@ const (
 	stepTypePrepareManualRecovery stepType = "PrepareManualToolRecovery"
 	stepTypeAwaitManualRecovery   stepType = "AwaitManualToolRecovery"
 	stepTypeDurableWait           stepType = "DurableWait"
+	stepTypeBeginExpiration       stepType = "BeginInactivityExpiration"
+	stepTypeExpireInactivity      stepType = "ExpireInactivity"
 
 	maximumSteeringMessageCount       = 2_147_483_647
 	maximumAutomaticPlanRecoveryCount = 1
@@ -1900,6 +1983,17 @@ var (
 			dex.LockAttribute(pendingToolRecoveryAttribute),
 		},
 	}
+	inactivityExpirationStepOptions = &dex.StepOptions{
+		ExecuteMethodTimeout: time.Minute,
+		ExecuteDurability:    dex.StepDurabilitySync,
+		ExecuteRetry: &dex.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    10_000,
+			TotalDuration:      7 * 24 * time.Hour,
+		},
+	}
 )
 
 type initStep struct {
@@ -1959,16 +2053,23 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 		if err := incrementWaitingInputRound(ctx); err != nil {
 			return nil, err
 		}
-		return dex.Until(answeredUserInputsChannel.ForOne()), nil
+		return step.flow.waitForUserActivity(ctx, answeredUserInputsChannel.ForOne())
 	}
 	if plan != nil && plan.Status != PlanStatusCompleted {
 		planKey := planRevisionKey(plan.Revision)
-		if steeredUserMessagesChannel.Size(ctx) == 0 &&
+		isWaiting := steeredUserMessagesChannel.Size(ctx) == 0 &&
 			queuedUserMessagesChannel.Size(ctx) == 0 &&
-			planExecutionsChannel.Size(ctx, planKey) == 0 {
+			planExecutionsChannel.Size(ctx, planKey) == 0
+		if isWaiting {
 			if err := incrementWaitingInputRound(ctx); err != nil {
 				return nil, err
 			}
+			return step.flow.waitForUserActivity(
+				ctx,
+				steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+				queuedUserMessagesChannel.ForOne(),
+				planExecutionsChannel.ForOne(planKey),
+			)
 		}
 		return dex.AnyOf(
 			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
@@ -1980,6 +2081,11 @@ func (step awaitUserStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error
 		if err := incrementWaitingInputRound(ctx); err != nil {
 			return nil, err
 		}
+		return step.flow.waitForUserActivity(
+			ctx,
+			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+			queuedUserMessagesChannel.ForOne(),
+		)
 	}
 	return dex.AnyOf(
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
@@ -1993,6 +2099,9 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(answeredInputs) > 0 {
+		if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+			return nil, clearErr
+		}
 		answeredInput := answeredInputs[0]
 		sequence, beginErr := step.flow.beginUserTurn(ctx, answeredInput.Message)
 		if beginErr != nil {
@@ -2013,6 +2122,9 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(steered) > 0 {
+		if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+			return nil, clearErr
+		}
 		if beginErr := step.flow.beginSteeredTurn(ctx, steered); beginErr != nil {
 			return nil, beginErr
 		}
@@ -2023,6 +2135,9 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(queued) > 0 {
+		if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+			return nil, clearErr
+		}
 		if _, beginErr := step.flow.beginUserTurn(ctx, queued[0].Value); beginErr != nil {
 			return nil, beginErr
 		}
@@ -2031,12 +2146,18 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
 	}
-
 	plan, err := step.flow.getPlan(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if plan == nil {
+		if ctx.HasTimerFired() {
+			deadline, deadlineErr := inactivityDeadlineAttribute.Get(ctx)
+			if deadlineErr != nil {
+				return nil, deadlineErr
+			}
+			return dex.GoTo(beginInactivityExpirationStep{flow: step.flow}, deadline.UTC()), nil
+		}
 		return nil, errors.New("the Agent wait completed without an input")
 	}
 	executions, err := planExecutionsChannel.GetConditionResults(ctx, planRevisionKey(plan.Revision))
@@ -2044,10 +2165,19 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(executions) > 0 {
+		if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+			return nil, clearErr
+		}
 		revision := executions[0].Revision
 		if consumptionErr := step.flow.writeInputConsumption(ctx, nil, nil, &revision); consumptionErr != nil {
 			return nil, consumptionErr
 		}
+	} else if ctx.HasTimerFired() {
+		deadline, deadlineErr := inactivityDeadlineAttribute.Get(ctx)
+		if deadlineErr != nil {
+			return nil, deadlineErr
+		}
+		return dex.GoTo(beginInactivityExpirationStep{flow: step.flow}, deadline.UTC()), nil
 	}
 	state, err := agentStateAttribute.Get(ctx)
 	if err != nil {
@@ -2665,6 +2795,13 @@ func (step awaitToolApprovalStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wai
 	if err := step.flow.writeSnapshotRequired(ctx); err != nil {
 		return nil, err
 	}
+	if steeredUserMessagesChannel.Size(ctx) == 0 && toolApprovalsChannel.Size(ctx, string(call.ID)) == 0 {
+		return step.flow.waitForUserActivity(
+			ctx,
+			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+			toolApprovalsChannel.ForOne(string(call.ID)),
+		)
+	}
 	return dex.AnyOf(
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
 		toolApprovalsChannel.ForOne(string(call.ID)),
@@ -2677,6 +2814,9 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 		return nil, err
 	}
 	if len(steered) > 0 {
+		if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+			return nil, clearErr
+		}
 		if beginErr := step.flow.beginSteeredTurn(ctx, steered); beginErr != nil {
 			return nil, beginErr
 		}
@@ -2691,7 +2831,17 @@ func (step awaitToolApprovalStep) Execute(ctx dex.Context, _ dex.None) (*dex.Ste
 		return nil, err
 	}
 	if len(approvals) == 0 {
+		if ctx.HasTimerFired() {
+			deadline, deadlineErr := inactivityDeadlineAttribute.Get(ctx)
+			if deadlineErr != nil {
+				return nil, deadlineErr
+			}
+			return dex.GoTo(beginInactivityExpirationStep{flow: step.flow}, deadline.UTC()), nil
+		}
 		return nil, errors.New("the approval wait completed without a decision")
+	}
+	if clearErr := clearInactivityDeadline(ctx); clearErr != nil {
+		return nil, clearErr
 	}
 	callID := call.ID
 	toolName := call.Name
@@ -3227,6 +3377,14 @@ func (step awaitManualToolRecoveryStep) WaitFor(
 	if err := step.flow.writeSnapshotRequired(ctx); err != nil {
 		return nil, err
 	}
+	if steeredUserMessagesChannel.Size(ctx) == 0 &&
+		toolRecoveryDecisionsChannel.Size(ctx, string(pending.RecoveryID)) == 0 {
+		return step.flow.waitForUserActivity(
+			ctx,
+			steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
+			toolRecoveryDecisionsChannel.ForOne(string(pending.RecoveryID)),
+		)
+	}
 	return dex.AnyOf(
 		steeredUserMessagesChannel.AtLeastAtMost(1, maximumSteeringMessageCount),
 		toolRecoveryDecisionsChannel.ForOne(string(pending.RecoveryID)),
@@ -3248,6 +3406,9 @@ func (step awaitManualToolRecoveryStep) Execute(
 		return nil, conditionErr
 	}
 	if len(steered) > 0 {
+		if err := clearInactivityDeadline(ctx); err != nil {
+			return nil, err
+		}
 		if err := step.flow.writeActivity(ctx, AgentEvent{
 			Kind: EventKindToolRecoveryResolved, Message: "Manual tool recovery was interrupted by steering.",
 			CallID: &callID, ToolName: &toolName,
@@ -3278,8 +3439,20 @@ func (step awaitManualToolRecoveryStep) Execute(
 	if decisionErr != nil {
 		return nil, decisionErr
 	}
+	if len(requests) == 0 {
+		if ctx.HasTimerFired() {
+			deadline, deadlineErr := inactivityDeadlineAttribute.Get(ctx)
+			if deadlineErr != nil {
+				return nil, deadlineErr
+			}
+			return dex.GoTo(beginInactivityExpirationStep{flow: step.flow}, deadline.UTC()), nil
+		}
+	}
 	if len(requests) != 1 {
 		return nil, errors.New("manual recovery wait completed without one decision")
+	}
+	if err := clearInactivityDeadline(ctx); err != nil {
+		return nil, err
 	}
 	request := requests[0]
 	if err := validateToolRecoveryResolution(pendingToolRecovery(batch), request); err != nil {
@@ -3457,6 +3630,9 @@ func (durableWaitStep) GetStepType() string { return string(stepTypeDurableWait)
 func (durableWaitStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
 
 func (step durableWaitStep) WaitFor(ctx dex.Context, _ dex.None) (*dex.Wait, error) {
+	if err := clearInactivityDeadline(ctx); err != nil {
+		return nil, err
+	}
 	timer, err := pendingTimerAttribute.Get(ctx)
 	if err != nil {
 		return nil, err
@@ -3539,6 +3715,78 @@ func (step durableWaitStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecis
 		return nil, err
 	}
 	return step.flow.continueAfterTool(ctx)
+}
+
+type beginInactivityExpirationStep struct {
+	dex.StepDefaultsNoWaitFor[time.Time]
+	flow *Flow
+}
+
+var _ dex.Step[time.Time] = beginInactivityExpirationStep{}
+
+func (beginInactivityExpirationStep) GetStepType() string {
+	return string(stepTypeBeginExpiration)
+}
+
+func (beginInactivityExpirationStep) GetStepOptions() *dex.StepOptions {
+	return defaultStepOptions
+}
+
+func (step beginInactivityExpirationStep) Execute(
+	ctx dex.Context,
+	deadline time.Time,
+) (*dex.StepDecision, error) {
+	if err := clearInactivityDeadline(ctx); err != nil {
+		return nil, err
+	}
+	if err := step.flow.updateStatus(ctx, AgentStatusExpiring); err != nil {
+		return nil, err
+	}
+	if err := step.flow.writeActivity(ctx, AgentEvent{
+		Kind:    EventKindInactivityExpired,
+		Message: "Agent inactivity timeout expired.",
+	}); err != nil {
+		return nil, err
+	}
+	return dex.GoTo(expireInactivityStep{flow: step.flow}, deadline.UTC()), nil
+}
+
+type expireInactivityStep struct {
+	dex.StepDefaultsNoWaitFor[time.Time]
+	flow *Flow
+}
+
+var _ dex.Step[time.Time] = expireInactivityStep{}
+
+func (expireInactivityStep) GetStepType() string {
+	return string(stepTypeExpireInactivity)
+}
+
+func (expireInactivityStep) GetStepOptions() *dex.StepOptions {
+	return inactivityExpirationStepOptions
+}
+
+func (step expireInactivityStep) Execute(
+	ctx dex.Context,
+	deadline time.Time,
+) (*dex.StepDecision, error) {
+	if step.flow.inactivityExpiration == nil {
+		return nil, errors.New("inactivity expiration handler is not configured")
+	}
+	metadata, err := agentRuntimeMetadataAttribute.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	expiration := InactivityExpiration{
+		FlowID:          FlowID(ctx.FlowID()),
+		RunID:           RunID(ctx.RunID()),
+		Deadline:        deadline.UTC(),
+		RuntimeMetadata: metadata,
+	}
+	if err := step.flow.inactivityExpiration.HandleInactivityExpiration(ctx, expiration); err != nil {
+		return nil, err
+	}
+	return dex.ForceComplete("inactivity_expired"), nil
 }
 
 type modelProgress struct {
