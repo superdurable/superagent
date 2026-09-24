@@ -44,6 +44,57 @@ const integrationToolName ToolName = "integration_tool"
 const integrationWaitTimeout = 30 * time.Second
 
 func TestAgentInactivityExpirationIntegration(t *testing.T) {
+	t.Run("disabled timeout has no deadline", func(t *testing.T) {
+		environment := newAgentIntegrationEnvironment(
+			t, integrationModel{}, newIntegrationToolRegistry(),
+		)
+		flowID := FlowID("agent-inactivity-disabled-" + randomLocalID(t))
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: NewAgentConfig()}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := readSnapshot(t, environment, flowID)
+		if snapshot.Description.InactivityDeadline != nil {
+			t.Fatalf("disabled Snapshot = %#v", snapshot.Description)
+		}
+	})
+
+	t.Run("accepted user operation advances the global deadline", func(t *testing.T) {
+		handler := newIntegrationExpirationHandler(0)
+		environment := newAgentIntegrationEnvironment(
+			t,
+			integrationModel{},
+			newIntegrationToolRegistry(),
+			WithInactivityExpirationHandler(handler),
+		)
+		flowID := FlowID("agent-inactivity-reset-" + randomLocalID(t))
+		config := NewAgentConfig()
+		config.InactivityTimeoutSeconds = 5
+		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
+			t.Fatal(err)
+		}
+		initial := readSnapshot(t, environment, flowID)
+		if initial.Description.InactivityDeadline == nil {
+			t.Fatalf("initial Snapshot = %#v", initial.Description)
+		}
+		delay := time.NewTimer(200 * time.Millisecond)
+		defer delay.Stop()
+		select {
+		case <-delay.C:
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		if err := environment.agent.SendMessage(t.Context(), flowID, UserMessage{Content: "reset deadline"}); err != nil {
+			t.Fatal(err)
+		}
+		advanced := waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
+			return snapshot.Description.InactivityDeadline != nil &&
+				snapshot.Description.InactivityDeadline.After(*initial.Description.InactivityDeadline)
+		})
+		if advanced.Description.InactivityDeadline == nil {
+			t.Fatalf("advanced Snapshot = %#v", advanced.Description)
+		}
+	})
+
 	t.Run("message wait expires once and survives Worker replacement", func(t *testing.T) {
 		handler := newIntegrationExpirationHandler(0)
 		environment := newAgentIntegrationEnvironment(
@@ -147,14 +198,14 @@ func TestAgentInactivityExpirationIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("durable wait pauses and restarts the full window", func(t *testing.T) {
+	t.Run("durable wait extends the global deadline", func(t *testing.T) {
 		handler := newIntegrationExpirationHandler(0)
 		environment := newAgentIntegrationEnvironment(
 			t, integrationModel{}, newIntegrationToolRegistry(), WithInactivityExpirationHandler(handler),
 		)
 		flowID := FlowID("agent-inactivity-durable-wait-" + randomLocalID(t))
 		config := NewAgentConfig()
-		config.InactivityTimeoutSeconds = 1
+		config.InactivityTimeoutSeconds = 3
 		if _, err := environment.agent.Start(t.Context(), flowID, StartRequest{Config: config}); err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +214,7 @@ func TestAgentInactivityExpirationIntegration(t *testing.T) {
 		}
 		waitForSnapshot(t, environment, flowID, func(snapshot AgentSnapshot) bool {
 			return snapshot.Description.Status == AgentStatusWaitingForTimer &&
-				snapshot.Description.PendingTimer != nil && snapshot.Description.InactivityDeadline == nil
+				snapshot.Description.PendingTimer != nil && snapshot.Description.InactivityDeadline != nil
 		})
 		observation := time.NewTimer(1500 * time.Millisecond)
 		defer observation.Stop()
@@ -183,11 +234,10 @@ func TestAgentInactivityExpirationIntegration(t *testing.T) {
 			return snapshot.Description.Status == AgentStatusWaitingForMessage &&
 				snapshot.Description.InactivityDeadline != nil
 		})
-		if rearmed.Description.InactivityDeadline == nil || time.Until(*rearmed.Description.InactivityDeadline) <= 0 {
+		if rearmed.Description.InactivityDeadline == nil || time.Until(*rearmed.Description.InactivityDeadline) < 20*time.Second {
 			t.Fatalf("rearmed Snapshot = %#v", rearmed.Description)
 		}
-		_ = handler.waitForSuccess(t)
-		assertInactivityCompleted(t, environment, flowID)
+		handler.assertAttempts(t, 0)
 	})
 
 	t.Run("callback retries with one stable expiration", func(t *testing.T) {
@@ -1949,6 +1999,8 @@ func newAgentIntegrationEnvironment(
 ) *agentIntegrationEnvironment {
 	t.Helper()
 	flow := NewFlow(modelClient, tools, options...)
+	flow.minimumInactivityTimeoutSecondsForTestOnly = 1
+	flow.inactivityResetMinimumExtensionForTestOnly = 100 * time.Millisecond
 	registerRPCDefinitionsForTestOnly(flow)
 	environment := &agentIntegrationEnvironment{
 		flow:          flow,

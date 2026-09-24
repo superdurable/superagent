@@ -105,8 +105,12 @@ DurableWait
   -> next tool or CompactContext               (timer fired)
   -> CompactContext                            (steered)
 
-AwaitUser / AwaitToolApproval / AwaitManualToolRecovery
-  -> BeginInactivityExpiration -> ExpireInactivity (inactivity Timer fired)
+Init
+  -> AwaitUser + InactivityTimeout             (timeout configured)
+
+InactivityTimeout
+  -> InactivityTimeout                         (reset deadline)
+  -> ForceComplete                             (handler succeeded)
 ```
 
 ### Tool-call routing
@@ -168,8 +172,7 @@ history, and makes the model replan.
 | `PrepareManualToolRecovery` | none                                                                            | Capture a serial returned-unknown or exhausted call and its redacted error type                                                                              |
 | `AwaitManualToolRecovery` | exact recovery decision or steering                                               | Persist recovery state; retry selected calls, continue unknowns, stop the sequence, or replan                                                               |
 | `DurableWait`          | Timer or steering                                                                   | Persist waiting status; record completion or interruption and continue                                                                                     |
-| `BeginInactivityExpiration` | none                                                                          | Clear the deadline, persist `expiring`, emit one expiration event, and schedule the callback                                                               |
-| `ExpireInactivity`     | none                                                                                | Invoke the application handler with stable identity under bounded retry; complete only after success                                                       |
+| `InactivityTimeout`    | reset timestamp or deadline Timer                                                   | Coalesce reset deadlines, invoke the application handler under bounded retry, and force-complete only after success                                        |
 
 ### Tool StepOptions resolution
 
@@ -209,13 +212,14 @@ Approval and timer waits never change the round. The
 next value must remain within JavaScript's safe integer range or the WaitFor
 fails explicitly.
 
-When `inactivity_timeout_seconds` is positive, the three user-controlled waits
-append a Dex Timer and persist its exact `InactivityDeadline`. Ready answers,
-messages, plan execution, steering, approvals, and recovery decisions are read
-before the Timer outcome, so accepted input wins a simultaneous wake. Leaving a
-user wait deletes the deadline. Model calls, serial or parallel tools, and
-`DurableWait` never carry an inactivity Timer. After a durable wait completes or
-is steered, the next user wait receives a complete new timeout window.
+When `inactivity_timeout_seconds` is positive, `Init` starts one parallel
+`InactivityTimeout` Step and persists its exact `InactivityDeadline`. Accepted
+messages, answers, plan execution, steering, queue deletion, approvals, and
+recovery decisions advance the deadline transactionally. Extensions of one
+minute or less do not publish another reset. The accepted RPC handler samples
+the current time after business validation. Snapshot and Stream reads do not
+reset it. Model calls and serial or parallel tools continue under the same
+deadline. `DurableWait` advances it to the wait target plus the timeout.
 
 ## Durable resources
 
@@ -233,7 +237,8 @@ is steered, the next user wait receives a complete new timeout window.
 | `PendingToolRecovery`  | Attribute    | Exact recovery revision and redacted failed-call presentation                                |
 | `PendingTimer`         | Attribute    | Current durable wait presentation                                                            |
 | `PendingUserInput`     | Attribute    | Current structured question batch                                                            |
-| `InactivityDeadline`   | Attribute    | Exact deadline only while one user-controlled wait is armed                                  |
+| `InactivityDeadline`   | Attribute    | Current global deadline while inactivity expiration is configured                            |
+| `ResetInactivityTimer` | Channel      | Coalesced UTC deadline updates for the timeout branch                                         |
 | `AnsweredUserInputs`   | Channel      | Validated answers awaiting immediate consumption                                             |
 | `QueuedUserMessages`   | Channel      | FIFO `PendingUserMessage` payloads with stable application IDs                               |
 | `SteeredUserMessages`  | Channel      | Safe-boundary steering payloads preserving the same application IDs                          |
