@@ -143,6 +143,40 @@ test("renders chronological transient activity and durable queue interactions", 
       hasText: "/reason Checked the constraints | Durable answer",
     }),
   ).toHaveCount(1);
+  const userMessage = history.locator(".message-bubble.user").filter({
+    hasText: "/reason Checked the constraints | Durable answer",
+  });
+  const assistantMessage = history
+    .locator(".message-bubble.assistant")
+    .filter({ hasText: "Durable answer" });
+  const userBox = await userMessage.boundingBox();
+  const assistantBox = await assistantMessage.boundingBox();
+  expect(userBox).not.toBeNull();
+  expect(assistantBox).not.toBeNull();
+  expect(userBox?.x).toBeGreaterThan(assistantBox?.x ?? 0);
+  expect(userBox?.width).toBeLessThan(assistantBox?.width ?? 0);
+  await expect(userMessage.locator(".sa-conversation-user")).toHaveCSS(
+    "background-color",
+    "rgb(237, 242, 232)",
+  );
+  await expect(userMessage.locator(".sa-conversation-user")).toHaveCSS(
+    "border-top-style",
+    "solid",
+  );
+  await expect(userMessage.locator(".sa-message-timestamp")).toHaveCSS(
+    "opacity",
+    "0",
+  );
+  await userMessage.hover();
+  await expect(userMessage.locator(".sa-message-timestamp")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await assistantMessage.hover();
+  await expect(assistantMessage.locator(".sa-message-timestamp")).toHaveCSS(
+    "opacity",
+    "1",
+  );
   await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(0);
   await expect(workLog.getByText("Model replied", { exact: true })).toHaveCount(
@@ -317,7 +351,7 @@ test("removes a consumed queued message before the next Snapshot completes", asy
   );
   const consumedMessage = page
     .getByRole("region", { name: "Conversation history" })
-    .locator(".sa-conversation-user, .message-bubble.user")
+    .locator(".message-bubble.user")
     .filter({ hasText: "consume this queued message" });
   await expect(consumedMessage).toHaveCount(1);
   expect(snapshotStatuses).toHaveLength(completedSnapshots);
@@ -1679,9 +1713,7 @@ async function expectAgentWaitingForMessage(page: Page): Promise<void> {
 }
 
 async function conversationUserText(history: Locator): Promise<string[]> {
-  return history
-    .locator(".message-bubble.user, .sa-conversation-user")
-    .allTextContents();
+  return history.locator(".message-bubble.user").allTextContents();
 }
 
 async function expectMessageQueueExpanded(queue: Locator): Promise<void> {

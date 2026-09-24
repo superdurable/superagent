@@ -76,6 +76,11 @@ legacy rejected calls without a result are shown as failed without exposing raw
 tool JSON.
 Use `renderQuestion` to customize that card.
 
+`ConversationView` owns message alignment and timestamp disclosure even when a
+consumer supplies `renderMessage`. User messages are compact, right-aligned
+bubbles; assistant messages remain left-aligned. Hovering or focusing either
+message reveals its local timestamp below the content.
+
 Completed model and tool duration is `createdAt - startedAt`. Missing or
 negative legacy timing is omitted. Running durations update once per second but
 are excluded from live-region announcements. Stream timestamps remain ordering

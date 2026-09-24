@@ -104,6 +104,40 @@ function DefaultMessage({ entry }: { entry: TimelineSequencedMessage }) {
   );
 }
 
+function messageTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(date);
+}
+
+function MessageFrame({
+  messageRole,
+  createdAt,
+  children,
+}: {
+  messageRole: "user" | "assistant";
+  createdAt: string;
+  children: ReactNode;
+}) {
+  return (
+    <article
+      aria-label={`${messageRole === "user" ? "User" : "Assistant"} message`}
+      className={`sa-conversation-message sa-conversation-message--${messageRole} message-bubble ${messageRole}`}
+    >
+      <div className="sa-conversation-message__content">{children}</div>
+      <time className="sa-message-timestamp" dateTime={createdAt}>
+        {messageTime(createdAt)}
+      </time>
+    </article>
+  );
+}
+
 function DefaultTool({ item }: { item: ConversationToolWorkItem }) {
   return (
     <details className="sa-work-item">
@@ -384,15 +418,33 @@ export function ConversationView({
           aria-label="Conversation turn"
           key={turn.key}
         >
+          {turn.messages.map((entry) => {
+            if (
+              entry.message.role !== "user" &&
+              entry.message.role !== "assistant"
+            )
+              return null;
+            const rendered = renderMessage?.(entry) ?? (
+              <DefaultMessage entry={entry} />
+            );
+            return (
+              <MessageFrame
+                messageRole={entry.message.role}
+                createdAt={entry.message.createdAt}
+                key={entry.sequence}
+              >
+                {rendered}
+              </MessageFrame>
+            );
+          })}
           {turn.consumedUserMessages.map((entry) => (
-            <div className="sa-conversation-user" key={entry.messageId}>
-              {entry.value.content}
-            </div>
-          ))}
-          {turn.messages.map((entry) => (
-            <div key={entry.sequence}>
-              {renderMessage?.(entry) ?? <DefaultMessage entry={entry} />}
-            </div>
+            <MessageFrame
+              messageRole="user"
+              createdAt={entry.createdAt}
+              key={entry.messageId}
+            >
+              <div className="sa-conversation-user">{entry.value.content}</div>
+            </MessageFrame>
           ))}
           <WorkLog turn={turn} renderToolCall={renderToolCall} />
           {turn.questions.map((question) => (

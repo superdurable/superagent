@@ -54,6 +54,54 @@ describe("ConversationView", () => {
     expect(container).toHaveTextContent("0 failed");
   });
 
+  it("distinguishes message roles and exposes their timestamps", () => {
+    render(
+      <ConversationView
+        messages={[
+          {
+            sequence: 1,
+            message: {
+              role: "user",
+              content: "Build an approval app",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-24T17:39:47Z",
+            },
+          },
+          {
+            sequence: 2,
+            message: {
+              role: "assistant",
+              content: "I will inspect the repository.",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-24T17:40:12Z",
+            },
+          },
+        ]}
+      />,
+    );
+
+    const userMessage = screen.getByLabelText("User message");
+    const assistantMessage = screen.getByLabelText("Assistant message");
+    expect(userMessage).toHaveClass("sa-conversation-message--user");
+    expect(assistantMessage).toHaveClass("sa-conversation-message--assistant");
+    expect(userMessage.querySelector(".sa-conversation-user")).not.toBeNull();
+    expect(
+      assistantMessage.querySelector(".sa-conversation-assistant"),
+    ).not.toBeNull();
+    expect(userMessage.querySelector("time")).toHaveAttribute(
+      "dateTime",
+      "2026-09-24T17:39:47Z",
+    );
+    expect(assistantMessage.querySelector("time")).toHaveAttribute(
+      "dateTime",
+      "2026-09-24T17:40:12Z",
+    );
+  });
+
   it("updates a running tool duration without announcing every tick", () => {
     vi.useFakeTimers();
     vi.setSystemTime(base + 2_000);
