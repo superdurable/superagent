@@ -160,18 +160,20 @@ function WorkLog({
     0,
   );
   if (operationCount === 0) return null;
-  const failed =
-    turn.models.some((item) => item.status === "failed") ||
-    turn.tools.some((group) =>
-      group.calls.some((item) => item.status === "failed"),
-    );
-  const running =
-    turn.models.some((item) => item.status === "running") ||
-    turn.tools.some((group) =>
-      group.calls.some(
-        (item) => item.status === "running" || item.status === "waiting",
-      ),
-    );
+  const statuses = [
+    ...turn.models.map((item) => item.status),
+    ...turn.tools.flatMap((group) => group.calls.map((item) => item.status)),
+  ];
+  const succeededCount = statuses.filter(
+    (status) => status === "complete",
+  ).length;
+  const failedCount = statuses.filter((status) => status === "failed").length;
+  const activeCount = statuses.filter(
+    (status) => status === "running" || status === "waiting",
+  ).length;
+  const unknownCount = statuses.filter((status) => status === "unknown").length;
+  const failed = failedCount > 0;
+  const running = activeCount > 0;
   return (
     <details
       className={`sa-work-log${failed ? " sa-work-log--failed" : ""}`}
@@ -187,7 +189,24 @@ function WorkLog({
         <span>
           {operationCount} operation{operationCount === 1 ? "" : "s"}
         </span>
-        {failed ? <Status value="failed" /> : null}
+        <span className="sa-work-log__summary-count">
+          {succeededCount} succeeded
+        </span>
+        <span
+          className={`sa-work-log__summary-count${failed ? " sa-work-log__summary-count--failed" : ""}`}
+        >
+          {failedCount} failed
+        </span>
+        {activeCount > 0 ? (
+          <span className="sa-work-log__summary-count">
+            {activeCount} active
+          </span>
+        ) : null}
+        {unknownCount > 0 ? (
+          <span className="sa-work-log__summary-count">
+            {unknownCount} unknown
+          </span>
+        ) : null}
         <span className="sa-work-log__durations">
           <Duration value={turn.waitDurationMs} prefix="wait " />
           <Duration value={turn.workDurationMs} prefix="work " />
