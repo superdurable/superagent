@@ -176,11 +176,13 @@ test("renders chronological transient activity and durable queue interactions", 
     "opacity",
     "1",
   );
+  expect(await userMessage.boundingBox()).toEqual(userBox);
   await assistantMessage.hover();
   await expect(assistantMessage.locator(".sa-message-timestamp")).toHaveCSS(
     "opacity",
     "1",
   );
+  expect(await assistantMessage.boundingBox()).toEqual(assistantBox);
   await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(0);
   await expect(workLog.getByText("Model replied", { exact: true })).toHaveCount(

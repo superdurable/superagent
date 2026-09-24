@@ -892,27 +892,19 @@
 }
 
 .sa-message-timestamp {
-  max-height: 0;
-  margin-top: 0;
+  height: 1.25em;
+  margin-top: 4px;
   overflow: hidden;
   color: var(--sa-faint-color, #8b93a7);
   font-size: 11px;
   line-height: 1.25;
   opacity: 0;
-  transform: translateY(-2px);
-  transition:
-    max-height 120ms ease,
-    margin-top 120ms ease,
-    opacity 120ms ease,
-    transform 120ms ease;
+  transition: opacity 120ms ease;
 }
 
 .sa-conversation-message:hover .sa-message-timestamp,
 .sa-conversation-message:focus-within .sa-message-timestamp {
-  max-height: 1.5em;
-  margin-top: 4px;
   opacity: 1;
-  transform: translateY(0);
 }
 
 .sa-conversation-message--user .sa-message-timestamp {
