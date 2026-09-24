@@ -101,6 +101,24 @@ describe("PendingQuestionBatch", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("exposes the full navigation header when its label is truncated", () => {
+    const header = "Deployment region and compliance boundary";
+    render(
+      <PendingQuestionBatch
+        onSubmit={vi.fn()}
+        questions={[
+          question("region", header, "Which region?", "West", "East"),
+        ]}
+      />,
+    );
+
+    const tab = screen.getByRole("button", { name: header });
+    expect(tab).toHaveAttribute("title", header);
+    expect(tab.querySelector(".sa-question-tab-label")).toHaveTextContent(
+      header,
+    );
+  });
 });
 
 function question(

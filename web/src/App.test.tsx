@@ -631,7 +631,7 @@ describe("App", () => {
     const history = await screen.findByLabelText("Conversation history");
     await within(history).findByText("Running local-tools.search.");
     expect(
-      within(history).getByText(/Earlier activity · 3 recovered events/),
+      within(history).getByText(/Historical activity · 3 events/),
     ).toBeInTheDocument();
     expect(
       within(history).getByText("Calling mock/reliable."),

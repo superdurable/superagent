@@ -72,7 +72,7 @@ export interface ConversationQuestionItem {
   key: string;
   callId: string;
   questions: ConversationQuestion[];
-  status: "pending" | "answered" | "cancelled" | "historical";
+  status: "pending" | "answered" | "cancelled" | "failed";
   answer: TimelineSequencedMessage | null;
   isMalformed: boolean;
 }
@@ -86,6 +86,7 @@ export interface ConversationTurn {
   operations: ConversationWorkItem[];
   questions: ConversationQuestionItem[];
   activities: TimelineActivityEntry[];
+  historicalActivities: TimelineActivityEntry[];
   durationMs: number | null;
   workDurationMs: number | null;
   waitDurationMs: number | null;
@@ -109,6 +110,11 @@ export interface ConversationPresentationInput {
 
 const MODEL_TERMINAL = new Set(["model_completed", "model_failed"]);
 const MODEL_LIFECYCLE = new Set(["model_started", ...MODEL_TERMINAL]);
+const HISTORICAL_ACTIVITY = new Set([
+  "compacted",
+  "compaction_failed",
+  "snapshot_required",
+]);
 
 function timestamp(value: string | null | undefined): number | null {
   const parsed = Date.parse(value ?? "");
@@ -196,6 +202,7 @@ function groupDurableTurns(messages: readonly TimelineSequencedMessage[]) {
         operations: [],
         questions: [],
         activities: [],
+        historicalActivities: [],
         durationMs: null,
         workDurationMs: null,
         waitDurationMs: null,
@@ -253,13 +260,18 @@ export function buildConversationPresentation(
       values.push(activity);
       activityBySequence.set(activity.value.messageSequence, values);
     }
-    const turn = activity.value.callId
+    let turn = activity.value.callId
       ? callToTurn.get(activity.value.callId)
       : activity.value.messageSequence === null
         ? undefined
         : sequenceToTurn.get(activity.value.messageSequence);
-    if (turn) turn.activities.push(activity);
-    else if (!MODEL_LIFECYCLE.has(activity.value.kind))
+    if (turn === undefined && HISTORICAL_ACTIVITY.has(activity.value.kind))
+      turn = nearestTurnByTime(turns, activity.createdAt);
+    if (turn) {
+      turn.activities.push(activity);
+      if (HISTORICAL_ACTIVITY.has(activity.value.kind))
+        turn.historicalActivities.push(activity);
+    } else if (!MODEL_LIFECYCLE.has(activity.value.kind))
       earlierActivity.push(activity);
   }
 
@@ -278,6 +290,7 @@ export function buildConversationPresentation(
         operations: [],
         questions: [],
         activities: [],
+        historicalActivities: [],
         durationMs: null,
         workDurationMs: null,
         waitDurationMs: null,
@@ -376,6 +389,7 @@ export function buildConversationPresentation(
             buildQuestionItem(
               call,
               messages,
+              resultByCall.get(call.id) ?? null,
               activityByCall,
               pendingWaitByCall,
             ),
@@ -618,6 +632,35 @@ export function buildConversationPresentation(
   return { turns, earlierActivity };
 }
 
+function nearestTurnByTime(
+  turns: readonly ConversationTurn[],
+  createdAt: string,
+): ConversationTurn | undefined {
+  const activityTime = timestamp(createdAt);
+  if (activityTime === null) return undefined;
+  let nearest: ConversationTurn | undefined;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const turn of turns) {
+    const times = turn.messages
+      .map((entry) => timestamp(entry.message.createdAt))
+      .filter((value): value is number => value !== null);
+    if (times.length === 0) continue;
+    const start = Math.min(...times);
+    const end = Math.max(...times);
+    const distance =
+      activityTime < start
+        ? start - activityTime
+        : activityTime > end
+          ? activityTime - end
+          : 0;
+    if (distance < nearestDistance) {
+      nearest = turn;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
 function maximumAttempt(
   activities: readonly TimelineActivityEntry[],
 ): number | null {
@@ -667,6 +710,7 @@ function toolStartedAt(
 function buildQuestionItem(
   call: TimelineToolCall,
   messages: readonly TimelineSequencedMessage[],
+  result: TimelineSequencedMessage | null,
   activities: ReadonlyMap<string, TimelineActivityEntry[]>,
   pending: ReadonlyMap<string, ConversationPendingWait>,
 ): ConversationQuestionItem {
@@ -677,20 +721,42 @@ function buildQuestionItem(
   const cancelled = (activities.get(call.id) ?? []).some(
     (entry) => entry.value.kind === "user_input_cancelled",
   );
+  const failed =
+    isFailedToolResult(result) ||
+    (activities.get(call.id) ?? []).some(
+      (entry) => entry.value.kind === "tool_failed",
+    );
   return {
     key: `question-${call.id}`,
     callId: call.id,
     questions: parsed.questions,
     status: answer
       ? "answered"
-      : cancelled
-        ? "cancelled"
-        : pending.has(call.id)
-          ? "pending"
-          : "historical",
+      : failed
+        ? "failed"
+        : cancelled
+          ? "cancelled"
+          : pending.has(call.id)
+            ? "pending"
+            : "failed",
     answer,
     isMalformed: parsed.isMalformed,
   };
+}
+
+function isFailedToolResult(result: TimelineSequencedMessage | null): boolean {
+  if (result === null) return false;
+  try {
+    const value: unknown = JSON.parse(result.message.content);
+    return (
+      value !== null &&
+      typeof value === "object" &&
+      "status" in value &&
+      value.status === "failed"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function parseQuestions(argumentsJson: string): {

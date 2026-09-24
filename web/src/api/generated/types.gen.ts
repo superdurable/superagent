@@ -331,6 +331,9 @@ export type PendingUserInput = {
 
 export type UserInputQuestion = {
     id: string;
+    /**
+     * Short navigation label with at most 32 Unicode characters.
+     */
     header: string;
     question: string;
     options: Array<UserInputOption>;

@@ -1438,7 +1438,7 @@ func (flow *Flow) contextMessages(ctx dex.Context, config AgentConfig, state Age
 	if state.InteractionMode != InteractionModePlanning {
 		result = append(result, AgentMessage{
 			Role:    MessageRoleSystem,
-			Content: "When you need user input, call request_user_input instead of asking only in assistant text. Ask 1-3 related questions in one batch. If no reply is required, finish without a follow-up question.",
+			Content: "When you need user input, call request_user_input instead of asking only in assistant text. Ask 1-3 related questions in one batch. Give each question a short navigation header of at most 32 Unicode characters. If no reply is required, finish without a follow-up question.",
 		})
 	}
 	summary, err := flow.getSummary(ctx)
@@ -2426,7 +2426,7 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 	})
 	if err != nil {
 		if eventErr := step.flow.writeActivity(ctx, AgentEvent{
-			Kind: EventKindCompactionFailed, Message: "Context compaction failed.",
+			Kind: EventKindCompactionFailed, Message: "Context compaction failed.", MessageSequence: &input,
 		}); eventErr != nil {
 			return nil, errors.Join(err, eventErr)
 		}
@@ -2450,7 +2450,7 @@ func (step compactContextStep) Execute(ctx dex.Context, input Sequence) (*dex.St
 		return nil, err
 	}
 	activity := AgentEvent{
-		Kind: EventKindCompacted,
+		Kind: EventKindCompacted, MessageSequence: &input,
 		Message: condenseActivityMessage(fmt.Sprintf(
 			"Compacted conversation through message %d.", input,
 		)),
@@ -2828,7 +2828,7 @@ func (flow *Flow) callCompactionModel(
 	})
 	if err != nil {
 		if eventErr := flow.writeActivity(ctx, AgentEvent{
-			Kind: EventKindCompactionFailed, Message: "Context compaction failed.",
+			Kind: EventKindCompactionFailed, Message: "Context compaction failed.", MessageSequence: &throughSequence,
 		}); eventErr != nil {
 			return modelCallResult{}, errors.Join(err, eventErr)
 		}
@@ -2966,7 +2966,7 @@ func (flow *Flow) applyCompactionModelResult(
 		return "", err
 	}
 	activity := AgentEvent{
-		Kind: EventKindCompacted,
+		Kind: EventKindCompacted, MessageSequence: &result.ThroughSequence,
 		Message: condenseActivityMessage(fmt.Sprintf(
 			"Compacted conversation through message %d.", result.ThroughSequence,
 		)),

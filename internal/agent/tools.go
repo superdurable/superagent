@@ -30,9 +30,10 @@ import (
 )
 
 const (
-	maximumUserInputQuestions = 3
-	maximumUserInputOptions   = 3
-	maximumUserMessageLength  = 1_000_000
+	maximumUserInputQuestions        = 3
+	maximumUserInputOptions          = 3
+	maximumUserInputHeaderCharacters = 32
+	maximumUserMessageLength         = 1_000_000
 )
 
 const (
@@ -226,8 +227,12 @@ func validateUserInputQuestions(values []UserInputQuestion) ([]UserInputQuestion
 		if value.ID == "" || value.Header == "" || value.Question == "" {
 			return nil, fmt.Errorf("question %d requires id, header, and question", index+1)
 		}
-		if utf8.RuneCountInString(value.Header) > 12 {
-			return nil, fmt.Errorf("question %d header must contain at most 12 characters", index+1)
+		if utf8.RuneCountInString(value.Header) > maximumUserInputHeaderCharacters {
+			return nil, fmt.Errorf(
+				"question %d header must contain at most %d Unicode characters",
+				index+1,
+				maximumUserInputHeaderCharacters,
+			)
 		}
 		if _, found := seenIDs[value.ID]; found {
 			return nil, fmt.Errorf("question IDs must be unique: %q", value.ID)

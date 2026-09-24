@@ -104,6 +104,40 @@ function DefaultMessage({ entry }: { entry: TimelineSequencedMessage }) {
   );
 }
 
+function messageTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(date);
+}
+
+function MessageFrame({
+  messageRole,
+  createdAt,
+  children,
+}: {
+  messageRole: "user" | "assistant";
+  createdAt: string;
+  children: ReactNode;
+}) {
+  return (
+    <article
+      aria-label={`${messageRole === "user" ? "User" : "Assistant"} message`}
+      className={`sa-conversation-message sa-conversation-message--${messageRole} message-bubble ${messageRole}`}
+    >
+      <div className="sa-conversation-message__content">{children}</div>
+      <time className="sa-message-timestamp" dateTime={createdAt}>
+        {messageTime(createdAt)}
+      </time>
+    </article>
+  );
+}
+
 function DefaultTool({ item }: { item: ConversationToolWorkItem }) {
   return (
     <details className="sa-work-item">
@@ -288,6 +322,36 @@ function WorkLog({
   );
 }
 
+function HistoricalActivity({
+  entries,
+}: {
+  entries: readonly (TimelineActivityEntry | TimelineLiveTextEntry)[];
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <details className="sa-earlier-activity">
+      <summary>
+        Historical activity · {entries.length} event
+        {entries.length === 1 ? "" : "s"}
+      </summary>
+      <ol>
+        {entries.map((entry, index) => (
+          <li
+            key={
+              ("resumeToken" in entry ? entry.resumeToken : entry.source) +
+              String(index)
+            }
+          >
+            {typeof entry.value === "string"
+              ? entry.value
+              : entry.value.message}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 export function ConversationView({
   messages,
   consumedUserMessages = [],
@@ -356,44 +420,42 @@ export function ConversationView({
 
   return (
     <section className={className} aria-label="Conversation">
-      {presentation.earlierActivity.length > 0 ? (
-        <details className="sa-earlier-activity">
-          <summary>
-            Earlier activity · {presentation.earlierActivity.length} recovered
-            events
-          </summary>
-          <ol>
-            {presentation.earlierActivity.map((entry, index) => (
-              <li
-                key={
-                  ("resumeToken" in entry ? entry.resumeToken : entry.source) +
-                  String(index)
-                }
-              >
-                {typeof entry.value === "string"
-                  ? entry.value
-                  : entry.value.message}
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
+      <HistoricalActivity entries={presentation.earlierActivity} />
       {presentation.turns.map((turn) => (
         <section
           className="sa-conversation-turn"
           aria-label="Conversation turn"
           key={turn.key}
         >
+          {turn.messages.map((entry) => {
+            if (
+              entry.message.role !== "user" &&
+              entry.message.role !== "assistant"
+            )
+              return null;
+            const rendered = renderMessage?.(entry) ?? (
+              <DefaultMessage entry={entry} />
+            );
+            return (
+              <MessageFrame
+                messageRole={entry.message.role}
+                createdAt={entry.message.createdAt}
+                key={entry.sequence}
+              >
+                {rendered}
+              </MessageFrame>
+            );
+          })}
           {turn.consumedUserMessages.map((entry) => (
-            <div className="sa-conversation-user" key={entry.messageId}>
-              {entry.value.content}
-            </div>
+            <MessageFrame
+              messageRole="user"
+              createdAt={entry.createdAt}
+              key={entry.messageId}
+            >
+              <div className="sa-conversation-user">{entry.value.content}</div>
+            </MessageFrame>
           ))}
-          {turn.messages.map((entry) => (
-            <div key={entry.sequence}>
-              {renderMessage?.(entry) ?? <DefaultMessage entry={entry} />}
-            </div>
-          ))}
+          <HistoricalActivity entries={turn.historicalActivities} />
           <WorkLog turn={turn} renderToolCall={renderToolCall} />
           {turn.questions.map((question) => (
             <div key={question.key}>

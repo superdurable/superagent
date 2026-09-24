@@ -119,12 +119,13 @@ export function PendingQuestionBatch({
                   : "sa-question-button sa-question-button--secondary secondary"
               }
               aria-current={index === currentIndex ? "step" : undefined}
+              title={candidate.header}
               key={candidate.id}
               onClick={() => {
                 setCurrentIndex(index);
               }}
             >
-              {candidate.header}
+              <span className="sa-question-tab-label">{candidate.header}</span>
               {questionAnswer(drafts[candidate.id]) !== "" && (
                 <span
                   className="sa-question-answered-mark answered-mark"

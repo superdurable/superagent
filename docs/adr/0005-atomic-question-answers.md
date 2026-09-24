@@ -20,6 +20,11 @@ calls from that model response are canceled. Runtime validation prevents a
 later call from replacing an unresolved batch. After resolution, later model
 turns may create any number of additional batches.
 
+The header is a navigation label limited to 32 Unicode characters. The limit is
+part of the model schema, runtime validation, and public API contract. It is not
+runtime configurable because those three boundaries must agree. Clients handle
+narrow layouts by truncating the visible label while exposing its full text.
+
 `AnswerQuestions` takes the pending call ID and one non-empty answer for every
 question ID. The RPC locks `PendingUserInput`, validates the exact set, deletes
 the batch, and publishes one typed value to `AnsweredUserInputs` in one atomic

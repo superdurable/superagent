@@ -437,23 +437,16 @@ button.secondary {
   color: #344054;
 }
 .message-bubble {
-  width: min(86%, 720px);
+  width: 100%;
   min-width: 0;
   max-width: 100%;
-  padding: 13px 15px;
-  border: 1px solid #e3e7ed;
-  border-radius: 15px;
-  background: #f8f9fb;
   overflow-wrap: anywhere;
 }
 .message-bubble.user {
-  justify-self: end;
-  border-color: #d7dcff;
-  background: #f1f2ff;
+  justify-self: stretch;
 }
 .message-bubble.assistant {
-  justify-self: start;
-  background: white;
+  justify-self: stretch;
 }
 .message-bubble.tool {
   width: 100%;
@@ -762,9 +755,6 @@ pre {
   }
   .plan-content {
     padding: 0 14px 14px;
-  }
-  .message-bubble {
-    width: 94%;
   }
   .messages-card {
     min-height: 320px;

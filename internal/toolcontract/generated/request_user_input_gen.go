@@ -29,7 +29,7 @@ func (s *RequestUserInputInput) SetQuestions(val []RequestUserInputInputQuestion
 type RequestUserInputInputQuestionsItem struct {
 	// Stable identifier unique within this batch.
 	ID string `json:"id"`
-	// Short label for navigation.
+	// Short navigation label with at most 32 Unicode characters.
 	Header string `json:"header"`
 	// One concise question for the user.
 	Question string                                          `json:"question"`
@@ -558,7 +558,7 @@ func (s *RequestUserInputInputQuestionsItem) Validate() error {
 		if err := (validate.String{
 			MinLength:     1,
 			MinLengthSet:  true,
-			MaxLength:     12,
+			MaxLength:     32,
 			MaxLengthSet:  true,
 			Email:         false,
 			Hostname:      false,

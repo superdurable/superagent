@@ -108,17 +108,21 @@ test("renders chronological transient activity and durable queue interactions", 
       "/reason Checked the constraints | Durable answer",
     ),
   ).toHaveCount(0);
-  const recoveredActivity = history.locator("details.sa-earlier-activity");
-  await expect(recoveredActivity.locator("summary")).toContainText(
-    "1 recovered event",
+  const historicalActivity = history.locator("details.sa-earlier-activity");
+  await expect(historicalActivity.locator("summary")).toContainText(
+    "Historical activity · 1 event",
   );
-  await expect(recoveredActivity).toContainText(
+  await expect(historicalActivity).toContainText(
     "Consumed 1 queued user message.",
   );
   expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
   const workLog = history.locator("details.sa-work-log").last();
   await expect(workLog).toHaveCount(1);
+  await expect(workLog.locator(":scope > summary")).toHaveCSS(
+    "font-size",
+    "12px",
+  );
   await expect(workLog).not.toContainText("Checked the constraints");
   await expect(composer).toBeFocused();
   await workLog.locator(":scope > summary").click();
@@ -143,6 +147,42 @@ test("renders chronological transient activity and durable queue interactions", 
       hasText: "/reason Checked the constraints | Durable answer",
     }),
   ).toHaveCount(1);
+  const userMessage = history.locator(".message-bubble.user").filter({
+    hasText: "/reason Checked the constraints | Durable answer",
+  });
+  const assistantMessage = history
+    .locator(".message-bubble.assistant")
+    .filter({ hasText: "Durable answer" });
+  const userBox = await userMessage.boundingBox();
+  const assistantBox = await assistantMessage.boundingBox();
+  expect(userBox).not.toBeNull();
+  expect(assistantBox).not.toBeNull();
+  expect(userBox?.x).toBeGreaterThan(assistantBox?.x ?? 0);
+  expect(userBox?.width).toBeLessThan(assistantBox?.width ?? 0);
+  await expect(userMessage.locator(".sa-conversation-user")).toHaveCSS(
+    "background-color",
+    "rgb(237, 242, 232)",
+  );
+  await expect(userMessage.locator(".sa-conversation-user")).toHaveCSS(
+    "border-top-style",
+    "solid",
+  );
+  await expect(userMessage.locator(".sa-message-timestamp")).toHaveCSS(
+    "opacity",
+    "0",
+  );
+  await userMessage.hover();
+  await expect(userMessage.locator(".sa-message-timestamp")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  expect(await userMessage.boundingBox()).toEqual(userBox);
+  await assistantMessage.hover();
+  await expect(assistantMessage.locator(".sa-message-timestamp")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  expect(await assistantMessage.boundingBox()).toEqual(assistantBox);
   await expect(history.locator(".live-message")).toHaveCount(0);
   await expect(history.locator(".activity-entry")).toHaveCount(0);
   await expect(workLog.getByText("Model replied", { exact: true })).toHaveCount(
@@ -317,7 +357,7 @@ test("removes a consumed queued message before the next Snapshot completes", asy
   );
   const consumedMessage = page
     .getByRole("region", { name: "Conversation history" })
-    .locator(".sa-conversation-user, .message-bubble.user")
+    .locator(".message-bubble.user")
     .filter({ hasText: "consume this queued message" });
   await expect(consumedMessage).toHaveCount(1);
   expect(snapshotStatuses).toHaveLength(completedSnapshots);
@@ -358,6 +398,14 @@ test("submits a question answer before steering and queued messages", async ({
 
   const questions = page.getByRole("region", { name: "Agent questions" });
   await expect(questions).toBeVisible();
+  const regionTab = questions.locator(
+    '.sa-question-tabs button[title="Region"]',
+  );
+  await expect(regionTab).toHaveAttribute("title", "Region");
+  await expect(regionTab.locator(".sa-question-tab-label")).toHaveCSS(
+    "text-overflow",
+    "ellipsis",
+  );
   const steeringRequest = queue
     .locator(".queue-message")
     .filter({ hasText: "steered after question" });
@@ -1216,6 +1264,33 @@ test("recovers visibly after invalid write_todos arguments", async ({
   expect(snapshot.description.plan).toBeFalsy();
 });
 
+test("marks rejected request_user_input history as failed", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await startAgent(page);
+  const composer = page.getByRole("textbox", { name: "Message" });
+
+  await composer.fill("/invalid-question");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const failedQuestion = page.locator(
+    '.sa-question-card[data-status="failed"]',
+  );
+  await expect(failedQuestion).toBeVisible({ timeout: 20_000 });
+  await expect(failedQuestion).toContainText("Assistant requested input");
+  await expect(failedQuestion.locator(".sa-question-card__heading")).toHaveCSS(
+    "font-size",
+    "11px",
+  );
+  await expect(failedQuestion).toHaveCSS("font-size", "12px");
+  await expect(failedQuestion).toContainText("failed");
+  await expect(
+    page.getByRole("region", { name: "Agent questions" }),
+  ).toHaveCount(0);
+  await expectAgentWaitingForMessage(page);
+});
+
 test("disables busy Plan actions and continues a stalled active Plan", async ({
   page,
 }) => {
@@ -1649,9 +1724,7 @@ async function expectAgentWaitingForMessage(page: Page): Promise<void> {
 }
 
 async function conversationUserText(history: Locator): Promise<string[]> {
-  return history
-    .locator(".message-bubble.user, .sa-conversation-user")
-    .allTextContents();
+  return history.locator(".message-bubble.user").allTextContents();
 }
 
 async function expectMessageQueueExpanded(queue: Locator): Promise<void> {

@@ -316,24 +316,20 @@ export function ConversationView({
                 ) {
                   return null;
                 }
-                return (
-                  <article
-                    className={`message-bubble ${message.role}`}
+                return message.role === MessageRole.ASSISTANT ? (
+                  <div
+                    className="sa-conversation-assistant"
                     key={`message:${String(sequence)}`}
                   >
-                    <div className="message-meta">
-                      <strong>{messageRoleLabel(message.role)}</strong>
-                      <time dateTime={message.createdAt}>
-                        {formatTime(message.createdAt)}
-                      </time>
-                    </div>
-                    {message.content !== "" &&
-                      (message.role === MessageRole.ASSISTANT ? (
-                        <RichText value={message.content} />
-                      ) : (
-                        <p>{message.content}</p>
-                      ))}
-                  </article>
+                    <RichText value={message.content} />
+                  </div>
+                ) : (
+                  <div
+                    className="sa-conversation-user"
+                    key={`message:${String(sequence)}`}
+                  >
+                    {message.content}
+                  </div>
                 );
               }}
             />
@@ -867,10 +863,6 @@ function statusLabel(value: string): string {
     .join(" ");
 }
 
-function messageRoleLabel(role: string): string {
-  return role === "tool" ? "Tool result" : statusLabel(role);
-}
-
 function taskIcon(status: TaskStatus): string {
   switch (status) {
     case TaskStatus.COMPLETED:
@@ -880,14 +872,4 @@ function taskIcon(status: TaskStatus): string {
     case TaskStatus.PENDING:
       return "○";
   }
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat(undefined, {
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(date);
 }

@@ -54,6 +54,115 @@ describe("ConversationView", () => {
     expect(container).toHaveTextContent("0 failed");
   });
 
+  it("distinguishes message roles and exposes their timestamps", () => {
+    render(
+      <ConversationView
+        messages={[
+          {
+            sequence: 1,
+            message: {
+              role: "user",
+              content: "Build an approval app",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-24T17:39:47Z",
+            },
+          },
+          {
+            sequence: 2,
+            message: {
+              role: "assistant",
+              content: "I will inspect the repository.",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: "2026-09-24T17:40:12Z",
+            },
+          },
+        ]}
+      />,
+    );
+
+    const userMessage = screen.getByLabelText("User message");
+    const assistantMessage = screen.getByLabelText("Assistant message");
+    expect(userMessage).toHaveClass("sa-conversation-message--user");
+    expect(assistantMessage).toHaveClass("sa-conversation-message--assistant");
+    expect(userMessage.querySelector(".sa-conversation-user")).not.toBeNull();
+    expect(
+      assistantMessage.querySelector(".sa-conversation-assistant"),
+    ).not.toBeNull();
+    expect(userMessage.querySelector("time")).toHaveAttribute(
+      "dateTime",
+      "2026-09-24T17:39:47Z",
+    );
+    expect(assistantMessage.querySelector("time")).toHaveAttribute(
+      "dateTime",
+      "2026-09-24T17:40:12Z",
+    );
+  });
+
+  it("renders legacy historical activity in its nearest turn", () => {
+    const { container } = render(
+      <ConversationView
+        messages={[
+          {
+            sequence: 1,
+            message: {
+              role: "user",
+              content: "first",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 1_000).toISOString(),
+            },
+          },
+          {
+            sequence: 2,
+            message: {
+              role: "assistant",
+              content: "first answer",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 2_000).toISOString(),
+            },
+          },
+          {
+            sequence: 10,
+            message: {
+              role: "user",
+              content: "second",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 10_000).toISOString(),
+            },
+          },
+        ]}
+        activities={[
+          {
+            resumeToken: "legacy-compaction",
+            source: "activity",
+            createdAt: new Date(base + 9_000).toISOString(),
+            value: {
+              kind: "compacted",
+              message: "Compacted conversation through message 2.",
+              messageSequence: null,
+            },
+          },
+        ]}
+      />,
+    );
+
+    const turns = container.querySelectorAll(".sa-conversation-turn");
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).not.toHaveTextContent("Compacted conversation");
+    expect(turns[1]).toHaveTextContent("Historical activity · 1 event");
+    expect(turns[1]).toHaveTextContent("Compacted conversation");
+    expect(container).not.toHaveTextContent("recovered events");
+  });
+
   it("updates a running tool duration without announcing every tick", () => {
     vi.useFakeTimers();
     vi.setSystemTime(base + 2_000);

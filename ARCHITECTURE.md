@@ -320,6 +320,9 @@ disabled, response bodies are closed, attempts are bounded by context and HTTP
 timeouts, and unknown provider values return typed validation errors.
 
 Built-in tool inputs are schema-first contracts under `internal/toolcontract`.
+The `request_user_input` header limit is 32 Unicode characters across the
+provider schema, runtime validation, and OpenAPI. It is intentionally not an
+environment setting because every boundary must enforce the same contract.
 Each provider receives the embedded compact JSON Schema, while Agent execution
 uses ogen-generated DTOs, strict decoders, and validators from the same file.
 Explicit mappers keep generated contract types out of the Agent domain. MCP

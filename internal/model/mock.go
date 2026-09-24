@@ -105,6 +105,7 @@ func (*MockClient) complete(ctx context.Context, request agent.ModelRequest) (ag
 	}
 
 	userRequest := lastUserContent(request.Messages)
+	lastMessage := lastConversationMessage(request.Messages)
 	if strings.ToLower(userRequest) == "/plan-clear" && hasTool(available, agent.ToolNameWriteTodos) {
 		arguments, err := writeTodosObject([]agent.PlanTask{})
 		if err != nil {
@@ -140,6 +141,29 @@ func (*MockClient) complete(ctx context.Context, request agent.ModelRequest) (ag
 		}
 		return calls.toolReply(
 			"I need three details before I continue.",
+			agent.ToolNameRequestUserInput,
+			arguments,
+			request.WriteActivity,
+		)
+	}
+	if lastMessage != nil &&
+		lastMessage.Role == agent.MessageRoleUser &&
+		strings.EqualFold(userRequest, "/invalid-question") &&
+		hasTool(available, agent.ToolNameRequestUserInput) {
+		arguments, err := userInputQuestionsObject([]agent.UserInputQuestion{{
+			ID:       "invalid-header",
+			Header:   strings.Repeat("界", 33),
+			Question: "Should this invalid question be rejected?",
+			Options: []agent.UserInputOption{
+				{Label: "Yes", Description: "Reject the invalid request."},
+				{Label: "No", Description: "Accept the invalid request."},
+			},
+		}})
+		if err != nil {
+			return agent.ModelReply{}, err
+		}
+		return calls.toolReply(
+			"I will send an invalid question for the recovery test.",
 			agent.ToolNameRequestUserInput,
 			arguments,
 			request.WriteActivity,
@@ -231,7 +255,6 @@ func (*MockClient) complete(ctx context.Context, request agent.ModelRequest) (ag
 		)
 	}
 
-	lastMessage := lastConversationMessage(request.Messages)
 	content := "How can I help?"
 	if lastMessage != nil {
 		switch {

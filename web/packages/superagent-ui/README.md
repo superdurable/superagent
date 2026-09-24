@@ -71,8 +71,15 @@ may collapse, but repeated calls separated by another model stay in place.
 
 `ConversationTurn.questions` safely projects durable `request_user_input`
 calls. `TimelineMessage.answeredInputCallId` associates the later user answer;
-malformed and legacy data degrade to a neutral historical card without showing
-raw tool JSON. Use `renderQuestion` to customize that card.
+failed tool results remain visible with a failed status, while malformed and
+legacy rejected calls without a result are shown as failed without exposing raw
+tool JSON.
+Use `renderQuestion` to customize that card.
+
+`ConversationView` owns message alignment and timestamp disclosure even when a
+consumer supplies `renderMessage`. User messages are compact, right-aligned
+bubbles; assistant messages remain left-aligned. Hovering or focusing either
+message reveals its local timestamp below the content.
 
 Completed model and tool duration is `createdAt - startedAt`. Missing or
 negative legacy timing is omitted. Running durations update once per second but
@@ -113,6 +120,8 @@ GitHub Flavored Markdown without enabling raw HTML.
 
 `PendingQuestionBatch` handles one-to-three-question navigation, predefined and
 free-form answers, local draft review, and one atomic ordered `onSubmit` call.
+Navigation labels use an ellipsis in narrow layouts and expose the complete
+header through a native tooltip.
 The application keeps ownership of the durable call ID and transport request.
 Key the component by that stable batch identity when replacing one pending batch
 with another so React resets its local drafts.

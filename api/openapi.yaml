@@ -1226,7 +1226,8 @@ components:
         header:
           type: string
           minLength: 1
-          maxLength: 12
+          maxLength: 32
+          description: Short navigation label with at most 32 Unicode characters.
         question:
           type: string
           minLength: 1
