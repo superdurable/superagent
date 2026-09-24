@@ -119,6 +119,10 @@ test("renders chronological transient activity and durable queue interactions", 
 
   const workLog = history.locator("details.sa-work-log").last();
   await expect(workLog).toHaveCount(1);
+  await expect(workLog.locator(":scope > summary")).toHaveCSS(
+    "font-size",
+    "12px",
+  );
   await expect(workLog).not.toContainText("Checked the constraints");
   await expect(composer).toBeFocused();
   await workLog.locator(":scope > summary").click();
@@ -1273,6 +1277,11 @@ test("marks rejected request_user_input history as failed", async ({
   );
   await expect(failedQuestion).toBeVisible({ timeout: 20_000 });
   await expect(failedQuestion).toContainText("Assistant requested input");
+  await expect(failedQuestion.locator(".sa-question-card__heading")).toHaveCSS(
+    "font-size",
+    "11px",
+  );
+  await expect(failedQuestion).toHaveCSS("font-size", "12px");
   await expect(failedQuestion).toContainText("failed");
   await expect(
     page.getByRole("region", { name: "Agent questions" }),
