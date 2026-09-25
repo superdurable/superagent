@@ -224,6 +224,9 @@ bubbles. Replays are idempotent and cannot remove messages that arrived later.
 A later authoritative Snapshot at a real waiting boundary reopens the gate.
 Stream loss is corrected by Snapshot.
 
+Manual tool recovery moves programmatic focus to its labelled warning region.
+The heading remains the accessible label without becoming a focused control.
+
 Consumed user bubbles are anchored after the latest explicit message sequence
 seen before the consumption event. The event's own message sequence associates
 the hint with its durable turn and does not advance that temporary projection

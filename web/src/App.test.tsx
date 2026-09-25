@@ -329,10 +329,10 @@ describe("App", () => {
 
     render(<App />);
 
-    const heading = await screen.findByRole("heading", {
+    const recoveryPanel = await screen.findByRole("region", {
       name: "Execution outcome is unknown",
     });
-    expect(heading).toHaveFocus();
+    expect(recoveryPanel).toHaveFocus();
     fireEvent.click(
       screen.getByRole("radio", { name: "Continue with unknown result" }),
     );

@@ -31,12 +31,12 @@ const recovery: PendingToolRecovery = {
 };
 
 describe("ToolRecoveryPanel", () => {
-  it("focuses the warning and submits one ordered complete decision", () => {
+  it("focuses the recovery panel and submits one ordered complete decision", () => {
     const onResolve = vi.fn();
     render(<ToolRecoveryPanel onResolve={onResolve} recovery={recovery} />);
 
     expect(
-      screen.getByRole("heading", { name: "Execution outcome is unknown" }),
+      screen.getByRole("region", { name: "Execution outcome is unknown" }),
     ).toHaveFocus();
     const continueOptions = screen.getAllByRole("radio", {
       name: "Continue with unknown result",

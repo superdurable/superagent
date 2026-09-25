@@ -50,7 +50,7 @@ export function ToolRecoveryPanel({
   isSubmitting = false,
   onResolve,
 }: ToolRecoveryPanelProps) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const headingID = useId();
   const [selections, setSelections] = useState<
     Record<string, ToolRecoveryAction>
@@ -58,7 +58,7 @@ export function ToolRecoveryPanel({
   const isDisabled = disabled || isSubmitting;
 
   useEffect(() => {
-    headingRef.current?.focus();
+    panelRef.current?.focus();
   }, []);
 
   const submitResume = () => {
@@ -74,13 +74,13 @@ export function ToolRecoveryPanel({
 
   return (
     <section
+      ref={panelRef}
       className="sa-tool-recovery recovery-card"
       aria-labelledby={headingID}
+      tabIndex={-1}
     >
       <p className="sa-tool-recovery-eyebrow">Tool recovery required</p>
-      <h2 id={headingID} ref={headingRef} tabIndex={-1}>
-        Execution outcome is unknown
-      </h2>
+      <h2 id={headingID}>Execution outcome is unknown</h2>
       <p className="sa-tool-recovery-warning">
         These operations may already have produced external effects. Retrying
         keeps the same call ID, but the MCP server may not deduplicate it.
