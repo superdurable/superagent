@@ -163,6 +163,60 @@ describe("ConversationView", () => {
     expect(container).not.toHaveTextContent("recovered events");
   });
 
+  it("does not show live activity as historical before Snapshot catches up", () => {
+    render(
+      <ConversationView
+        isExecutionLive
+        isModelRunning
+        messages={[
+          {
+            sequence: 1,
+            message: {
+              role: "user",
+              content: "build it",
+              toolCalls: [],
+              toolCallId: null,
+              toolName: null,
+              createdAt: new Date(base + 1_000).toISOString(),
+            },
+          },
+        ]}
+        activities={[
+          {
+            resumeToken: "live-model",
+            source: "model-source",
+            createdAt: new Date(base + 2_000).toISOString(),
+            value: {
+              kind: "model_started",
+              message: "Calling model.",
+              messageSequence: 2,
+            },
+          },
+          {
+            resumeToken: "live-tool",
+            source: "tool-source",
+            createdAt: new Date(base + 3_000).toISOString(),
+            value: {
+              kind: "model_tool_call",
+              message: "Calling read_file.",
+              callId: "not-durable-yet",
+              toolName: "read_file",
+              messageSequence: 3,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText(/Historical activity/)).not.toBeInTheDocument();
+    expect(screen.getByText("Work log")).toBeInTheDocument();
+    expect(
+      screen.getByText("Current activity · 1 event").closest("details")
+        ?.parentElement,
+    ).toHaveClass("sa-conversation-turn");
+    expect(screen.getByText("Calling read_file.")).toBeInTheDocument();
+  });
+
   it("updates a running tool duration without announcing every tick", () => {
     vi.useFakeTimers();
     vi.setSystemTime(base + 2_000);

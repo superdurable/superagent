@@ -86,6 +86,7 @@ export interface ConversationTurn {
   operations: ConversationWorkItem[];
   questions: ConversationQuestionItem[];
   activities: TimelineActivityEntry[];
+  liveActivities: TimelineActivityEntry[];
   historicalActivities: TimelineActivityEntry[];
   durationMs: number | null;
   workDurationMs: number | null;
@@ -110,6 +111,13 @@ export interface ConversationPresentationInput {
 
 const MODEL_TERMINAL = new Set(["model_completed", "model_failed"]);
 const MODEL_LIFECYCLE = new Set(["model_started", ...MODEL_TERMINAL]);
+const LIVE_WORK_ACTIVITY = new Set([
+  ...MODEL_LIFECYCLE,
+  "model_tool_call",
+  "tool_progress",
+  "tool_failed",
+  "tool_completed",
+]);
 const HISTORICAL_ACTIVITY = new Set([
   "compacted",
   "compaction_failed",
@@ -202,6 +210,7 @@ function groupDurableTurns(messages: readonly TimelineSequencedMessage[]) {
         operations: [],
         questions: [],
         activities: [],
+        liveActivities: [],
         historicalActivities: [],
         durationMs: null,
         workDurationMs: null,
@@ -227,6 +236,10 @@ export function buildConversationPresentation(
       (timestamp(left.createdAt) ?? 0) - (timestamp(right.createdAt) ?? 0),
   );
   const { turns, sequenceToTurn } = groupDurableTurns(messages);
+  const currentLiveTurn = liveTurnForUnanchoredActivity(
+    turns,
+    input.isExecutionLive,
+  );
   const earlierActivity: (TimelineActivityEntry | TimelineLiveTextEntry)[] = [];
   const resultByCall = new Map<string, TimelineSequencedMessage>();
   const callToTurn = new Map<string, ConversationTurn>();
@@ -267,8 +280,15 @@ export function buildConversationPresentation(
         : sequenceToTurn.get(activity.value.messageSequence);
     if (turn === undefined && HISTORICAL_ACTIVITY.has(activity.value.kind))
       turn = nearestTurnByTime(turns, activity.createdAt);
+    const isLiveFallback =
+      turn === undefined &&
+      LIVE_WORK_ACTIVITY.has(activity.value.kind) &&
+      activityBelongsToLiveTurn(currentLiveTurn, activity.createdAt);
+    if (isLiveFallback) turn = currentLiveTurn?.turn;
     if (turn) {
       turn.activities.push(activity);
+      if (isLiveFallback && !MODEL_LIFECYCLE.has(activity.value.kind))
+        turn.liveActivities.push(activity);
       if (HISTORICAL_ACTIVITY.has(activity.value.kind))
         turn.historicalActivities.push(activity);
     } else if (
@@ -293,6 +313,7 @@ export function buildConversationPresentation(
         operations: [],
         questions: [],
         activities: [],
+        liveActivities: [],
         historicalActivities: [],
         durationMs: null,
         workDurationMs: null,
@@ -499,12 +520,22 @@ export function buildConversationPresentation(
     const lastMessageSequence = messages.at(-1)?.sequence;
     const turn =
       anchored?.value.messageSequence == null
-        ? undefined
+        ? activityBelongsToLiveTurn(
+            currentLiveTurn,
+            modelActivities[0]?.createdAt,
+          )
+          ? currentLiveTurn?.turn
+          : undefined
         : (sequenceToTurn.get(anchored.value.messageSequence) ??
           (lastMessageSequence !== undefined &&
           messageSequence === lastMessageSequence + 1
             ? turns.at(-1)
-            : undefined));
+            : activityBelongsToLiveTurn(
+                  currentLiveTurn,
+                  modelActivities[0]?.createdAt,
+                )
+              ? currentLiveTurn?.turn
+              : undefined));
     if (!turn) {
       earlierActivity.push(...modelActivities);
       const reasoning = reasoningBySource.get(source);
@@ -633,6 +664,39 @@ export function buildConversationPresentation(
   }
 
   return { turns, earlierActivity };
+}
+
+interface LiveTurnBoundary {
+  turn: ConversationTurn;
+  observedThrough: number;
+}
+
+function liveTurnForUnanchoredActivity(
+  turns: readonly ConversationTurn[],
+  isExecutionLive: boolean | undefined,
+): LiveTurnBoundary | undefined {
+  if (isExecutionLive === false) return undefined;
+  const turn = turns.at(-1);
+  const observedThrough = Math.max(
+    ...(turn?.messages
+      .map((entry) => timestamp(entry.message.createdAt))
+      .filter((value): value is number => value !== null) ?? []),
+  );
+  return turn === undefined || !Number.isFinite(observedThrough)
+    ? undefined
+    : { turn, observedThrough };
+}
+
+function activityBelongsToLiveTurn(
+  boundary: LiveTurnBoundary | undefined,
+  createdAt: string | undefined,
+): boolean {
+  const activityTime = timestamp(createdAt);
+  return (
+    boundary !== undefined &&
+    activityTime !== null &&
+    activityTime >= boundary.observedThrough
+  );
 }
 
 function nearestTurnByTime(

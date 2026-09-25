@@ -322,16 +322,18 @@ function WorkLog({
   );
 }
 
-function HistoricalActivity({
+function ActivityDetails({
   entries,
+  label = "Historical activity",
 }: {
   entries: readonly (TimelineActivityEntry | TimelineLiveTextEntry)[];
+  label?: string;
 }) {
   if (entries.length === 0) return null;
   return (
     <details className="sa-earlier-activity">
       <summary>
-        Historical activity · {entries.length} event
+        {label} · {entries.length} event
         {entries.length === 1 ? "" : "s"}
       </summary>
       <ol>
@@ -420,7 +422,7 @@ export function ConversationView({
 
   return (
     <section className={className} aria-label="Conversation">
-      <HistoricalActivity entries={presentation.earlierActivity} />
+      <ActivityDetails entries={presentation.earlierActivity} />
       {presentation.turns.map((turn) => (
         <section
           className="sa-conversation-turn"
@@ -455,7 +457,7 @@ export function ConversationView({
               <div className="sa-conversation-user">{entry.value.content}</div>
             </MessageFrame>
           ))}
-          <HistoricalActivity entries={turn.historicalActivities} />
+          <ActivityDetails entries={turn.historicalActivities} />
           <WorkLog turn={turn} renderToolCall={renderToolCall} />
           {turn.questions.map((question) => (
             <div key={question.key}>
@@ -464,6 +466,10 @@ export function ConversationView({
               )}
             </div>
           ))}
+          <ActivityDetails
+            entries={turn.liveActivities}
+            label="Current activity"
+          />
         </section>
       ))}
       {assistant?.value ? (

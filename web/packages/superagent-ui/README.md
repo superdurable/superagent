@@ -67,6 +67,11 @@ conversation structure.
 Activity with a durable `messageSequence`, including input-consumption hints,
 belongs to that message's turn instead of the global historical section.
 Unanchored input-consumption hints remain reconciliation-only and are not shown.
+While execution is live, work activity at or after the latest durable message
+remains in that current turn even when its durable assistant message has not
+reached the Snapshot yet. Unanchored live tool events render below that turn
+until durable Work log data replaces them. Terminal unanchored activity remains
+in the global historical section.
 
 `ConversationTurn.operations` preserves causal order: each model operation is
 followed by the tools it requested. Adjacent identical calls in one model batch
