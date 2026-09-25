@@ -886,8 +886,8 @@ describe("App", () => {
       ).toBeDisabled();
     });
     expect(
-      screen.getByText("Consumed plan execution request for revision 7."),
-    ).toBeInTheDocument();
+      screen.queryByText("Consumed plan execution request for revision 7."),
+    ).not.toBeInTheDocument();
     expect(getAgentSnapshot).toHaveBeenCalledTimes(1);
   });
 

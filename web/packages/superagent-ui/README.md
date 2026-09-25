@@ -64,6 +64,10 @@ the presentation does not require a reasoning Stream. Every turn has one
 collapsed Work log, so losing retained Stream events never destroys the durable
 conversation structure.
 
+Activity with a durable `messageSequence`, including input-consumption hints,
+belongs to that message's turn instead of the global historical section.
+Unanchored input-consumption hints remain reconciliation-only and are not shown.
+
 `ConversationTurn.operations` preserves causal order: each model operation is
 followed by the tools it requested. Adjacent identical calls in one model batch
 may collapse, but repeated calls separated by another model stay in place.

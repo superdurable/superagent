@@ -209,7 +209,10 @@ becomes the next watermark before requesting Snapshot.
 
 Every consumed queued message, steered message, or Plan execution request emits
 one `input_consumed` Activity event with exact application IDs or revision and
-no user content. The reducer removes only
+no user content. Message consumption carries the latest durable user message
+sequence so conversation presentation associates it with that turn. Plan-only
+consumption has no message sequence and remains a hidden reconciliation hint.
+The reducer removes only
 matching visible inputs and closes
 the transient `isWaitingForInput` gate. It projects payloads already known from
 Snapshot into temporary user bubbles without adding content to the Stream.
@@ -219,8 +222,10 @@ A later authoritative Snapshot at a real waiting boundary reopens the gate.
 Stream loss is corrected by Snapshot.
 
 Consumed user bubbles are anchored after the latest explicit message sequence
-seen in the Activity stream. This preserves causal ordering while Snapshot is
-temporarily behind the Stream.
+seen before the consumption event. The event's own message sequence associates
+the hint with its durable turn and does not advance that temporary projection
+boundary. This preserves causal ordering while Snapshot is temporarily behind
+the Stream.
 
 The approval, manual recovery, and Timer target Steps emit a hidden
 `snapshot_required` Activity control from `WaitFor`, after the preceding Step

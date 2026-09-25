@@ -221,6 +221,39 @@ describe("conversation presentation", () => {
     ]);
   });
 
+  it("associates input consumption with its durable user turn", () => {
+    const messages = [
+      message(1, "user", "first"),
+      message(2, "assistant", "first answer"),
+      message(3, "user", "second"),
+    ];
+    const activity: TimelineActivityEntry = {
+      resumeToken: "input-consumed",
+      source: "await-user",
+      createdAt: iso(3_000),
+      value: {
+        kind: "input_consumed",
+        message: "Consumed 1 queued user message.",
+        messageSequence: 3,
+      },
+    };
+
+    const view = buildConversationPresentation({
+      messages,
+      activities: [
+        {
+          ...activity,
+          resumeToken: "legacy-input-consumed",
+          value: { ...activity.value, messageSequence: null },
+        },
+        activity,
+      ],
+    });
+
+    expect(view.earlierActivity).toHaveLength(0);
+    expect(required(view.turns[1]).activities).toContain(activity);
+  });
+
   it("keeps current and resolved waits separate from tool execution", () => {
     const messages = [
       message(1, "user", "build"),

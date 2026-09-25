@@ -271,7 +271,10 @@ export function buildConversationPresentation(
       turn.activities.push(activity);
       if (HISTORICAL_ACTIVITY.has(activity.value.kind))
         turn.historicalActivities.push(activity);
-    } else if (!MODEL_LIFECYCLE.has(activity.value.kind))
+    } else if (
+      !MODEL_LIFECYCLE.has(activity.value.kind) &&
+      activity.value.kind !== "input_consumed"
+    )
       earlierActivity.push(activity);
   }
 

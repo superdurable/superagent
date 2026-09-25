@@ -360,7 +360,7 @@ describe("conversationReducer", () => {
           message: "Consumed 1 queued user message.",
           callId: null,
           toolName: null,
-          messageSequence: null,
+          messageSequence: 4,
           inputConsumption: {
             queuedMessageIds: ["queued-1"],
             steeredMessageIds: [],

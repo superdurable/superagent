@@ -790,6 +790,7 @@ function applyInputConsumption(
   );
   const consumedAfterSequence = state.activities.reduce(
     (latestSequence, activity) =>
+      activity.resumeToken === update.resumeToken ||
       activity.value.messageSequence === null
         ? latestSequence
         : Math.max(latestSequence, activity.value.messageSequence),
