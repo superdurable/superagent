@@ -334,7 +334,7 @@ describe("App", () => {
     });
     expect(recoveryPanel).toHaveFocus();
     fireEvent.click(
-      screen.getByRole("radio", { name: "Continue with unknown result" }),
+      screen.getByRole("radio", { name: /Continue with unknown result/ }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Apply recovery decisions" }),

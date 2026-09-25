@@ -86,46 +86,80 @@ export function ToolRecoveryPanel({
         keeps the same call ID, but the MCP server may not deduplicate it.
       </p>
       <div className="sa-tool-recovery-calls">
-        {recovery.calls.map((call) => (
-          <fieldset className="sa-tool-recovery-call" key={call.callId}>
-            <legend>{call.toolName}</legend>
-            <small>Error type: {call.errorType}</small>
-            <details onToggle={revealOpenedDetails}>
-              <summary>Arguments</summary>
-              <pre>{call.argumentsJson}</pre>
-            </details>
-            <label>
-              <input
-                type="radio"
-                name={`recovery-${call.callId}`}
-                checked={selections[call.callId] === "retry"}
-                disabled={isDisabled}
-                onChange={() => {
-                  setSelections((current) => ({
-                    ...current,
-                    [call.callId]: "retry",
-                  }));
-                }}
-              />{" "}
-              Retry
-            </label>
-            <label>
-              <input
-                type="radio"
-                name={`recovery-${call.callId}`}
-                checked={selections[call.callId] === "continue_with_unknown"}
-                disabled={isDisabled}
-                onChange={() => {
-                  setSelections((current) => ({
-                    ...current,
-                    [call.callId]: "continue_with_unknown",
-                  }));
-                }}
-              />{" "}
-              Continue with unknown result
-            </label>
-          </fieldset>
-        ))}
+        {recovery.calls.map((call, index) => {
+          const callHeadingID = `${headingID}-call-${String(index)}`;
+          const retryInputID = `${callHeadingID}-retry`;
+          const continueInputID = `${callHeadingID}-continue`;
+          const isRetrySelected = selections[call.callId] === "retry";
+          return (
+            <article className="sa-tool-recovery-call" key={call.callId}>
+              <div className="sa-tool-recovery-call-header">
+                <h3 id={callHeadingID}>{call.toolName}</h3>
+                <span className="sa-tool-recovery-error">
+                  Error · {call.errorType}
+                </span>
+              </div>
+              <details
+                className="sa-tool-recovery-arguments"
+                onToggle={revealOpenedDetails}
+              >
+                <summary>
+                  <span>Arguments</span>
+                  <span aria-hidden="true" className="sa-tool-recovery-chevron">
+                    ›
+                  </span>
+                </summary>
+                <pre>{formatArguments(call.argumentsJson)}</pre>
+              </details>
+              <div
+                aria-labelledby={callHeadingID}
+                className="sa-tool-recovery-choices"
+                role="radiogroup"
+              >
+                <label
+                  className={`sa-tool-recovery-choice${isRetrySelected ? " is-selected" : ""}`}
+                  htmlFor={retryInputID}
+                >
+                  <input
+                    id={retryInputID}
+                    type="radio"
+                    name={`recovery-${call.callId}`}
+                    checked={isRetrySelected}
+                    disabled={isDisabled}
+                    onChange={() => {
+                      setSelections((current) => ({
+                        ...current,
+                        [call.callId]: "retry",
+                      }));
+                    }}
+                  />
+                  <strong>Retry</strong>
+                  <small>Run the same call again</small>
+                </label>
+                <label
+                  className={`sa-tool-recovery-choice${isRetrySelected ? "" : " is-selected"}`}
+                  htmlFor={continueInputID}
+                >
+                  <input
+                    id={continueInputID}
+                    type="radio"
+                    name={`recovery-${call.callId}`}
+                    checked={!isRetrySelected}
+                    disabled={isDisabled}
+                    onChange={() => {
+                      setSelections((current) => ({
+                        ...current,
+                        [call.callId]: "continue_with_unknown",
+                      }));
+                    }}
+                  />
+                  <strong>Continue with unknown result</strong>
+                  <small>Assume the call may have completed</small>
+                </label>
+              </div>
+            </article>
+          );
+        })}
       </div>
       <div className="sa-tool-recovery-actions">
         <button type="button" disabled={isDisabled} onClick={submitResume}>
@@ -163,4 +197,12 @@ function initialSelections(
   const selections: Record<string, ToolRecoveryAction> = {};
   for (const call of calls) selections[call.callId] = "retry";
   return selections;
+}
+
+function formatArguments(argumentsJson: string): string {
+  try {
+    return JSON.stringify(JSON.parse(argumentsJson) as unknown, null, 2);
+  } catch {
+    return argumentsJson;
+  }
 }

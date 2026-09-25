@@ -21,18 +21,18 @@ Agent state. Streams reduce latency but never become recovery state.
 
 ## Package ownership
 
-| Package                      | Owns                                                                           | Must not own                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `agent`                      | Public constructors, stable application types, model/tool extension interfaces | Private Dex descriptors, provider protocols, process lifecycle     |
-| `model`                      | Public built-in provider adapters, router, and process-memory credentials      | Dex resources, provider protocol implementation, process lifecycle |
-| `internal/agent`             | Domain IDs/enums, Flow graph, private Dex descriptors, command client          | Provider protocols, HTTP transport models, global configuration    |
-| `internal/api`               | ogen implementation, validation mapping, problem responses                     | Handwritten routes, generated-model duplicates, durable state      |
-| `internal/app`               | Dependency construction, goroutine ownership, startup and shutdown             | Domain decisions or provider-specific payloads                     |
-| `internal/config`            | Environment parsing and validated immutable sections                           | Runtime singletons or secret logging                               |
-| `internal/model`             | Provider routing, protocol adapters, in-memory credential lookup               | Dex resources or HTTP API responses                                |
-| `internal/mcp`               | Trusted server config, discovery, policy, single-attempt sessions, brokers     | Agent state transitions, retry loops, or exported Dex resources    |
-| `web`                        | React portal and generated Fetch client                                        | Handwritten API response types or durable-state reconstruction     |
-| `web/packages/superagent-ui` | Transport-free React conversation components, timeline merge/sort, ToolCall cards, and local interaction behavior | Dex/API clients, routing, durable state, or product workflows |
+| Package                      | Owns                                                                                                              | Must not own                                                       |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `agent`                      | Public constructors, stable application types, model/tool extension interfaces                                    | Private Dex descriptors, provider protocols, process lifecycle     |
+| `model`                      | Public built-in provider adapters, router, and process-memory credentials                                         | Dex resources, provider protocol implementation, process lifecycle |
+| `internal/agent`             | Domain IDs/enums, Flow graph, private Dex descriptors, command client                                             | Provider protocols, HTTP transport models, global configuration    |
+| `internal/api`               | ogen implementation, validation mapping, problem responses                                                        | Handwritten routes, generated-model duplicates, durable state      |
+| `internal/app`               | Dependency construction, goroutine ownership, startup and shutdown                                                | Domain decisions or provider-specific payloads                     |
+| `internal/config`            | Environment parsing and validated immutable sections                                                              | Runtime singletons or secret logging                               |
+| `internal/model`             | Provider routing, protocol adapters, in-memory credential lookup                                                  | Dex resources or HTTP API responses                                |
+| `internal/mcp`               | Trusted server config, discovery, policy, single-attempt sessions, brokers                                        | Agent state transitions, retry loops, or exported Dex resources    |
+| `web`                        | React portal and generated Fetch client                                                                           | Handwritten API response types or durable-state reconstruction     |
+| `web/packages/superagent-ui` | Transport-free React conversation components, timeline merge/sort, ToolCall cards, and local interaction behavior | Dex/API clients, routing, durable state, or product workflows      |
 
 Interfaces live at their consuming boundary. Concrete single-use components do
 not receive speculative interfaces, and there is no general-purpose helpers
@@ -226,6 +226,8 @@ Stream loss is corrected by Snapshot.
 
 Manual tool recovery moves programmatic focus to its labelled warning region.
 The heading remains the accessible label without becoming a focused control.
+Affected calls use bounded argument disclosures and explicit decision cards so
+large payloads cannot dominate the pending-action surface.
 
 Consumed user bubbles are anchored after the latest explicit message sequence
 seen before the consumption event. The event's own message sequence associates
