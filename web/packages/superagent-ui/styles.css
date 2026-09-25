@@ -443,6 +443,10 @@
   font-size: 17px;
 }
 
+.sa-tool-recovery:focus {
+  outline: none;
+}
+
 .sa-tool-recovery-eyebrow {
   margin: 0;
   color: var(--sa-subtle-color, #667085);

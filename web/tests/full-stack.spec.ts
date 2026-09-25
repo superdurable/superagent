@@ -1634,7 +1634,7 @@ test("persists manual tool recovery and resumes only after a user decision", asy
     name: "Execution outcome is unknown",
   });
   await expect(recoveryHeading).toBeVisible();
-  await expect(recoveryHeading).toBeFocused();
+  await expect(recovery).toBeFocused();
   await expect(
     recovery.getByText("Error type:", { exact: false }),
   ).toBeVisible();

@@ -90,6 +90,10 @@ consumer supplies `renderMessage`. User messages are compact, right-aligned
 bubbles; assistant messages remain left-aligned. Hovering or focusing either
 message reveals its local timestamp below the content.
 
+`ToolRecoveryPanel` moves programmatic focus to the recovery region when it
+appears. The existing warning card communicates that focus without drawing a
+browser-default input outline around its heading.
+
 Completed model and tool duration is `createdAt - startedAt`. Missing or
 negative legacy timing is omitted. Running durations update once per second but
 are excluded from live-region announcements. Stream timestamps remain ordering
