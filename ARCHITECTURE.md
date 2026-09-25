@@ -197,7 +197,10 @@ producing model invocation source. Completion activity marks later text from
 the same source as finalizing instead of starting a second live response. Model
 activity carries the target durable message sequence. The browser places each
 reasoning summary before that assistant message when timestamps tie or are
-unavailable. Unanchored reasoning retains its own chronological position.
+unavailable. During live execution, activity that arrives before its durable
+assistant message renders below the latest user turn until durable Work log data
+replaces it; terminal unanchored activity remains historical. Unanchored
+reasoning retains its own chronological position.
 `WaitingInputRound` is a monotonic `int64` Attribute bounded by JavaScript's
 safe integer maximum. With no pending question, `AwaitUser.WaitFor` increments
 it only when steered, queued, and current-Plan execution Channels are empty. A

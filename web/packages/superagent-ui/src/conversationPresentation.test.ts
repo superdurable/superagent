@@ -254,6 +254,75 @@ describe("conversation presentation", () => {
     expect(required(view.turns[1]).activities).toContain(activity);
   });
 
+  it("keeps live unanchored activity in the current user turn", () => {
+    const messages = [
+      message(1, "user", "first"),
+      message(2, "assistant", "first answer"),
+      message(3, "user", "continue"),
+    ];
+    const toolActivity: TimelineActivityEntry = {
+      resumeToken: "live-tool",
+      source: "tool-source",
+      createdAt: iso(4_000),
+      value: {
+        kind: "model_tool_call",
+        message: "Calling read_file.",
+        callId: "not-durable-yet",
+        toolName: "read_file",
+        messageSequence: 5,
+      },
+    };
+    const modelActivity: TimelineActivityEntry = {
+      resumeToken: "live-model",
+      source: "model-source",
+      createdAt: iso(5_000),
+      value: {
+        kind: "model_started",
+        message: "Calling model.",
+        messageSequence: 6,
+      },
+    };
+
+    const view = buildConversationPresentation({
+      messages,
+      activities: [toolActivity, modelActivity],
+      isModelRunning: true,
+      isExecutionLive: true,
+    });
+
+    expect(view.earlierActivity).toHaveLength(0);
+    expect(required(view.turns[1]).activities).toContain(toolActivity);
+    expect(required(view.turns[1]).liveActivities).toEqual([toolActivity]);
+    expect(required(view.turns[1]).models).toHaveLength(1);
+  });
+
+  it("leaves unanchored terminal activity in historical activity", () => {
+    const messages = [
+      message(1, "user", "first"),
+      message(2, "assistant", "done"),
+    ];
+    const activity: TimelineActivityEntry = {
+      resumeToken: "unanchored-terminal",
+      source: "tool-source",
+      createdAt: iso(3_000),
+      value: {
+        kind: "model_tool_call",
+        message: "Calling read_file.",
+        callId: "missing",
+        toolName: "read_file",
+        messageSequence: 4,
+      },
+    };
+
+    const view = buildConversationPresentation({
+      messages,
+      activities: [activity],
+      isExecutionLive: false,
+    });
+
+    expect(view.earlierActivity).toEqual([activity]);
+  });
+
   it("keeps current and resolved waits separate from tool execution", () => {
     const messages = [
       message(1, "user", "build"),
