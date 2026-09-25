@@ -112,11 +112,9 @@ func NewFlow(modelClient ModelClient, tools ToolRegistry, options ...FlowOption)
 	return flow
 }
 
-const flowTypeAIAgent = "AIAgentFlow"
-
 // GetFlowType pins the durable Flow identity.
 func (*Flow) GetFlowType() string {
-	return flowTypeAIAgent
+	return "AIAgentFlow"
 }
 
 // GetSteps registers the state-machine nodes.
@@ -1911,35 +1909,11 @@ const (
 	continueExecuteTool       continuation = "execute_tool"
 	continueDurableWait       continuation = "durable_wait"
 
-	stepTypeInit                  stepType = "Init"
-	stepTypeAwaitUser             stepType = "AwaitUser"
-	stepTypeAnsweredInput         stepType = "AnsweredInput"
-	stepTypeCompactContext        stepType = "CompactContext"
-	stepTypeCallModel             stepType = "CallModel"
-	stepTypeBeforeModelCall       stepType = "BeforeModelCall"
-	stepTypeCallModelWithHooks    stepType = "CallModelWithHooks"
-	stepTypeAfterModelCall        stepType = "AfterModelCall"
-	stepTypeApplyModelResult      stepType = "ApplyModelResult"
-	stepTypeCheckSteered          stepType = "CheckSteered"
-	stepTypeRouteTool             stepType = "RouteTool"
-	stepTypeAwaitApproval         stepType = "AwaitToolApproval"
-	stepTypeExecuteTool           stepType = "ExecuteTool"
-	stepTypeRecoverTool           stepType = "RecoverToolExecution"
-	stepTypeExecuteParallel       stepType = "ExecuteParallelTool"
-	stepTypeRecoverParallel       stepType = "RecoverParallelToolExecution"
-	stepTypeAwaitParallel         stepType = "AwaitParallelToolResults"
-	stepTypePrepareManualRecovery stepType = "PrepareManualToolRecovery"
-	stepTypeAwaitManualRecovery   stepType = "AwaitManualToolRecovery"
-	stepTypeDurableWait           stepType = "DurableWait"
-	stepTypeInactivityTimeout     stepType = "InactivityTimeout"
-
 	maximumSteeringMessageCount       = 2_147_483_647
 	maximumAutomaticPlanRecoveryCount = 1
 )
 
 type continuation string
-type stepType string
-
 type modelCallKind string
 
 const (
@@ -2149,7 +2123,7 @@ type initStep struct {
 
 var _ dex.Step[AgentConfig] = initStep{}
 
-func (initStep) GetStepType() string { return string(stepTypeInit) }
+func (initStep) GetStepType() string { return "Init" }
 
 func (initStep) GetStepOptions() *dex.StepOptions { return defaultStepOptions }
 
@@ -2188,7 +2162,7 @@ type awaitUserStep struct {
 
 var _ dex.Step[dex.None] = awaitUserStep{}
 
-func (awaitUserStep) GetStepType() string { return string(stepTypeAwaitUser) }
+func (awaitUserStep) GetStepType() string { return "AwaitUser" }
 
 func (awaitUserStep) GetStepOptions() *dex.StepOptions { return awaitUserStepOptions }
 
@@ -2360,7 +2334,7 @@ type answeredInputStep struct {
 
 var _ dex.Step[dex.None] = answeredInputStep{}
 
-func (answeredInputStep) GetStepType() string { return string(stepTypeAnsweredInput) }
+func (answeredInputStep) GetStepType() string { return "AnsweredInput" }
 
 func (answeredInputStep) GetStepOptions() *dex.StepOptions { return messageContextStepOptions }
 
@@ -2391,7 +2365,7 @@ type compactContextStep struct {
 
 var _ dex.Step[Sequence] = compactContextStep{}
 
-func (compactContextStep) GetStepType() string { return string(stepTypeCompactContext) }
+func (compactContextStep) GetStepType() string { return "CompactContext" }
 
 func (compactContextStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
 
@@ -2468,7 +2442,7 @@ type callModelStep struct {
 
 var _ dex.Step[dex.None] = callModelStep{}
 
-func (callModelStep) GetStepType() string { return string(stepTypeCallModel) }
+func (callModelStep) GetStepType() string { return "CallModel" }
 
 func (callModelStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
 
@@ -2619,7 +2593,7 @@ type beforeModelCallStep struct {
 
 var _ dex.Step[modelCallPreparation] = beforeModelCallStep{}
 
-func (beforeModelCallStep) GetStepType() string { return string(stepTypeBeforeModelCall) }
+func (beforeModelCallStep) GetStepType() string { return "BeforeModelCall" }
 
 func (beforeModelCallStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
 
@@ -2675,7 +2649,7 @@ type callModelWithHooksStep struct {
 
 var _ dex.Step[modelCallInput] = callModelWithHooksStep{}
 
-func (callModelWithHooksStep) GetStepType() string { return string(stepTypeCallModelWithHooks) }
+func (callModelWithHooksStep) GetStepType() string { return "CallModelWithHooks" }
 
 func (callModelWithHooksStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
 
@@ -2706,7 +2680,7 @@ type afterModelCallStep struct {
 
 var _ dex.Step[modelCallResult] = afterModelCallStep{}
 
-func (afterModelCallStep) GetStepType() string { return string(stepTypeAfterModelCall) }
+func (afterModelCallStep) GetStepType() string { return "AfterModelCall" }
 
 func (afterModelCallStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
 
@@ -2739,7 +2713,7 @@ type applyModelResultStep struct {
 
 var _ dex.Step[modelCallResult] = applyModelResultStep{}
 
-func (applyModelResultStep) GetStepType() string { return string(stepTypeApplyModelResult) }
+func (applyModelResultStep) GetStepType() string { return "ApplyModelResult" }
 
 func (applyModelResultStep) GetStepOptions() *dex.StepOptions { return modelStepOptions }
 
@@ -3050,7 +3024,7 @@ type checkSteeredStep struct {
 
 var _ dex.Step[continuation] = checkSteeredStep{}
 
-func (checkSteeredStep) GetStepType() string { return string(stepTypeCheckSteered) }
+func (checkSteeredStep) GetStepType() string { return "CheckSteered" }
 
 func (checkSteeredStep) GetStepOptions() *dex.StepOptions { return messageContextStepOptions }
 
@@ -3123,7 +3097,7 @@ type routeToolStep struct {
 
 var _ dex.Step[dex.None] = routeToolStep{}
 
-func (routeToolStep) GetStepType() string { return string(stepTypeRouteTool) }
+func (routeToolStep) GetStepType() string { return "RouteTool" }
 
 func (routeToolStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
 
@@ -3362,7 +3336,7 @@ type awaitToolApprovalStep struct {
 
 var _ dex.Step[dex.None] = awaitToolApprovalStep{}
 
-func (awaitToolApprovalStep) GetStepType() string { return string(stepTypeAwaitApproval) }
+func (awaitToolApprovalStep) GetStepType() string { return "AwaitToolApproval" }
 
 func (awaitToolApprovalStep) GetStepOptions() *dex.StepOptions { return messageMutationStepOptions }
 
@@ -3566,7 +3540,7 @@ type executeToolStep struct {
 
 var _ dex.Step[dex.None] = executeToolStep{}
 
-func (executeToolStep) GetStepType() string { return string(stepTypeExecuteTool) }
+func (executeToolStep) GetStepType() string { return "ExecuteTool" }
 
 func (step executeToolStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecision, error) {
 	if err := step.flow.updateStatus(ctx, AgentStatusExecutingTool); err != nil {
@@ -3639,7 +3613,7 @@ type recoverToolExecutionStep struct {
 
 var _ dex.Step[dex.None] = recoverToolExecutionStep{}
 
-func (recoverToolExecutionStep) GetStepType() string { return string(stepTypeRecoverTool) }
+func (recoverToolExecutionStep) GetStepType() string { return "RecoverToolExecution" }
 
 func (recoverToolExecutionStep) GetStepOptions() *dex.StepOptions {
 	return messageMutationStepOptions
@@ -3678,7 +3652,7 @@ type executeParallelToolStep struct {
 
 var _ dex.Step[parallelToolExecutionInput] = executeParallelToolStep{}
 
-func (executeParallelToolStep) GetStepType() string { return string(stepTypeExecuteParallel) }
+func (executeParallelToolStep) GetStepType() string { return "ExecuteParallelTool" }
 
 func (step executeParallelToolStep) Execute(
 	ctx dex.Context,
@@ -3750,7 +3724,7 @@ type recoverParallelToolExecutionStep struct {
 var _ dex.Step[parallelToolExecutionInput] = recoverParallelToolExecutionStep{}
 
 func (recoverParallelToolExecutionStep) GetStepType() string {
-	return string(stepTypeRecoverParallel)
+	return "RecoverParallelToolExecution"
 }
 
 func (recoverParallelToolExecutionStep) GetStepOptions() *dex.StepOptions {
@@ -3788,7 +3762,7 @@ type awaitParallelToolResultsStep struct {
 
 var _ dex.Step[awaitParallelToolResultsInput] = awaitParallelToolResultsStep{}
 
-func (awaitParallelToolResultsStep) GetStepType() string { return string(stepTypeAwaitParallel) }
+func (awaitParallelToolResultsStep) GetStepType() string { return "AwaitParallelToolResults" }
 
 func (awaitParallelToolResultsStep) GetStepOptions() *dex.StepOptions {
 	return messageMutationStepOptions
@@ -3858,7 +3832,7 @@ type prepareManualToolRecoveryStep struct {
 var _ dex.Step[dex.None] = prepareManualToolRecoveryStep{}
 
 func (prepareManualToolRecoveryStep) GetStepType() string {
-	return string(stepTypePrepareManualRecovery)
+	return "PrepareManualToolRecovery"
 }
 
 func (prepareManualToolRecoveryStep) GetStepOptions() *dex.StepOptions {
@@ -3910,7 +3884,7 @@ type awaitManualToolRecoveryStep struct {
 var _ dex.Step[toolBatchState] = awaitManualToolRecoveryStep{}
 
 func (awaitManualToolRecoveryStep) GetStepType() string {
-	return string(stepTypeAwaitManualRecovery)
+	return "AwaitManualToolRecovery"
 }
 
 func (awaitManualToolRecoveryStep) GetStepOptions() *dex.StepOptions {
@@ -4177,7 +4151,7 @@ type durableWaitStep struct {
 
 var _ dex.Step[dex.None] = durableWaitStep{}
 
-func (durableWaitStep) GetStepType() string { return string(stepTypeDurableWait) }
+func (durableWaitStep) GetStepType() string { return "DurableWait" }
 
 func (durableWaitStep) GetStepOptions() *dex.StepOptions { return durableWaitStepOptions }
 
@@ -4288,7 +4262,7 @@ type inactivityTimeoutStep struct {
 var _ dex.Step[time.Time] = inactivityTimeoutStep{}
 
 func (inactivityTimeoutStep) GetStepType() string {
-	return string(stepTypeInactivityTimeout)
+	return "InactivityTimeout"
 }
 
 func (inactivityTimeoutStep) GetStepOptions() *dex.StepOptions {
