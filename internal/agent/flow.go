@@ -1120,12 +1120,15 @@ func (flow *Flow) beginSteeredTurn(ctx dex.Context, messages []PendingUserMessag
 			return err
 		}
 	}
+	var latestMessageSequence *Sequence
 	for _, message := range messages {
-		if _, err := flow.beginUserTurn(ctx, message.Value); err != nil {
+		sequence, err := flow.beginUserTurn(ctx, message.Value)
+		if err != nil {
 			return err
 		}
+		latestMessageSequence = &sequence
 	}
-	if err := flow.writeInputConsumption(ctx, nil, messages, nil); err != nil {
+	if err := flow.writeInputConsumption(ctx, nil, messages, nil, latestMessageSequence); err != nil {
 		return err
 	}
 	return flow.writeActivity(ctx, AgentEvent{
@@ -1650,6 +1653,7 @@ func (flow *Flow) writeInputConsumption(
 	queued []PendingUserMessage,
 	steered []PendingUserMessage,
 	planExecutionRevision *PlanRevision,
+	messageSequence *Sequence,
 ) error {
 	if len(queued) == 0 && len(steered) == 0 && planExecutionRevision == nil {
 		return nil
@@ -1675,6 +1679,7 @@ func (flow *Flow) writeInputConsumption(
 	return flow.writeActivity(ctx, AgentEvent{
 		Kind:             EventKindInputConsumed,
 		Message:          strings.Join(messages, " "),
+		MessageSequence:  messageSequence,
 		InputConsumption: &consumption,
 	})
 }
@@ -2285,10 +2290,11 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 		return nil, err
 	}
 	if len(queued) > 0 {
-		if _, beginErr := step.flow.beginUserTurn(ctx, queued[0].Value); beginErr != nil {
+		sequence, beginErr := step.flow.beginUserTurn(ctx, queued[0].Value)
+		if beginErr != nil {
 			return nil, beginErr
 		}
-		if consumptionErr := step.flow.writeInputConsumption(ctx, []PendingUserMessage{queued[0]}, nil, nil); consumptionErr != nil {
+		if consumptionErr := step.flow.writeInputConsumption(ctx, []PendingUserMessage{queued[0]}, nil, nil, &sequence); consumptionErr != nil {
 			return nil, consumptionErr
 		}
 		return dex.GoTo(checkSteeredStep{flow: step.flow}, continueCompactContext), nil
@@ -2306,7 +2312,7 @@ func (step awaitUserStep) Execute(ctx dex.Context, _ dex.None) (*dex.StepDecisio
 	}
 	if len(executions) > 0 {
 		revision := executions[0].Revision
-		if consumptionErr := step.flow.writeInputConsumption(ctx, nil, nil, &revision); consumptionErr != nil {
+		if consumptionErr := step.flow.writeInputConsumption(ctx, nil, nil, &revision, nil); consumptionErr != nil {
 			return nil, consumptionErr
 		}
 	}

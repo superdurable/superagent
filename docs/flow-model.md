@@ -296,7 +296,10 @@ Every Execute that consumes a queued or steered message emits one
 for a consumed Plan request, including a request that became stale in a race.
 The payload contains only `queuedMessageIds`, `steeredMessageIds`, and nullable
 `planExecutionRevision`. The display message contains counts or the revision,
-never user content.
+never user content. Queued consumption carries its new user message sequence;
+batched steering carries the latest new user message sequence. Plan-only
+consumption has no associated message sequence and is not presented as
+conversation history.
 
 The browser removes only matching IDs and clears only the matching Plan
 revision. It temporarily projects consumed payloads already present in Snapshot

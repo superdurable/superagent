@@ -1041,6 +1041,8 @@ func TestAgentFlowDurabilityIntegration(t *testing.T) {
 			len(event.InputConsumption.QueuedMessageIDs) == 1
 	})
 	if consumed.Activity.Message != "Consumed 1 queued user message." ||
+		consumed.Activity.MessageSequence == nil ||
+		*consumed.Activity.MessageSequence != state.LastSequence-1 ||
 		strings.Contains(consumed.Activity.Message, "hello") {
 		t.Fatalf("queued input consumption Activity = %#v", consumed.Activity)
 	}
@@ -2745,6 +2747,9 @@ func assertSteeredInputConsumption(
 		}
 		if event.Activity.Message != consumedMessagesDescription(len(consumption.SteeredMessageIDs), "steered") {
 			t.Fatalf("steered input consumption Activity = %#v", event.Activity)
+		}
+		if event.Activity.MessageSequence == nil {
+			t.Fatalf("steered input consumption Activity has no user message sequence: %#v", event.Activity)
 		}
 		for _, messageID := range consumption.SteeredMessageIDs {
 			if _, expected := remaining[messageID]; !expected {

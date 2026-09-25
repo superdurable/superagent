@@ -108,13 +108,7 @@ test("renders chronological transient activity and durable queue interactions", 
       "/reason Checked the constraints | Durable answer",
     ),
   ).toHaveCount(0);
-  const historicalActivity = history.locator("details.sa-earlier-activity");
-  await expect(historicalActivity.locator("summary")).toContainText(
-    "Historical activity · 1 event",
-  );
-  await expect(historicalActivity).toContainText(
-    "Consumed 1 queued user message.",
-  );
+  await expect(history.locator("details.sa-earlier-activity")).toHaveCount(0);
   expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
   const workLog = history.locator("details.sa-work-log").last();
@@ -349,14 +343,9 @@ test("removes a consumed queued message before the next Snapshot completes", asy
   expect(steer.status()).toBe(200);
 
   await expect(queuedMessage).toHaveCount(0);
-  const recoveredActivity = page
-    .getByRole("region", { name: "Conversation history" })
-    .locator("details.sa-earlier-activity");
-  await expect(recoveredActivity).toContainText(
-    "Consumed 1 steered user message.",
-  );
-  const consumedMessage = page
-    .getByRole("region", { name: "Conversation history" })
+  const history = page.getByRole("region", { name: "Conversation history" });
+  await expect(history).not.toContainText("Consumed 1 steered user message.");
+  const consumedMessage = history
     .locator(".message-bubble.user")
     .filter({ hasText: "consume this queued message" });
   await expect(consumedMessage).toHaveCount(1);
