@@ -6,7 +6,7 @@
 
 GO_BUILD_CACHE := $(CURDIR)/.cache/go-build
 GO_PACKAGES := ./agent/... ./cmd/... ./internal/... ./model/... ./toolcontract/...
-DEXCLI_VERSION := v0.11.2
+DEXCLI_VERSION := v0.12.1
 DEXCLI_BINARY := $(CURDIR)/.cache/dexcli-$(DEXCLI_VERSION)
 OSV_SCANNER_VERSION := v2.5.1
 OSV_SCANNER_BINARY := $(CURDIR)/.cache/osv-scanner-$(OSV_SCANNER_VERSION)
@@ -72,7 +72,7 @@ check-flow-definition: install-dexcli
 		trap 'rm -r "$${flow_definition_tmp}"' EXIT; \
 		cd "$(CURDIR)"; \
 		flow_definition="$${flow_definition_tmp}/ai-agent.json"; \
-		if ! GOCACHE=$(GO_BUILD_CACHE) "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
+		if ! GOCACHE=$(GO_BUILD_CACHE) GOWORK=off "$(DEXCLI_BINARY)" visualize internal/agent/flow.go --language go --json \
 			--out "$${flow_definition_tmp}/ai-agent"; then \
 			test ! -f "$${flow_definition}" || sed -n '/"diagnostics"/,$$p' "$${flow_definition}"; \
 			exit 1; \

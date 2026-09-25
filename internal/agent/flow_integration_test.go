@@ -3536,17 +3536,17 @@ func waitForStepCompletionForTestOnly(
 	t *testing.T,
 	environment *agentIntegrationEnvironment,
 	flowID FlowID,
-	step stepType,
+	stepType string,
 	execution int32,
 ) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), integrationWaitTimeout)
 	defer cancel()
 	if err := environment.sdk.WaitForStepCompletion(ctx, string(flowID), dex.StepExecutionID{
-		StepType:        string(step),
+		StepType:        stepType,
 		ExecutionNumber: &execution,
 	}, dex.WaitForStepCompletionOptions{}); err != nil {
-		t.Fatalf("wait for %s completion: %v", step, err)
+		t.Fatalf("wait for %s completion: %v", stepType, err)
 	}
 }
 
