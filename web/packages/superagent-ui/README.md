@@ -94,6 +94,10 @@ message reveals its local timestamp below the content.
 appears. The existing warning card communicates that focus without drawing a
 browser-default input outline around its heading.
 
+Each affected call uses a compact card with formatted, height-bounded arguments
+and two explicit recovery choices. The disclosure keeps a visible inset focus
+indicator without resembling a text input.
+
 Completed model and tool duration is `createdAt - startedAt`. Missing or
 negative legacy timing is omitted. Running durations update once per second but
 are excluded from live-region announcements. Stream timestamps remain ordering

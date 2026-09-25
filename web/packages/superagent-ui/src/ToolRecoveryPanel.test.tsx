@@ -39,7 +39,7 @@ describe("ToolRecoveryPanel", () => {
       screen.getByRole("region", { name: "Execution outcome is unknown" }),
     ).toHaveFocus();
     const continueOptions = screen.getAllByRole("radio", {
-      name: "Continue with unknown result",
+      name: /Continue with unknown result/,
     });
     const secondContinueOption = continueOptions.at(1);
     if (secondContinueOption === undefined) {
@@ -92,5 +92,33 @@ describe("ToolRecoveryPanel", () => {
       screen.getByRole("button", { name: "Stop current tool sequence" }),
     ).toBeDisabled();
     expect(onResolve).not.toHaveBeenCalled();
+  });
+
+  it("formats valid arguments and preserves malformed payloads", () => {
+    render(
+      <ToolRecoveryPanel
+        onResolve={vi.fn()}
+        recovery={{
+          recoveryId: "recovery-4",
+          calls: [
+            {
+              callId: "call-c",
+              toolName: "files__read",
+              argumentsJson: '{"path":"a.txt"}',
+              errorType: "timeout",
+            },
+            {
+              callId: "call-d",
+              toolName: "files__search",
+              argumentsJson: "not-json",
+              errorType: "connection_error",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/\{\s+"path": "a\.txt"\s+\}/)).toBeInTheDocument();
+    expect(screen.getByText("not-json")).toBeInTheDocument();
   });
 });

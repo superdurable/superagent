@@ -1635,9 +1635,7 @@ test("persists manual tool recovery and resumes only after a user decision", asy
   });
   await expect(recoveryHeading).toBeVisible();
   await expect(recovery).toBeFocused();
-  await expect(
-    recovery.getByText("Error type:", { exact: false }),
-  ).toBeVisible();
+  await expect(recovery.getByText("Error ·", { exact: false })).toBeVisible();
   await expect(recovery).not.toContainText("simulated local tool failure");
   let workLog = page.locator("details.sa-work-log").last();
   await openDetails(workLog);
@@ -1666,7 +1664,7 @@ test("persists manual tool recovery and resumes only after a user decision", asy
 
   recovery = page.locator(".recovery-card");
   const continueUnknown = recovery.getByRole("radio", {
-    name: "Continue with unknown result",
+    name: /Continue with unknown result/,
   });
   await continueUnknown.focus();
   await expect(continueUnknown).toBeFocused();
