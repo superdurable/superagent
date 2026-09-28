@@ -6,9 +6,10 @@ alwaysApply: false
 
 # Dex application rules
 
-Load the installed `dex-developer` skill and read every routed reference in each
-turn that touches Dex concepts. If the skill is unavailable, stop Dex-related
-changes and use the installation instructions at
+Load the installed `dex-app-builder` skill through the host's native skill
+mechanism and read every routed reference in each turn that touches Dex
+concepts. If the skill is unavailable, stop Dex-related changes and use the
+installation instructions at
 https://docs.superdurable.io/build-with-ai/dex-developer-skill.
 
 - Use only the installed released SDK and version-matched runnable examples or
