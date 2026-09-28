@@ -254,4 +254,4 @@ and rejects every visualizer diagnostic.
 
 Read [`AGENTS.md`](AGENTS.md) before making changes. Work involving Dex Flows,
 Steps, RPCs, Channels, Streams, Timers, retries, or recovery must also follow
-the installed [Dex Developer skill](https://docs.superdurable.io/build-with-ai/dex-developer-skill).
+the installed [Dex App Builder skill](https://docs.superdurable.io/build-with-ai/dex-developer-skill).

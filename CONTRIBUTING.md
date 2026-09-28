@@ -5,8 +5,9 @@ Read `AGENTS.md` before changing the repository.
 ## Dex changes
 
 For every turn that modifies or reviews Dex Flow, Step, RPC, resource, Stream,
-Timer, retry, or recovery code, load the installed `dex-developer` skill and all
-references it routes for that task. Installation instructions are at
+Timer, retry, or recovery code, load the installed `dex-app-builder` skill
+through the host's native skill mechanism and read all references it routes for
+that task. Installation instructions are at
 https://docs.superdurable.io/build-with-ai/dex-developer-skill. Confirm APIs
 against the installed released SDK and a version-matched runnable example or
 real-server compile-contract test.

@@ -14,14 +14,13 @@ not a Dex SDK example and must not depend on Dex internals.
 - Before launch, remove dead APIs and fields. Do not add compatibility shims,
   deprecated aliases, dual paths, or comments describing discarded behavior.
 
-## Dex skill is mandatory
+## Dex App Builder is mandatory
 
 Before changing or reviewing Flow, Step, RPC, Attribute, AttributeMap, Channel,
 ChannelMap, Stream, Timer, retry, recovery, or Dex Client code:
 
-1. Load the installed `dex-developer` skill through the agent's native skill
-   mechanism. Codex uses `$dex-developer`, Claude Code uses
-   `/dex:dex-developer`, and Cursor uses the installed `dex-developer` skill.
+1. Load the installed `dex-app-builder` skill through the agent's native skill
+   mechanism.
 2. Read every reference routed by the skill for the work being performed.
 3. Treat the installed SDK source and version-matched runnable examples or
    real-server compile-contract tests as the API contract.
